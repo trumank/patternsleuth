@@ -86,7 +86,7 @@ fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Log> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    #[derive(Debug)]
+    #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
     enum FNameToStringID {
         A,
         B,
@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .unwrap()
         }
     }
-    #[derive(Debug)]
+    #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
     enum FNameFNameID {
         A,
         V5_1,
@@ -126,7 +126,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-    #[derive(Debug)]
+    #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
     enum StaticConstructObjectInternalID {
         A,
         V4_12,
@@ -155,7 +155,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-    #[derive(Debug)]
+    #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
     enum GUObjectArrayID {
         A,
         V4_20,
@@ -177,7 +177,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
     enum PatternID {
         FNameToString(FNameToStringID),
         FNameFname(FNameFNameID),
@@ -350,8 +350,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .get(&sig)
                     .map(|m| join(
                         m.iter()
-                            .map(|m| {
-                                let s = format!("{:016x} {:?}", m.1, m.0);
+                            .fold(
+                                HashMap::<&(&&PatternID, usize), usize>::new(),
+                                |mut map, m| {
+                                    *map.entry(m).or_default() += 1;
+                                    map
+                                }
+                            )
+                            .iter()
+                            .map(|(m, count)| {
+                                let count = if *count > 1 {
+                                    format!(" (x{count})")
+                                } else {
+                                    "".to_string()
+                                };
+                                let s = format!("{:016x}{} {:?}", m.1, count, m.0);
                                 if sig_log.is_none() {
                                     s.normal()
                                 } else if m.1 == sig_log.unwrap() {
@@ -359,8 +372,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 } else {
                                     s.red()
                                 }
-                            })
-                            .take(5), // TODO notify if more than 5
+                            }),
                         "\n"
                     )
                     .normal())
