@@ -27,20 +27,33 @@ enum Sig {
     StaticConstructObjectInternal,
 }
 
+struct Log {
+    addresses: Addresses,
+    exe_name: String,
+    exe_size: usize,
+}
+
 struct Addresses {
+    /// base address of of MainExe module
     main_exe: usize,
+    /// addresses of Sigs relative to MainExe
     addresses: HashMap<Sig, usize>,
 }
 
-fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Addresses> {
+fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Log> {
     let mut addresses = HashMap::new();
 
-    let re = regex::Regex::new(r"([^ ]+) address: 0x([0-9a-f]+)").unwrap();
+    let re_exe_path =
+        regex::Regex::new(r"game executable: .+[\\/](.+\.exe) \(([0-9]+) bytes\)$").unwrap();
+    let mut exe_path = None;
+
     let re_main_exe = regex::Regex::new(r"MainExe @ 0x([0-9a-f]+) size=0x([0-9a-f]+)").unwrap();
     let mut main_exe = None;
+
+    let re_address = regex::Regex::new(r"([^ ]+) address: 0x([0-9a-f]+)").unwrap();
     for line in BufReader::new(fs::File::open(path)?).lines() {
         let line = line?;
-        if let Some(captures) = re.captures(&line) {
+        if let Some(captures) = re_address.captures(&line) {
             if let Ok(name) = Sig::from_str(&captures[1]) {
                 let address = usize::from_str_radix(&captures[2], 16)?;
                 if addresses.get(&name).map(|a| *a != address).unwrap_or(false) {
@@ -50,11 +63,25 @@ fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Addresses> {
             }
         } else if let Some(captures) = re_main_exe.captures(&line) {
             main_exe = Some(usize::from_str_radix(&captures[1], 16)?);
+        } else if let Some(captures) = re_exe_path.captures(&line) {
+            exe_path = Some((captures[1].to_owned(), usize::from_str(&captures[2])?));
         }
     }
-    Ok(Addresses {
-        main_exe: main_exe.context("MainExe module not found in log")?,
-        addresses,
+    let (exe_name, exe_size) = exe_path.context("game executable path not found in log")?;
+    let main_exe = main_exe.context("MainExe module not found in log")?;
+
+    // compute addresses relative to base module
+    let addresses = addresses
+        .into_iter()
+        .map(|(k, v)| (k, v - main_exe))
+        .collect::<HashMap<_, _>>();
+    Ok(Log {
+        exe_name,
+        exe_size,
+        addresses: Addresses {
+            main_exe,
+            addresses,
+        },
     })
 }
 
@@ -233,15 +260,48 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let games = fs::read_dir("games")?;
 
-    for entry in games {
+    'games: for entry in games {
         let entry = entry?;
         let dir_name = entry.file_name();
         let game = dir_name.to_string_lossy();
         let log_path = entry.path().join("UE4SS.log");
-        let exe_path = entry.path().join(format!("{}-Win64-Shipping.exe", game));
 
-        let bin_data = fs::read(&exe_path)?;
+        let log = match read_addresses_from_log(log_path)
+            .with_context(|| format!("{}: read UE4SS.log", game))
+        {
+            Ok(log) => Some(log),
+            Err(e) => {
+                println!("    Error: {:?}", e);
+                None
+            }
+        };
+
+        let exe_path = if let Some(ref log) = log {
+            entry.path().join(&log.exe_name)
+        } else {
+            'exe: {
+                for f in fs::read_dir(entry.path())? {
+                    let f = f?.path();
+                    if f.is_file() && f.extension().and_then(std::ffi::OsStr::to_str) == Some("exe")
+                    {
+                        break 'exe f;
+                    }
+                }
+                continue 'games;
+            }
+        };
+
+        let bin_data = fs::read(&exe_path)
+            .with_context(|| format!("reading game exe {}", exe_path.display()))?;
+        if let Some(log) = &log {
+            if log.exe_size != bin_data.len() {
+                println!("size mismatch: log indicates {} bytes but {} is {} bytes. is this the correct exe?", log.exe_size, exe_path.display(), bin_data.len());
+                continue 'games;
+            }
+        }
         let obj_file = object::File::parse(&*bin_data)?;
+
+        // TODO load and scan all sections with CODE flag
         let section = obj_file
             .section_by_name(".text")
             .or(obj_file.section_by_name(".code"))
@@ -256,23 +316,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             exe_base,
             text_base,
         );
-
-        let addresses = match read_addresses_from_log(log_path)
-            .with_context(|| format!("{}: read UE4SS.log", game))
-        {
-            Ok(addresses) => Some(
-                addresses
-                    .addresses
-                    .into_iter()
-                    .map(|(k, v)| (k, v - addresses.main_exe + exe_base))
-                    .collect::<HashMap<_, _>>(),
-            ),
-
-            Err(e) => {
-                println!("    Error: {:?}", e);
-                None
-            }
-        };
 
         use colored::Colorize;
         use itertools::join;
@@ -293,7 +336,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             });
 
         for sig in Sig::iter() {
-            let sig_log = addresses.as_ref().and_then(|a| a.get(&sig));
+            let sig_log = log
+                .as_ref()
+                .and_then(|a| a.addresses.addresses.get(&sig))
+                .map(|a| a + exe_base);
 
             table.add_row(row![
                 sig,
@@ -308,7 +354,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 let s = format!("{:016x} {:?}", m.1, m.0);
                                 if sig_log.is_none() {
                                     s.normal()
-                                } else if m.1 == *sig_log.unwrap() {
+                                } else if m.1 == sig_log.unwrap() {
                                     s.green()
                                 } else {
                                     s.red()
