@@ -322,8 +322,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         use prettytable::{row, Table};
 
         let mut table = Table::new();
-
-        table.add_row(row!["sig", "log", "offline scan"]);
+        table.set_titles(row!["sig", "log", "offline scan"]);
 
         let data = section.data()?;
         let scan_res = scan(pat.as_slice(), text_base, data);
