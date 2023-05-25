@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         .checked_add_signed(
                             i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
                         )
-                        .unwrap()
+                        .unwrap_or_default()
                 }
                 Self::V5_1 => {
                     let n = (m - base).checked_add_signed(0x1C + 5).unwrap();
