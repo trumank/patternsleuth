@@ -300,22 +300,48 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         let obj_file = object::File::parse(&*bin_data)?;
-
-        // TODO load and scan all sections with CODE flag
-        let section = obj_file
-            .section_by_name(".text")
-            .or(obj_file.section_by_name(".code"))
-            .unwrap();
-
-        let text_base = section.address() as usize;
         let exe_base = obj_file.relative_address_base() as usize;
-        println!(
-            "{} {} exe_base={:016x?} text_base={:016x?}",
-            game,
-            exe_path.display(),
-            exe_base,
-            text_base,
-        );
+
+        struct Scan<'a> {
+            base_address: usize,
+            results: Vec<(&'a PatternID, usize)>,
+        }
+
+        let mut scans = vec![];
+
+        for section in obj_file.sections() {
+            if section.kind() != object::SectionKind::Text {
+                continue;
+            }
+
+            let base_address = section.address() as usize;
+            println!(
+                "{} {} exe_base={:016x?} base_address={:016x?}",
+                game,
+                exe_path.display(),
+                exe_base,
+                base_address,
+            );
+            println!("{} {:?}", section.name()?, section.kind());
+            let data = section.data()?;
+            println!("{:x}", section.data()?.len());
+            scans.push(Scan {
+                base_address,
+                results: scan(pat.as_slice(), base_address, section.data()?)
+                    .into_iter()
+                    .map(|(id, m)| (id, id.resolve(data, base_address, m)))
+                    .collect(),
+            });
+        }
+
+        let folded_scans = scans
+            .iter()
+            .flat_map(|scan| scan.results.iter())
+            .map(|(id, m)| (id.sig(), (id, *m)))
+            .fold(HashMap::new(), |mut map, (k, v)| {
+                map.entry(k).or_insert_with(Vec::new).push(v);
+                map
+            });
 
         use colored::Colorize;
         use itertools::join;
@@ -323,16 +349,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let mut table = Table::new();
         table.set_titles(row!["sig", "log", "offline scan"]);
-
-        let data = section.data()?;
-        let scan_res = scan(pat.as_slice(), text_base, data);
-        let matches = scan_res
-            .iter()
-            .map(|(id, m)| (id.sig(), (id, id.resolve(data, text_base, *m))))
-            .fold(HashMap::new(), |mut map, (k, v)| {
-                map.entry(k).or_insert_with(Vec::new).push(v);
-                map
-            });
 
         for sig in Sig::iter() {
             let sig_log = log
@@ -345,7 +361,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 sig_log
                     .map(|a| format!("{:016x}", a))
                     .unwrap_or("not found".to_owned()),
-                matches
+                folded_scans
                     .get(&sig)
                     .map(|m| join(
                         m.iter()
