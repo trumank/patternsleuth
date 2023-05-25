@@ -21,6 +21,7 @@ enum Sig {
     FNameFName,
     GMalloc,
     GUObjectArray,
+    GNatives,
     //ProcessInternal, // not found by pattern scan
     //ProcessLocalScriptFunction, // not found by pattern scan
     #[strum(serialize = "StaticConstructObject_Internal")]
@@ -184,6 +185,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         StaticConstructObjectInternal(StaticConstructObjectInternalID),
         GMalloc,
         GUObjectArray(GUObjectArrayID),
+        GNatives,
     }
     impl PatternID {
         fn sig(&self) -> Sig {
@@ -193,6 +195,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Self::StaticConstructObjectInternal(_) => Sig::StaticConstructObjectInternal,
                 Self::GMalloc => Sig::GMalloc,
                 Self::GUObjectArray(_) => Sig::GUObjectArray,
+                Self::GNatives => Sig::GNatives,
             }
         }
         fn resolve(&self, data: &[u8], base: usize, m: usize) -> usize {
@@ -202,6 +205,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Self::StaticConstructObjectInternal(f) => f.resolve(data, base, m),
                 Self::GMalloc => m,
                 Self::GUObjectArray(f) => f.resolve(data, base, m),
+                Self::GNatives => {
+                    for i in m - base..m - base + 400 {
+                        if data[i] == 0x4c && data[i + 1] == 0x8d && data[i + 2] == 0x25 {
+                            println!("found lea at {:x}", i - (m - base));
+                            return (base + i + 7)
+                                .checked_add_signed(i32::from_le_bytes(
+                                    data[i + 3..i + 3 + 4].try_into().unwrap(),
+                                ) as isize)
+                                .unwrap_or_default();
+                        }
+                    }
+                    0
+                }
             }
         }
     }
@@ -254,6 +270,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         (
             PatternID::GUObjectArray(GUObjectArrayID::V4_20),
             Pattern::new("48 8B ?? ?? ?? ?? ?? 48 8B 0C C8 ?? 8B 04 ?? 48 85 C0")?, // > 4.20
+        ),
+
+        (
+            PatternID::GNatives,
+            Pattern::new("cc 51 20 01")?,
         ),
     ];
     let pat: Vec<_> = patterns.iter().map(|(id, p)| (id, p)).collect();
