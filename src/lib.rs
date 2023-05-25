@@ -90,7 +90,7 @@ pub fn scan<'id, ID: Sync>(
 
     // split data for simd
     // cut middle short such that even the longest pattern doesn't have to bounds check
-    let (prefix, middle, _suffix) = data[0..data.len() - max].as_simd::<LANES>();
+    let (prefix, middle, _suffix) = data[0..data.len().saturating_sub(max)].as_simd::<LANES>();
     let suffix = &data[prefix.len() + middle.len() * LANES..data.len()];
 
     let mut matches = vec![];
