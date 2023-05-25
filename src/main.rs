@@ -208,7 +208,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Self::GNatives => {
                     for i in m - base..m - base + 400 {
                         if data[i] == 0x4c && data[i + 1] == 0x8d && data[i + 2] == 0x25 {
-                            println!("found lea at {:x}", i - (m - base));
                             return (base + i + 7)
                                 .checked_add_signed(i32::from_le_bytes(
                                     data[i + 3..i + 3 + 4].try_into().unwrap(),
@@ -323,6 +322,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         let obj_file = object::File::parse(&*bin_data)?;
         let exe_base = obj_file.relative_address_base() as usize;
 
+        println!(
+            "{} {} exe_base={:016x?}",
+            game,
+            exe_path.display(),
+            exe_base,
+        );
+
         struct Scan<'a> {
             base_address: usize,
             results: Vec<(&'a PatternID, usize)>,
@@ -336,19 +342,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             let base_address = section.address() as usize;
-            println!(
-                "{} {} exe_base={:016x?} base_address={:016x?}",
-                game,
-                exe_path.display(),
-                exe_base,
-                base_address,
-            );
-            println!("{} {:?}", section.name()?, section.kind());
             let data = section.data()?;
-            println!("{:x}", section.data()?.len());
             scans.push(Scan {
                 base_address,
-                results: scan(pat.as_slice(), base_address, section.data()?)
+                results: scan(pat.as_slice(), base_address, data)
                     .into_iter()
                     .map(|(id, m)| (id, id.resolve(data, base_address, m)))
                     .collect(),
