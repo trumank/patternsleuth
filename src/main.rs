@@ -87,17 +87,25 @@ fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Log> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    struct Resolution {
+        /// intermediate addresses of interest before reaching the final address
+        stages: Vec<usize>,
+        /// final, fully resolved address
+        address: Option<usize>,
+    }
+
     #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
     enum FNameToStringID {
         A,
         B,
     }
     impl FNameToStringID {
-        fn resolve(&self, data: &[u8], base: usize, m: usize) -> usize {
+        fn resolve(&self, data: &[u8], base: usize, m: usize) -> Resolution {
+            let stages = vec![m];
             let n = (m - base).checked_add_signed(5).unwrap();
-            base + n
-                .checked_add_signed(i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize)
-                .unwrap()
+            let rel = i32::from_le_bytes(data[n - 4..n].try_into().unwrap());
+            let address = n.checked_add_signed(rel as isize).map(|a| base + a);
+            Resolution { stages, address }
         }
     }
     #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
@@ -106,23 +114,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         V5_1,
     }
     impl FNameFNameID {
-        fn resolve(&self, data: &[u8], base: usize, m: usize) -> usize {
+        fn resolve(&self, data: &[u8], base: usize, m: usize) -> Resolution {
+            let stages = vec![m];
             match self {
                 Self::A => {
                     let n = (m - base).checked_add_signed(0x18 + 5).unwrap();
-                    base + n
+                    let address = n
                         .checked_add_signed(
                             i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
                         )
-                        .unwrap_or_default()
+                        .map(|a| base + a);
+                    Resolution { stages, address }
                 }
                 Self::V5_1 => {
                     let n = (m - base).checked_add_signed(0x1C + 5).unwrap();
-                    base + n
+                    let address = n
                         .checked_add_signed(
                             i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
                         )
-                        .unwrap()
+                        .map(|a| base + a);
+                    Resolution { stages, address }
                 }
             }
         }
@@ -135,23 +146,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         V5_0,
     }
     impl StaticConstructObjectInternalID {
-        fn resolve(&self, data: &[u8], base: usize, m: usize) -> usize {
+        fn resolve(&self, data: &[u8], base: usize, m: usize) -> Resolution {
+            let stages = vec![m];
             match self {
                 Self::A | Self::V4_12 => {
                     let n = m - base - 0x0e;
-                    base + n
+                    let address = n
                         .checked_add_signed(
                             i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
                         )
-                        .unwrap()
+                        .map(|a| base + a);
+                    Resolution { stages, address }
                 }
                 Self::V4_16_4_19 | Self::V5_0 => {
                     let n = m - base + 5;
-                    base + n
+                    let address = n
                         .checked_add_signed(
                             i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
                         )
-                        .unwrap_or_default()
+                        .map(|a| base + a);
+                    Resolution { stages, address }
                 }
             }
         }
@@ -162,17 +176,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         V4_20,
     }
     impl GUObjectArrayID {
-        fn resolve(&self, data: &[u8], base: usize, m: usize) -> usize {
+        fn resolve(&self, data: &[u8], base: usize, m: usize) -> Resolution {
+            let stages = vec![m];
             match self {
                 Self::A => unimplemented!(),
                 Self::V4_20 => {
                     let n = m - base + 3;
-                    base + n
+                    let address = n
                         .checked_add_signed(
                             i32::from_le_bytes(data[n..n + 4].try_into().unwrap()) as isize
                         )
-                        .unwrap()
-                        - 0xc
+                        .map(|a| base + a - 0xc);
+                    Resolution { stages, address }
                 }
             }
         }
@@ -198,27 +213,34 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Self::GNatives => Sig::GNatives,
             }
         }
-        fn resolve(&self, data: &[u8], base: usize, m: usize) -> usize {
+        fn resolve(&self, data: &[u8], base: usize, m: usize) -> Resolution {
             match self {
                 Self::FNameToString(f) => f.resolve(data, base, m),
                 Self::FNameFname(f) => f.resolve(data, base, m),
                 Self::StaticConstructObjectInternal(f) => f.resolve(data, base, m),
-                Self::GMalloc => m,
+                Self::GMalloc => Resolution {
+                    stages: vec![],
+                    address: Some(m),
+                },
                 Self::GUObjectArray(f) => f.resolve(data, base, m),
                 Self::GNatives => {
+                    let stages = vec![m];
                     for i in m - base..m - base + 400 {
                         if data[i] == 0x4c
                             && data[i + 1] == 0x8d
                             && (data[i + 2] & 0xc7 == 5 && data[i + 2] > 0x20)
                         {
-                            return (base + i + 7)
+                            let address = (base + i + 7)
                                 .checked_add_signed(i32::from_le_bytes(
                                     data[i + 3..i + 3 + 4].try_into().unwrap(),
-                                ) as isize)
-                                .unwrap_or_default();
+                                ) as isize);
+                            return Resolution { stages, address };
                         }
                     }
-                    0
+                    Resolution {
+                        stages,
+                        address: None,
+                    }
                 }
             }
         }
@@ -334,7 +356,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         struct Scan<'a> {
             base_address: usize,
-            results: Vec<(&'a PatternID, usize)>,
+            results: Vec<(&'a PatternID, Resolution)>,
         }
 
         let mut scans = vec![];
@@ -358,7 +380,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let folded_scans = scans
             .iter()
             .flat_map(|scan| scan.results.iter())
-            .map(|(id, m)| (id.sig(), (id, *m)))
+            .map(|(id, m)| (id.sig(), (id, m)))
             .fold(HashMap::new(), |mut map, (k, v)| {
                 map.entry(k).or_insert_with(Vec::new).push(v);
                 map
@@ -387,9 +409,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .map(|m| join(
                         m.iter()
                             .fold(
-                                HashMap::<&(&&PatternID, usize), usize>::new(),
+                                HashMap::<(&&PatternID, Option<usize>), usize>::new(),
                                 |mut map, m| {
-                                    *map.entry(m).or_default() += 1;
+                                    *map.entry((m.0, m.1.address)).or_default() += 1;
                                     map
                                 }
                             )
@@ -400,10 +422,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 } else {
                                     "".to_string()
                                 };
-                                let s = format!("{:016x}{} {:?}", m.1, count, m.0);
-                                if sig_log.is_none() {
+                                let s = format!(
+                                    "{}{} {:?}",
+                                    m.1.map_or("failed".to_string(), |a| format!("{:016x}", a)),
+                                    count,
+                                    m.0
+                                );
+                                if m.1.is_none() {
+                                    s.red()
+                                } else if sig_log.is_none() {
                                     s.normal()
-                                } else if m.1 == sig_log.unwrap() {
+                                } else if m.1.unwrap() == sig_log.unwrap() {
                                     s.green()
                                 } else {
                                     s.red()
