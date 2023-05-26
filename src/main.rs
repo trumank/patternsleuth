@@ -207,7 +207,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Self::GUObjectArray(f) => f.resolve(data, base, m),
                 Self::GNatives => {
                     for i in m - base..m - base + 400 {
-                        if data[i] == 0x4c && data[i + 1] == 0x8d && data[i + 2] == 0x25 {
+                        if data[i] == 0x4c
+                            && data[i + 1] == 0x8d
+                            && (data[i + 2] & 0xc7 == 5 && data[i + 2] > 0x20)
+                        {
                             return (base + i + 7)
                                 .checked_add_signed(i32::from_le_bytes(
                                     data[i + 3..i + 3 + 4].try_into().unwrap(),
