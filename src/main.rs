@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -6,6 +6,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
+use itertools::Itertools;
 use object::{Object, ObjectSection};
 use strum::IntoEnumIterator;
 
@@ -87,6 +88,7 @@ fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Log> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    #[derive(Debug)]
     struct Resolution {
         /// intermediate addresses of interest before reaching the final address
         stages: Vec<usize>,
@@ -303,9 +305,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     ];
     let pat: Vec<_> = patterns.iter().map(|(id, p)| (id, p)).collect();
 
-    let games = fs::read_dir("games")?;
+    let mut games: HashSet<String> = Default::default();
 
-    'games: for entry in games {
+    let mut all: HashMap<(String, &PatternID), Vec<Resolution>> = HashMap::new();
+
+    'loop_games: for entry in fs::read_dir("games")? {
         let entry = entry?;
         let dir_name = entry.file_name();
         let game = dir_name.to_string_lossy();
@@ -332,7 +336,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         break 'exe f;
                     }
                 }
-                continue 'games;
+                continue 'loop_games;
             }
         };
 
@@ -341,11 +345,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Some(log) = &log {
             if log.exe_size != bin_data.len() {
                 println!("size mismatch: log indicates {} bytes but {} is {} bytes. is this the correct exe?", log.exe_size, exe_path.display(), bin_data.len());
-                continue 'games;
+                continue 'loop_games;
             }
         }
         let obj_file = object::File::parse(&*bin_data)?;
         let exe_base = obj_file.relative_address_base() as usize;
+
+        games.insert(game.to_string());
 
         println!(
             "{} {} exe_base={:016x?}",
@@ -445,8 +451,47 @@ fn main() -> Result<(), Box<dyn Error>> {
             ]);
         }
         table.printstd();
+
+        scans
+            .into_iter()
+            .flat_map(|scan| scan.results.into_iter())
+            .fold(&mut all, |map, m| {
+                map.entry((game.to_string(), m.0)).or_default().push(m.1);
+                map
+            });
+
         println!();
     }
+
+
+    use colored::Colorize;
+    use itertools::join;
+    use prettytable::{row, Cell, Row, Table};
+    let mut summary = Table::new();
+    let title_strs: Vec<String> = ["".to_owned()].into_iter().chain(patterns.iter().map(|(id, _)| format!("{:?}", id))).collect();
+    summary.set_titles(Row::new(title_strs.iter().map(|s| Cell::new(s)).collect()));
+
+    for game in &games {
+        let mut row = vec![Cell::new(game)];
+        let cell_strs: Vec<String> = patterns.iter().map(|(id, _)| {
+            let res = all.get(&(game.to_string(), id));
+            if let Some(res) = res {
+                let num_resolved = res.iter().filter(|res| res.address.is_some()).count();
+                let num_failed = res.iter().filter(|res| res.address.is_some()).count();
+                format!("matches={} resolved={}", res.len(), num_resolved)
+            } else {
+                "none".to_owned()
+            }
+        }).collect();
+        row.extend(cell_strs.iter().map(|s| Cell::new(&s)));
+        //println!("{}", &game);
+        summary.add_row(Row::new(row));
+    }
+
+    //let games: HashSet<String> = all.keys().map(|(game, _)| game).cloned().collect();
+    //println!("{:#?}", all);
+
+    summary.printstd();
 
     Ok(())
 }
