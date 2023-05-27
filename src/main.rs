@@ -467,26 +467,63 @@ fn main() -> Result<(), Box<dyn Error>> {
     use colored::Colorize;
     use itertools::join;
     use prettytable::{row, Cell, Row, Table};
+
+    #[derive(Debug, Default)]
+    struct Summary {
+        matches: usize,
+        resolved: usize,
+        failed: usize,
+    }
+    impl Summary {
+        fn format(&self) -> String {
+            if self.matches == 0 && self.failed == 0 && self.resolved == 0 {
+                "none".to_owned()
+            } else {
+                format!("M={} R={} F={}", self.matches, self.resolved, self.failed)
+            }
+        }
+    }
+
     let mut summary = Table::new();
     let title_strs: Vec<String> = ["".to_owned()].into_iter().chain(patterns.iter().map(|(id, _)| format!("{:?}", id))).collect();
     summary.set_titles(Row::new(title_strs.iter().map(|s| Cell::new(s)).collect()));
+    let mut totals = patterns.iter().map(|_| Summary::default()).collect_vec();
 
     for game in &games {
         let mut row = vec![Cell::new(game)];
-        let cell_strs: Vec<String> = patterns.iter().map(|(id, _)| {
+
+        let summaries: Vec<Summary> = patterns.iter().map(|(id, _)| {
             let res = all.get(&(game.to_string(), id));
             if let Some(res) = res {
-                let num_resolved = res.iter().filter(|res| res.address.is_some()).count();
-                let num_failed = res.iter().filter(|res| res.address.is_some()).count();
-                format!("matches={} resolved={}", res.len(), num_resolved)
+                Summary {
+                    matches: res.len(),
+                    resolved: res.iter().filter(|res| res.address.is_some()).count(),
+                    failed: res.iter().filter(|res| res.address.is_none()).count(),
+                }
             } else {
-                "none".to_owned()
+                Summary { matches: 0, resolved: 0, failed: 0 }
             }
         }).collect();
+
+        for (i, s) in summaries.iter().enumerate() {
+            if s.matches > 0 {
+                totals[i].matches += 1;
+            }
+            if s.resolved > 0 {
+                totals[i].resolved += 1;
+            }
+            if s.failed > 0 {
+                totals[i].failed += 1;
+            }
+        }
+
+        let cell_strs: Vec<String> = summaries.iter().map(Summary::format).collect();
         row.extend(cell_strs.iter().map(|s| Cell::new(&s)));
-        //println!("{}", &game);
         summary.add_row(Row::new(row));
     }
+
+    let total_strs = [format!("{}", games.len())].into_iter().chain(totals.iter().map(Summary::format)).collect_vec();
+    summary.add_row(Row::new(total_strs.iter().map(|s| Cell::new(&s)).collect_vec()));
 
     //let games: HashSet<String> = all.keys().map(|(game, _)| game).cloned().collect();
     //println!("{:#?}", all);
