@@ -90,6 +90,8 @@ fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Log> {
 fn main() -> Result<(), Box<dyn Error>> {
     #[derive(Debug)]
     struct Resolution {
+        /// name of section pattern was found in
+        section: String,
         /// intermediate addresses of interest before reaching the final address
         stages: Vec<usize>,
         /// final, fully resolved address
@@ -102,12 +104,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         B,
     }
     impl FNameToStringID {
-        fn resolve(&self, data: &[u8], base: usize, m: usize) -> Resolution {
+        fn resolve(&self, data: &[u8], section: String, base: usize, m: usize) -> Resolution {
             let stages = vec![m];
             let n = (m - base).checked_add_signed(5).unwrap();
             let rel = i32::from_le_bytes(data[n - 4..n].try_into().unwrap());
             let address = n.checked_add_signed(rel as isize).map(|a| base + a);
-            Resolution { stages, address }
+            Resolution { section, stages, address }
         }
     }
     #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
@@ -116,7 +118,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         V5_1,
     }
     impl FNameFNameID {
-        fn resolve(&self, data: &[u8], base: usize, m: usize) -> Resolution {
+        fn resolve(&self, data: &[u8], section: String, base: usize, m: usize) -> Resolution {
             let stages = vec![m];
             match self {
                 Self::A => {
@@ -126,7 +128,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
                         )
                         .map(|a| base + a);
-                    Resolution { stages, address }
+                    Resolution { section, stages, address }
                 }
                 Self::V5_1 => {
                     let n = (m - base).checked_add_signed(0x1C + 5).unwrap();
@@ -135,7 +137,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
                         )
                         .map(|a| base + a);
-                    Resolution { stages, address }
+                    Resolution { section, stages, address }
                 }
             }
         }
@@ -148,7 +150,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         V5_0,
     }
     impl StaticConstructObjectInternalID {
-        fn resolve(&self, data: &[u8], base: usize, m: usize) -> Resolution {
+        fn resolve(&self, data: &[u8], section: String, base: usize, m: usize) -> Resolution {
             let stages = vec![m];
             match self {
                 Self::A | Self::V4_12 => {
@@ -158,7 +160,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
                         )
                         .map(|a| base + a);
-                    Resolution { stages, address }
+                    Resolution { section, stages, address }
                 }
                 Self::V4_16_4_19 | Self::V5_0 => {
                     let n = m - base + 5;
@@ -167,7 +169,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
                         )
                         .map(|a| base + a);
-                    Resolution { stages, address }
+                    Resolution { section, stages, address }
                 }
             }
         }
@@ -178,7 +180,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         V4_20,
     }
     impl GUObjectArrayID {
-        fn resolve(&self, data: &[u8], base: usize, m: usize) -> Resolution {
+        fn resolve(&self, data: &[u8], section: String, base: usize, m: usize) -> Resolution {
             let stages = vec![m];
             match self {
                 Self::A => unimplemented!(),
@@ -189,7 +191,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             i32::from_le_bytes(data[n..n + 4].try_into().unwrap()) as isize
                         )
                         .map(|a| base + a - 0xc);
-                    Resolution { stages, address }
+                    Resolution { section, stages, address }
                 }
             }
         }
@@ -215,16 +217,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Self::GNatives => Sig::GNatives,
             }
         }
-        fn resolve(&self, data: &[u8], base: usize, m: usize) -> Resolution {
+        fn resolve(&self, data: &[u8], section: String, base: usize, m: usize) -> Resolution {
             match self {
-                Self::FNameToString(f) => f.resolve(data, base, m),
-                Self::FNameFname(f) => f.resolve(data, base, m),
-                Self::StaticConstructObjectInternal(f) => f.resolve(data, base, m),
+                Self::FNameToString(f) => f.resolve(data, section, base, m),
+                Self::FNameFname(f) => f.resolve(data, section, base, m),
+                Self::StaticConstructObjectInternal(f) => f.resolve(data, section, base, m),
                 Self::GMalloc => Resolution {
+                    section,
                     stages: vec![],
                     address: Some(m),
                 },
-                Self::GUObjectArray(f) => f.resolve(data, base, m),
+                Self::GUObjectArray(f) => f.resolve(data, section, base, m),
                 Self::GNatives => {
                     let stages = vec![m];
                     for i in m - base..m - base + 400 {
@@ -236,10 +239,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 .checked_add_signed(i32::from_le_bytes(
                                     data[i + 3..i + 3 + 4].try_into().unwrap(),
                                 ) as isize);
-                            return Resolution { stages, address };
+                            return Resolution { section, stages, address };
                         }
                     }
                     Resolution {
+                        section,
                         stages,
                         address: None,
                     }
@@ -248,62 +252,86 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
+    struct PatternConfig {
+        id: PatternID,
+        section: Option<object::SectionKind>,
+        pattern: Pattern,
+    }
+    impl PatternConfig {
+        fn new(id: PatternID, section: Option<object::SectionKind>, pattern: Pattern) -> Self {
+            Self { id, section, pattern }
+        }
+    }
+
     let patterns = [
-        (
+        PatternConfig::new(
             PatternID::FNameToString(FNameToStringID::A),
+            Some(object::SectionKind::Text),
             Pattern::new("E8 ?? ?? ?? ?? 48 8B 4C 24 ?? 8B FD 48 85 C9")?,
         ),
-        (
+        PatternConfig::new(
             PatternID::FNameToString(FNameToStringID::B),
+            Some(object::SectionKind::Text),
             Pattern::new("E8 ?? ?? ?? ?? BD 01 00 00 00 41 39 6E ?? 0F 8E")?,
         ),
 
-        (
+        PatternConfig::new(
             PatternID::FNameFname(FNameFNameID::A),
+            Some(object::SectionKind::Text),
             Pattern::new("40 53 48 83 EC ?? 41 B8 01 00 00 00 48 8D 15 ?? ?? ?? ?? 48 8D 4C 24 ?? E8 ?? ?? ?? ?? B9")?
         ),
-        (
+        PatternConfig::new(
             PatternID::FNameFname(FNameFNameID::V5_1),
+            Some(object::SectionKind::Text),
             Pattern::new("57 48 83 EC 50 41 B8 01 00 00 00 0F 29 74 24 40 48 8D ?? ?? ?? ?? ?? 48 8D 4C 24 60 E8")?
         ),
 
-        (
+        PatternConfig::new(
             PatternID::StaticConstructObjectInternal(StaticConstructObjectInternalID::A),
+            Some(object::SectionKind::Text),
             Pattern::new("C0 E9 02 32 88 ?? ?? ?? ?? 80 E1 01 30 88 ?? ?? ?? ?? 48")?,
         ),
-        (
+        PatternConfig::new(
             PatternID::StaticConstructObjectInternal(StaticConstructObjectInternalID::V4_12),
+            Some(object::SectionKind::Text),
             Pattern::new("89 8E C8 03 00 00 3B 8E CC 03 00 00 7E 0F 41 8B D6 48 8D 8E C0 03 00 00")?,
         ),
-        (
+        PatternConfig::new(
             PatternID::StaticConstructObjectInternal(StaticConstructObjectInternalID::V4_16_4_19),
+            Some(object::SectionKind::Text),
             Pattern::new("E8 ?? ?? ?? ?? 0F B6 8F ?? 01 00 00 48 89 87 ?? 01 00 00")?,
         ),
-        (
+        PatternConfig::new(
             PatternID::StaticConstructObjectInternal(StaticConstructObjectInternalID::V5_0),
+            Some(object::SectionKind::Text),
             Pattern::new("E8 ?? ?? ?? ?? 48 8B D8 48 39 75 30 74 15")?,
         ) ,
 
-        (
+        PatternConfig::new(
             PatternID::GMalloc,
+            Some(object::SectionKind::Text),
             Pattern::new("48 85 C9 74 2E 53 48 83 EC 20 48 8B D9 48 8B ?? ?? ?? ?? ?? 48 85 C9")?,
         ),
 
-        (
+        PatternConfig::new(
             PatternID::GUObjectArray(GUObjectArrayID::A),
+            Some(object::SectionKind::Text),
             Pattern::new("48 03 ?? ?? ?? ?? ?? 48 8B 10 48 85 D2 74 07")?,
         ),
-        (
+        PatternConfig::new(
             PatternID::GUObjectArray(GUObjectArrayID::V4_20),
+            Some(object::SectionKind::Text),
             Pattern::new("48 8B ?? ?? ?? ?? ?? 48 8B 0C C8 ?? 8B 04 ?? 48 85 C0")?, // > 4.20
         ),
 
-        (
+        PatternConfig::new(
             PatternID::GNatives,
+            Some(object::SectionKind::Text),
             Pattern::new("cc 51 20 01")?,
         ),
     ];
-    let pat: Vec<_> = patterns.iter().map(|(id, p)| (id, p)).collect();
+    let pat = patterns.iter().map(|PatternConfig{id, section, pattern}| ((id, section), pattern)).collect_vec();
+    let pat_ref = pat.iter().map(|(id, p)| (id, *p)).collect_vec();
 
     let mut games: HashSet<String> = Default::default();
 
@@ -368,17 +396,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut scans = vec![];
 
         for section in obj_file.sections() {
-            if section.kind() != object::SectionKind::Text {
-                continue;
-            }
-
             let base_address = section.address() as usize;
+            let section_name = section.name()?;
+            println!("{section_name}");
             let data = section.data()?;
             scans.push(Scan {
                 base_address,
-                results: scan(pat.as_slice(), base_address, data)
+                results: scan(pat_ref.as_slice(), base_address, data)
                     .into_iter()
-                    .map(|(id, m)| (id, id.resolve(data, base_address, m)))
+                    .filter(|((_, s), _)| if let Some(s) = s { *s == section.kind()} else {true} )
+                    .map(|((id, _section), m)| (*id, id.resolve(data, section_name.to_owned(), base_address, m)))
                     .collect(),
             });
         }
@@ -486,7 +513,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut summary = Table::new();
     let title_strs: Vec<String> = ["".to_owned()]
         .into_iter()
-        .chain(patterns.iter().map(|(id, _)| format!("{:?}", id)))
+        .chain(patterns.iter().map(|conf| format!("{:?}", conf.id)))
         .collect();
     summary.set_titles(Row::new(title_strs.iter().map(|s| Cell::new(s)).collect()));
     let mut totals = patterns.iter().map(|_| Summary::default()).collect_vec();
@@ -496,8 +523,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let summaries: Vec<Summary> = patterns
             .iter()
-            .map(|(id, _)| {
-                let res = all.get(&(game.to_string(), id));
+            .map(|conf| {
+                let res = all.get(&(game.to_string(), &conf.id));
                 if let Some(res) = res {
                     Summary {
                         matches: res.len(),
