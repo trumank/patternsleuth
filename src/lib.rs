@@ -5,7 +5,7 @@ pub mod scanner;
 
 use anyhow::{bail, Result};
 
-use patterns::PatternID;
+use patterns::Sig;
 
 #[derive(Debug)]
 enum PatternMode {
@@ -86,21 +86,28 @@ pub struct Resolution {
     pub address: Option<usize>,
 }
 
+type Resolve = fn(data: &[u8], section: String, base: usize, m: usize) -> Resolution;
 pub struct PatternConfig {
-    pub id: PatternID,
+    pub sig: Sig,
+    pub name: String,
     pub section: Option<object::SectionKind>,
     pub pattern: Pattern,
+    pub resolve: Resolve,
 }
 impl PatternConfig {
     fn new(
-        id: patterns::PatternID,
+        sig: Sig,
+        name: String,
         section: Option<object::SectionKind>,
         pattern: Pattern,
+        resolve: Resolve,
     ) -> Self {
         Self {
-            id,
+            sig,
+            name,
             section,
             pattern,
+            resolve,
         }
     }
 }

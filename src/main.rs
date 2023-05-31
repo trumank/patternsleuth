@@ -11,7 +11,7 @@ use object::{Object, ObjectSection};
 use strum::IntoEnumIterator;
 
 use patternsleuth::{
-    patterns::{get_patterns, PatternID, Sig},
+    patterns::{get_patterns, Sig},
     PatternConfig, Resolution,
 };
 
@@ -77,19 +77,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let patterns = get_patterns()?;
     let pat = patterns
         .iter()
-        .map(
-            |PatternConfig {
-                 id,
-                 section,
-                 pattern,
-             }| ((id, section), pattern),
-        )
+        .map(|config| (config, &config.pattern))
         .collect_vec();
     let pat_ref = pat.iter().map(|(id, p)| (id, *p)).collect_vec();
 
     let mut games: HashSet<String> = Default::default();
 
-    let mut all: HashMap<(String, &PatternID), Vec<Resolution>> = HashMap::new();
+    let mut all: HashMap<(String, (&Sig, &String)), Vec<Resolution>> = HashMap::new();
 
     use colored::Colorize;
     use itertools::join;
@@ -151,7 +145,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         struct Scan<'a> {
             base_address: usize,
-            results: Vec<(&'a PatternID, Resolution)>,
+            results: Vec<(&'a PatternConfig, Resolution)>,
         }
 
         let mut scans = vec![];
@@ -164,17 +158,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 base_address,
                 results: patternsleuth::scanner::scan(pat_ref.as_slice(), base_address, data)
                     .into_iter()
-                    .filter(|((_, s), _)| {
-                        if let Some(s) = s {
-                            *s == section.kind()
+                    .filter(|(config, _)| {
+                        if let Some(s) = config.section {
+                            s == section.kind()
                         } else {
                             true
                         }
                     })
-                    .map(|((id, _section), m)| {
+                    .map(|(config, m)| {
                         (
-                            *id,
-                            id.resolve(data, section_name.to_owned(), base_address, m),
+                            *config,
+                            (config.resolve)(data, section_name.to_owned(), base_address, m),
                         )
                     })
                     .collect(),
@@ -184,7 +178,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let folded_scans = scans
             .iter()
             .flat_map(|scan| scan.results.iter())
-            .map(|(id, m)| (id.sig(), (id, m)))
+            .map(|(config, m)| (&config.sig, (&config.name, m)))
             .fold(HashMap::new(), |mut map, (k, v)| {
                 map.entry(k).or_insert_with(Vec::new).push(v);
                 map
@@ -209,7 +203,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .map(|m| join(
                         m.iter()
                             .fold(
-                                HashMap::<(&&PatternID, Option<usize>), usize>::new(),
+                                HashMap::<(&String, Option<usize>), usize>::new(),
                                 |mut map, m| {
                                     *map.entry((m.0, m.1.address)).or_default() += 1;
                                     map
@@ -250,7 +244,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             .into_iter()
             .flat_map(|scan| scan.results.into_iter())
             .fold(&mut all, |map, m| {
-                map.entry((game.to_string(), m.0)).or_default().push(m.1);
+                map.entry((game.to_string(), (&m.0.sig, &m.0.name)))
+                    .or_default()
+                    .push(m.1);
                 map
             });
 
@@ -276,7 +272,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut summary = Table::new();
     let title_strs: Vec<String> = ["".to_owned()]
         .into_iter()
-        .chain(patterns.iter().map(|conf| format!("{:?}", conf.id)))
+        .chain(
+            patterns
+                .iter()
+                .map(|conf| format!("{:?}({})", conf.sig, conf.name)),
+        )
         .collect();
     summary.set_titles(Row::new(title_strs.iter().map(|s| Cell::new(s)).collect()));
     let mut totals = patterns.iter().map(|_| Summary::default()).collect_vec();
@@ -287,7 +287,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let summaries: Vec<Summary> = patterns
             .iter()
             .map(|conf| {
-                let res = all.get(&(game.to_string(), &conf.id));
+                let res = all.get(&(game.to_string(), (&conf.sig, &conf.name)));
                 if let Some(res) = res {
                     Summary {
                         matches: res.len(),
