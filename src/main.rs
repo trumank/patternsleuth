@@ -220,7 +220,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 }
                             )
                             .iter()
-                            .sorted_by_key(|(&m, _)|m)
+                            .sorted_by_key(|(&m, _)| (m.1, m.0))
                             .map(|(m, count)| {
                                 let count = if *count > 1 {
                                     format!(" (x{count})")
@@ -228,10 +228,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                                     "".to_string()
                                 };
                                 let s = format!(
-                                    "{}{} {:?}",
+                                    "{} {:?}{}",
                                     m.1.map_or("failed".to_string(), |a| format!("{:016x}", a)),
+                                    m.0,
                                     count,
-                                    m.0
                                 );
                                 if m.1.is_none() {
                                     s.red()
