@@ -10,24 +10,10 @@ use itertools::Itertools;
 use object::{Object, ObjectSection};
 use strum::IntoEnumIterator;
 
-use patternsleuth::*;
-
-#[derive(
-    Debug, Hash, Eq, PartialEq, PartialOrd, strum::Display, strum::EnumString, strum::EnumIter,
-)]
-enum Sig {
-    #[strum(serialize = "FName::ToString")]
-    FNameToString,
-    #[strum(serialize = "FName::FName")]
-    FNameFName,
-    GMalloc,
-    GUObjectArray,
-    GNatives,
-    //ProcessInternal, // not found by pattern scan
-    //ProcessLocalScriptFunction, // not found by pattern scan
-    #[strum(serialize = "StaticConstructObject_Internal")]
-    StaticConstructObjectInternal,
-}
+use patternsleuth::{
+    patterns::{get_patterns, PatternID, Sig},
+    PatternConfig, Resolution,
+};
 
 struct Log {
     addresses: Addresses,
@@ -88,254 +74,26 @@ fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Log> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    #[derive(Debug)]
-    struct Resolution {
-        /// name of section pattern was found in
-        section: String,
-        /// intermediate addresses of interest before reaching the final address
-        stages: Vec<usize>,
-        /// final, fully resolved address
-        address: Option<usize>,
-    }
-
-    #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
-    enum FNameToStringID {
-        A,
-        B,
-    }
-    impl FNameToStringID {
-        fn resolve(&self, data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-            let stages = vec![m];
-            let n = (m - base).checked_add_signed(5).unwrap();
-            let rel = i32::from_le_bytes(data[n - 4..n].try_into().unwrap());
-            let address = n.checked_add_signed(rel as isize).map(|a| base + a);
-            Resolution { section, stages, address }
-        }
-    }
-    #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
-    enum FNameFNameID {
-        A,
-        V5_1,
-    }
-    impl FNameFNameID {
-        fn resolve(&self, data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-            let stages = vec![m];
-            match self {
-                Self::A => {
-                    let n = (m - base).checked_add_signed(0x18 + 5).unwrap();
-                    let address = n
-                        .checked_add_signed(
-                            i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
-                        )
-                        .map(|a| base + a);
-                    Resolution { section, stages, address }
-                }
-                Self::V5_1 => {
-                    let n = (m - base).checked_add_signed(0x1C + 5).unwrap();
-                    let address = n
-                        .checked_add_signed(
-                            i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
-                        )
-                        .map(|a| base + a);
-                    Resolution { section, stages, address }
-                }
-            }
-        }
-    }
-    #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
-    enum StaticConstructObjectInternalID {
-        A,
-        V4_12,
-        V4_16_4_19,
-        V5_0,
-    }
-    impl StaticConstructObjectInternalID {
-        fn resolve(&self, data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-            let stages = vec![m];
-            match self {
-                Self::A | Self::V4_12 => {
-                    let n = m - base - 0x0e;
-                    let address = n
-                        .checked_add_signed(
-                            i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
-                        )
-                        .map(|a| base + a);
-                    Resolution { section, stages, address }
-                }
-                Self::V4_16_4_19 | Self::V5_0 => {
-                    let n = m - base + 5;
-                    let address = n
-                        .checked_add_signed(
-                            i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
-                        )
-                        .map(|a| base + a);
-                    Resolution { section, stages, address }
-                }
-            }
-        }
-    }
-    #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
-    enum GUObjectArrayID {
-        A,
-        V4_20,
-    }
-    impl GUObjectArrayID {
-        fn resolve(&self, data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-            let stages = vec![m];
-            match self {
-                Self::A => unimplemented!(),
-                Self::V4_20 => {
-                    let n = m - base + 3;
-                    let address = n
-                        .checked_add_signed(
-                            i32::from_le_bytes(data[n..n + 4].try_into().unwrap()) as isize
-                        )
-                        .map(|a| base + a - 0xc);
-                    Resolution { section, stages, address }
-                }
-            }
-        }
-    }
-
-    #[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
-    enum PatternID {
-        FNameToString(FNameToStringID),
-        FNameFname(FNameFNameID),
-        StaticConstructObjectInternal(StaticConstructObjectInternalID),
-        GMalloc,
-        GUObjectArray(GUObjectArrayID),
-        GNatives,
-    }
-    impl PatternID {
-        fn sig(&self) -> Sig {
-            match self {
-                Self::FNameToString(_) => Sig::FNameToString,
-                Self::FNameFname(_) => Sig::FNameFName,
-                Self::StaticConstructObjectInternal(_) => Sig::StaticConstructObjectInternal,
-                Self::GMalloc => Sig::GMalloc,
-                Self::GUObjectArray(_) => Sig::GUObjectArray,
-                Self::GNatives => Sig::GNatives,
-            }
-        }
-        fn resolve(&self, data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-            match self {
-                Self::FNameToString(f) => f.resolve(data, section, base, m),
-                Self::FNameFname(f) => f.resolve(data, section, base, m),
-                Self::StaticConstructObjectInternal(f) => f.resolve(data, section, base, m),
-                Self::GMalloc => Resolution {
-                    section,
-                    stages: vec![],
-                    address: Some(m),
-                },
-                Self::GUObjectArray(f) => f.resolve(data, section, base, m),
-                Self::GNatives => {
-                    let stages = vec![m];
-                    for i in m - base..m - base + 400 {
-                        if data[i] == 0x4c
-                            && data[i + 1] == 0x8d
-                            && (data[i + 2] & 0xc7 == 5 && data[i + 2] > 0x20)
-                        {
-                            let address = (base + i + 7)
-                                .checked_add_signed(i32::from_le_bytes(
-                                    data[i + 3..i + 3 + 4].try_into().unwrap(),
-                                ) as isize);
-                            return Resolution { section, stages, address };
-                        }
-                    }
-                    Resolution {
-                        section,
-                        stages,
-                        address: None,
-                    }
-                }
-            }
-        }
-    }
-
-    struct PatternConfig {
-        id: PatternID,
-        section: Option<object::SectionKind>,
-        pattern: Pattern,
-    }
-    impl PatternConfig {
-        fn new(id: PatternID, section: Option<object::SectionKind>, pattern: Pattern) -> Self {
-            Self { id, section, pattern }
-        }
-    }
-
-    let patterns = [
-        PatternConfig::new(
-            PatternID::FNameToString(FNameToStringID::A),
-            Some(object::SectionKind::Text),
-            Pattern::new("E8 ?? ?? ?? ?? 48 8B 4C 24 ?? 8B FD 48 85 C9")?,
-        ),
-        PatternConfig::new(
-            PatternID::FNameToString(FNameToStringID::B),
-            Some(object::SectionKind::Text),
-            Pattern::new("E8 ?? ?? ?? ?? BD 01 00 00 00 41 39 6E ?? 0F 8E")?,
-        ),
-
-        PatternConfig::new(
-            PatternID::FNameFname(FNameFNameID::A),
-            Some(object::SectionKind::Text),
-            Pattern::new("40 53 48 83 EC ?? 41 B8 01 00 00 00 48 8D 15 ?? ?? ?? ?? 48 8D 4C 24 ?? E8 ?? ?? ?? ?? B9")?
-        ),
-        PatternConfig::new(
-            PatternID::FNameFname(FNameFNameID::V5_1),
-            Some(object::SectionKind::Text),
-            Pattern::new("57 48 83 EC 50 41 B8 01 00 00 00 0F 29 74 24 40 48 8D ?? ?? ?? ?? ?? 48 8D 4C 24 60 E8")?
-        ),
-
-        PatternConfig::new(
-            PatternID::StaticConstructObjectInternal(StaticConstructObjectInternalID::A),
-            Some(object::SectionKind::Text),
-            Pattern::new("C0 E9 02 32 88 ?? ?? ?? ?? 80 E1 01 30 88 ?? ?? ?? ?? 48")?,
-        ),
-        PatternConfig::new(
-            PatternID::StaticConstructObjectInternal(StaticConstructObjectInternalID::V4_12),
-            Some(object::SectionKind::Text),
-            Pattern::new("89 8E C8 03 00 00 3B 8E CC 03 00 00 7E 0F 41 8B D6 48 8D 8E C0 03 00 00")?,
-        ),
-        PatternConfig::new(
-            PatternID::StaticConstructObjectInternal(StaticConstructObjectInternalID::V4_16_4_19),
-            Some(object::SectionKind::Text),
-            Pattern::new("E8 ?? ?? ?? ?? 0F B6 8F ?? 01 00 00 48 89 87 ?? 01 00 00")?,
-        ),
-        PatternConfig::new(
-            PatternID::StaticConstructObjectInternal(StaticConstructObjectInternalID::V5_0),
-            Some(object::SectionKind::Text),
-            Pattern::new("E8 ?? ?? ?? ?? 48 8B D8 48 39 75 30 74 15")?,
-        ) ,
-
-        PatternConfig::new(
-            PatternID::GMalloc,
-            Some(object::SectionKind::Text),
-            Pattern::new("48 85 C9 74 2E 53 48 83 EC 20 48 8B D9 48 8B ?? ?? ?? ?? ?? 48 85 C9")?,
-        ),
-
-        PatternConfig::new(
-            PatternID::GUObjectArray(GUObjectArrayID::A),
-            Some(object::SectionKind::Text),
-            Pattern::new("48 03 ?? ?? ?? ?? ?? 48 8B 10 48 85 D2 74 07")?,
-        ),
-        PatternConfig::new(
-            PatternID::GUObjectArray(GUObjectArrayID::V4_20),
-            Some(object::SectionKind::Text),
-            Pattern::new("48 8B ?? ?? ?? ?? ?? 48 8B 0C C8 ?? 8B 04 ?? 48 85 C0")?, // > 4.20
-        ),
-
-        PatternConfig::new(
-            PatternID::GNatives,
-            Some(object::SectionKind::Text),
-            Pattern::new("cc 51 20 01")?,
-        ),
-    ];
-    let pat = patterns.iter().map(|PatternConfig{id, section, pattern}| ((id, section), pattern)).collect_vec();
+    let patterns = get_patterns()?;
+    let pat = patterns
+        .iter()
+        .map(
+            |PatternConfig {
+                 id,
+                 section,
+                 pattern,
+             }| ((id, section), pattern),
+        )
+        .collect_vec();
     let pat_ref = pat.iter().map(|(id, p)| (id, *p)).collect_vec();
 
     let mut games: HashSet<String> = Default::default();
 
     let mut all: HashMap<(String, &PatternID), Vec<Resolution>> = HashMap::new();
+
+    use colored::Colorize;
+    use itertools::join;
+    use prettytable::{row, Cell, Row, Table};
 
     'loop_games: for entry in fs::read_dir("games")? {
         let entry = entry?;
@@ -398,14 +156,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         for section in obj_file.sections() {
             let base_address = section.address() as usize;
             let section_name = section.name()?;
-            println!("{section_name}");
             let data = section.data()?;
             scans.push(Scan {
                 base_address,
-                results: scan(pat_ref.as_slice(), base_address, data)
+                results: patternsleuth::scanner::scan(pat_ref.as_slice(), base_address, data)
                     .into_iter()
-                    .filter(|((_, s), _)| if let Some(s) = s { *s == section.kind()} else {true} )
-                    .map(|((id, _section), m)| (*id, id.resolve(data, section_name.to_owned(), base_address, m)))
+                    .filter(|((_, s), _)| {
+                        if let Some(s) = s {
+                            *s == section.kind()
+                        } else {
+                            true
+                        }
+                    })
+                    .map(|((id, _section), m)| {
+                        (
+                            *id,
+                            id.resolve(data, section_name.to_owned(), base_address, m),
+                        )
+                    })
                     .collect(),
             });
         }
@@ -418,10 +186,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 map.entry(k).or_insert_with(Vec::new).push(v);
                 map
             });
-
-        use colored::Colorize;
-        use itertools::join;
-        use prettytable::{row, Table};
 
         let mut table = Table::new();
         table.set_titles(row!["sig", "log", "offline scan"]);
@@ -490,10 +254,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!();
     }
 
-    use colored::Colorize;
-    use itertools::join;
-    use prettytable::{row, Cell, Row, Table};
-
     #[derive(Debug, Default)]
     struct Summary {
         matches: usize,
@@ -554,7 +314,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         let cell_strs: Vec<String> = summaries.iter().map(Summary::format).collect();
-        row.extend(cell_strs.iter().map(|s| Cell::new(&s)));
+        row.extend(cell_strs.iter().map(|s| Cell::new(s)));
         summary.add_row(Row::new(row));
     }
 
@@ -563,7 +323,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .chain(totals.iter().map(Summary::format))
         .collect_vec();
     summary.add_row(Row::new(
-        total_strs.iter().map(|s| Cell::new(&s)).collect_vec(),
+        total_strs.iter().map(|s| Cell::new(s)).collect_vec(),
     ));
 
     //let games: HashSet<String> = all.keys().map(|(game, _)| game).cloned().collect();

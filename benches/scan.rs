@@ -13,11 +13,11 @@ fn gig(c: &mut Criterion) {
 
     let pattern = patternsleuth::Pattern::new("f9 82 db db 2d ?? 6f 15 ?? 44 54 f4 c8 aa d1 72 53 ?? a5 7b 22 24 94 7f ec 28 ?? e0 5e d4 ae 39").unwrap();
 
-    let result = patternsleuth::scan(&[(&(), &pattern)], 0, &data);
+    let result = patternsleuth::scanner::scan(&[(&(), &pattern)], 0, &data);
     assert_eq!(result, [(&(), size - needle.len())]);
 
     c.bench_function("gig", |b| {
-        b.iter(|| patternsleuth::scan(&[(&(), &pattern)], 0, &data))
+        b.iter(|| patternsleuth::scanner::scan(&[(&(), &pattern)], 0, &data))
     });
 }
 
