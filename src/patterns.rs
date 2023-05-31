@@ -19,7 +19,7 @@ pub enum Sig {
     StaticConstructObjectInternal,
     Pak,
     PatchPak,
-    ConsoleManager,
+    IConsoleManagerSingleton,
 }
 
 pub fn get_patterns() -> Result<Vec<PatternConfig>> {
@@ -127,12 +127,34 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::new("5f 00 50 00 2e 00 70 00 61 00 6b")?,
             resolve_self,
         ),
+
         PatternConfig::new(
-            Sig::ConsoleManager,
+            Sig::IConsoleManagerSingleton,
             "A".to_string(),
             None,
-            Pattern::new("72 00 2e 00 44 00 75 00 6d 00 70 00 69 00 6e 00 67 00 4d 00 6f 00 76 00 69 00 65 00")?,
-            resolve_self,
+            Pattern::new("48 8B 0D ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 0D")?,
+            Test::resolve_a,
+        ),
+        PatternConfig::new(
+            Sig::IConsoleManagerSingleton,
+            "B".to_string(),
+            None,
+            Pattern::new("48 8B 0D ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 4C 24")?,
+            Test::resolve_b,
+        ),
+        PatternConfig::new(
+            Sig::IConsoleManagerSingleton,
+            "C".to_string(),
+            None,
+            Pattern::new("48 83 EC ?? 48 8B 0D ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D")?,
+            Test::resolve_c,
+        ),
+        PatternConfig::new(
+            Sig::IConsoleManagerSingleton,
+            "D".to_string(),
+            None,
+            Pattern::new("48 89 3D ?? ?? ?? ?? 48 85 FF 75 ?? E8 ?? ?? ?? ?? 48 8B 3D ?? ?? ?? ?? 48 8B 07")?,
+            Test::resolve_d,
         ),
     ])
 }
@@ -269,6 +291,59 @@ mod GNatives {
             section,
             stages,
             address: None,
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+mod Test {
+    use super::*;
+    pub fn resolve_a(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
+        let stages = vec![m];
+        let n = m - base + 3;
+        let address = n
+            .checked_add_signed(i32::from_le_bytes(data[n..n + 4].try_into().unwrap()) as isize)
+            .map(|a| base + a - 4);
+        Resolution {
+            section,
+            stages,
+            address,
+        }
+    }
+    pub fn resolve_b(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
+        let stages = vec![m];
+        let n = m - base + 3;
+        let address = n
+            .checked_add_signed(i32::from_le_bytes(data[n..n + 4].try_into().unwrap()) as isize)
+            .map(|a| base + a - 4);
+        Resolution {
+            section,
+            stages,
+            address,
+        }
+    }
+    pub fn resolve_c(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
+        let stages = vec![m];
+        let n = m - base + 7;
+        let address = n
+            .checked_add_signed(i32::from_le_bytes(data[n..n + 4].try_into().unwrap()) as isize)
+            .map(|a| base + a - 4);
+        Resolution {
+            section,
+            stages,
+            address,
+        }
+    }
+    pub fn resolve_d(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
+        let stages = vec![m];
+        let n = m - base + 3;
+        let address = n
+            .checked_add_signed(i32::from_le_bytes(data[n..n + 4].try_into().unwrap()) as isize)
+            .map(|a| base + a - 4);
+        Resolution {
+            section,
+            stages,
+            address,
         }
     }
 }
