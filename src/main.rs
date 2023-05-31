@@ -220,7 +220,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 }
                             )
                             .iter()
-                            .sorted_by_key(|(&m, _)| (m.1, m.0))
+                            .sorted_by_key(|(&m, _)| m)
                             .map(|(m, count)| {
                                 let count = if *count > 1 {
                                     format!(" (x{count})")
