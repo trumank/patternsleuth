@@ -74,7 +74,14 @@ fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Log> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let patterns = get_patterns()?;
+    let sig_filter = std::env::args()
+        .nth(1)
+        .map(|name| Sig::from_str(name.as_ref()).with_context(|| format!("unknown Sig {:?}", name)))
+        .transpose()?;
+    let patterns = get_patterns()?
+        .into_iter()
+        .filter(|p| sig_filter.as_ref().map(|f| *f == p.sig).unwrap_or(true))
+        .collect_vec();
     let pat = patterns
         .iter()
         .map(|config| (config, &config.pattern))
@@ -188,6 +195,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         table.set_titles(row!["sig", "log", "offline scan"]);
 
         for sig in Sig::iter() {
+            if !sig_filter.as_ref().map(|f| *f == sig).unwrap_or(true) {
+                continue;
+            }
             let sig_log = log
                 .as_ref()
                 .and_then(|a| a.addresses.addresses.get(&sig))
