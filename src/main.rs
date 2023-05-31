@@ -95,8 +95,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     use itertools::join;
     use prettytable::{row, Cell, Row, Table};
 
-    'loop_games: for entry in fs::read_dir("games")? {
-        let entry = entry?;
+    'loop_games: for entry in fs::read_dir("games")?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .sorted_by_key(|e| e.file_name())
+    {
         let dir_name = entry.file_name();
         let game = dir_name.to_string_lossy();
         let log_path = entry.path().join("UE4SS.log");
@@ -278,7 +281,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     summary.set_titles(Row::new(title_strs.iter().map(|s| Cell::new(s)).collect()));
     let mut totals = patterns.iter().map(|_| Summary::default()).collect_vec();
 
-    for game in &games {
+    for game in games.iter().sorted() {
         let mut row = vec![Cell::new(game)];
 
         let summaries: Vec<Summary> = patterns
