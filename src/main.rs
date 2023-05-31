@@ -42,12 +42,12 @@ fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Log> {
     for line in BufReader::new(fs::File::open(path)?).lines() {
         let line = line?;
         if let Some(captures) = re_address.captures(&line) {
-            if let Ok(name) = Sig::from_str(&captures[1]) {
+            if let Ok(sig) = Sig::from_str(&captures[1]) {
                 let address = usize::from_str_radix(&captures[2], 16)?;
-                if addresses.get(&name).map(|a| *a != address).unwrap_or(false) {
-                    bail!("found multiple unique addresses for \"{}\"", name);
+                if addresses.get(&sig).map(|a| *a != address).unwrap_or(false) {
+                    bail!("found multiple unique addresses for \"{}\"", sig);
                 }
-                addresses.insert(name, address);
+                addresses.insert(sig, address);
             }
         } else if let Some(captures) = re_main_exe.captures(&line) {
             main_exe = Some(usize::from_str_radix(&captures[1], 16)?);
