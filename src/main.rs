@@ -188,8 +188,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             results: Vec<(&'a PatternConfig, Resolution)>,
         }
 
+        // perform scans for game
         let mut scans = vec![];
-
         for section in obj_file.sections() {
             let base_address = section.address() as usize;
             let section_name = section.name()?;
@@ -215,6 +215,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             });
         }
 
+        // group results by Sig
         let folded_scans = scans
             .iter()
             .flat_map(|scan| scan.results.iter())
@@ -227,14 +228,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut table = Table::new();
         table.set_titles(row!["sig", "log", "offline scan"]);
 
-        for sig in Sig::iter() {
-            if !sig_filter
+        for sig in Sig::iter().filter(|sig| {
+            sig_filter
                 .as_ref()
                 .map(|f| f.contains(&sig))
                 .unwrap_or(true)
-            {
-                continue;
-            }
+        }) {
+            // get validated Sig addresses from log
             let sig_log = log
                 .as_ref()
                 .and_then(|a| a.addresses.addresses.get(&sig))
@@ -249,6 +249,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .get(&sig)
                     .map(|m| join(
                         m.iter()
+                            // group and count matches by (pattern name, address)
                             .fold(
                                 HashMap::<(&String, Option<usize>), usize>::new(),
                                 |mut map, m| {
@@ -257,13 +258,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 }
                             )
                             .iter()
+                            // sort by pattern name, then match address
                             .sorted_by_key(|(&m, _)| m)
                             .map(|(m, count)| {
+                                // add count indicator if more than 1
                                 let count = if *count > 1 {
                                     format!(" (x{count})")
                                 } else {
                                     "".to_string()
                                 };
+
                                 let s = format!(
                                     "{} {:?}{}",
                                     m.1.map_or("failed".to_string(), |a| format!("{:016x}", a)),
@@ -271,13 +275,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                                     count,
                                 );
                                 if m.1.is_none() {
-                                    s.red()
+                                    s.red() // match addresss is None (resolution failed)
                                 } else if sig_log.is_none() {
-                                    s.normal()
+                                    s.normal() // log is not present so unsure if correct
                                 } else if m.1.unwrap() == sig_log.unwrap() {
-                                    s.green()
+                                    s.green() // address matches log
                                 } else {
-                                    s.red()
+                                    s.red() // match found but does not match log
                                 }
                             }),
                         "\n"
@@ -288,6 +292,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         table.printstd();
 
+        // fold current game scans into summary scans
         scans
             .into_iter()
             .flat_map(|scan| scan.results.into_iter())
