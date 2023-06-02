@@ -250,8 +250,12 @@ mod StaticConstructObjectInternalID {
 #[allow(non_snake_case)]
 mod GUObjectArrayID {
     use super::*;
-    pub fn resolve_a(_data: &[u8], _section: String, _base: usize, _m: usize) -> Resolution {
-        unimplemented!()
+    pub fn resolve_a(_data: &[u8], section: String, _base: usize, m: usize) -> Resolution {
+        Resolution { // TODO
+            section,
+            stages: vec![],
+            address: Some(m),
+        }
     }
     pub fn resolve_v_20(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
         let stages = vec![m];
