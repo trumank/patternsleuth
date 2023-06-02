@@ -74,13 +74,37 @@ fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Log> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let sig_filter = std::env::args()
-        .nth(1)
-        .map(|name| Sig::from_str(name.as_ref()).with_context(|| format!("unknown Sig {:?}", name)))
-        .transpose()?;
+    let (sig_filter, games_filter) = {
+        let mut sig_filter = HashSet::new();
+        let mut games_filter = HashSet::new();
+        for arg in std::env::args().skip(1) {
+            if let Ok(sig) = Sig::from_str(arg.as_ref()) {
+                sig_filter.insert(sig);
+            } else {
+                games_filter.insert(arg);
+            }
+        }
+        (
+            if sig_filter.is_empty() {
+                None
+            } else {
+                Some(sig_filter)
+            },
+            if games_filter.is_empty() {
+                None
+            } else {
+                Some(games_filter)
+            },
+        )
+    };
     let patterns = get_patterns()?
         .into_iter()
-        .filter(|p| sig_filter.as_ref().map(|f| *f == p.sig).unwrap_or(true))
+        .filter(|p| {
+            sig_filter
+                .as_ref()
+                .map(|f| f.contains(&p.sig))
+                .unwrap_or(true)
+        })
         .collect_vec();
     let pat = patterns
         .iter()
@@ -102,7 +126,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         .sorted_by_key(|e| e.file_name())
     {
         let dir_name = entry.file_name();
-        let game = dir_name.to_string_lossy();
+        let game = dir_name.to_string_lossy().to_string();
+        if !games_filter
+            .as_ref()
+            .map(|f| f.contains(&game))
+            .unwrap_or(true)
+        {
+            continue;
+        }
         let log_path = entry.path().join("UE4SS.log");
 
         let log = match read_addresses_from_log(log_path)
@@ -195,7 +226,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         table.set_titles(row!["sig", "log", "offline scan"]);
 
         for sig in Sig::iter() {
-            if !sig_filter.as_ref().map(|f| *f == sig).unwrap_or(true) {
+            if !sig_filter
+                .as_ref()
+                .map(|f| f.contains(&sig))
+                .unwrap_or(true)
+            {
                 continue;
             }
             let sig_log = log
