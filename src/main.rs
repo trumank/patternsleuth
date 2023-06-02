@@ -6,6 +6,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
+use clap::Parser;
 use itertools::Itertools;
 use object::{Object, ObjectSection};
 use patternsleuth::MountedPE;
@@ -15,6 +16,17 @@ use patternsleuth::{
     patterns::{get_patterns, Sig},
     PatternConfig, Resolution,
 };
+
+#[derive(Parser)]
+struct CommandScan {
+    /// A game to scan (can be specified multiple times). Scans everything if omitted
+    #[arg(short, long)]
+    game: Vec<String>,
+
+    /// A signature to scan for (can be specified multiple times). Scans for all signatures if omitted
+    #[arg(short, long)]
+    signature: Vec<Sig>,
+}
 
 struct Log {
     addresses: Addresses,
@@ -75,36 +87,18 @@ fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Log> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let (sig_filter, games_filter) = {
-        let mut sig_filter = HashSet::new();
-        let mut games_filter = HashSet::new();
-        for arg in std::env::args().skip(1) {
-            if let Ok(sig) = Sig::from_str(arg.as_ref()) {
-                sig_filter.insert(sig);
-            } else {
-                games_filter.insert(arg);
-            }
-        }
-        (
-            if sig_filter.is_empty() {
-                None
-            } else {
-                Some(sig_filter)
-            },
-            if games_filter.is_empty() {
-                None
-            } else {
-                Some(games_filter)
-            },
-        )
-    };
+    let cli = CommandScan::parse();
+
+    let sig_filter = cli.signature.into_iter().collect::<HashSet<_>>();
+    let games_filter = cli.game.into_iter().collect::<HashSet<_>>();
+
     let patterns = get_patterns()?
         .into_iter()
         .filter(|p| {
             sig_filter
-                .as_ref()
-                .map(|f| f.contains(&p.sig))
-                .unwrap_or(true)
+                .is_empty()
+                .then_some(true)
+                .unwrap_or_else(|| sig_filter.contains(&p.sig))
         })
         .collect_vec();
     let pat = patterns
@@ -129,9 +123,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         let dir_name = entry.file_name();
         let game = dir_name.to_string_lossy().to_string();
         if !games_filter
-            .as_ref()
-            .map(|f| f.contains(&game))
-            .unwrap_or(true)
+            .is_empty()
+            .then_some(true)
+            .unwrap_or_else(|| games_filter.contains(&game))
         {
             continue;
         }
@@ -230,9 +224,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         for sig in Sig::iter().filter(|sig| {
             sig_filter
-                .as_ref()
-                .map(|f| f.contains(&sig))
-                .unwrap_or(true)
+                .is_empty()
+                .then_some(true)
+                .unwrap_or_else(|| sig_filter.contains(sig))
         }) {
             // get validated Sig addresses from log
             let sig_log = log

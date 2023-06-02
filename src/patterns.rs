@@ -3,7 +3,15 @@ use anyhow::Result;
 use super::{MountedPE, Pattern, PatternConfig, Resolution};
 
 #[derive(
-    Debug, Hash, Eq, PartialEq, PartialOrd, strum::Display, strum::EnumString, strum::EnumIter,
+    Debug,
+    Clone,
+    Hash,
+    Eq,
+    PartialEq,
+    PartialOrd,
+    strum::Display,
+    strum::EnumString,
+    strum::EnumIter,
 )]
 pub enum Sig {
     #[strum(serialize = "FName::ToString")]
