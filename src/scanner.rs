@@ -9,6 +9,10 @@ pub fn scan<'id, ID: Sync>(
 ) -> Vec<(&'id ID, usize)> {
     use rayon::prelude::*;
 
+    if patterns.is_empty() {
+        return vec![];
+    }
+
     const LANES: usize = 16;
 
     let max = patterns.iter().map(|(_id, p)| p.sig.len()).max().unwrap();
