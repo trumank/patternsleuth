@@ -3,7 +3,10 @@
 pub mod patterns;
 pub mod scanner;
 
+use std::ops::{Index, Range};
+
 use anyhow::{bail, Result};
+use object::{File, Object, ObjectSection};
 
 use patterns::Sig;
 
@@ -86,7 +89,7 @@ pub struct Resolution {
     pub address: Option<usize>,
 }
 
-type Resolve = fn(data: &[u8], section: String, base: usize, m: usize) -> Resolution;
+type Resolve = fn(memory: &MountedPE, section: String, match_address: usize) -> Resolution;
 pub struct PatternConfig {
     pub sig: Sig,
     pub name: String,
@@ -109,5 +112,45 @@ impl PatternConfig {
             pattern,
             resolve,
         }
+    }
+}
+
+pub struct MountedPE<'data> {
+    sections: Vec<(usize, &'data [u8])>,
+}
+
+impl<'data> MountedPE<'data> {
+    pub fn new(object: &'data File) -> Result<Self> {
+        Ok(Self {
+            sections: object
+                .sections()
+                .map(|s| Ok((s.address() as usize, s.data()?)))
+                .collect::<Result<Vec<_>>>()?,
+        })
+    }
+}
+impl<'data> Index<usize> for MountedPE<'data> {
+    type Output = u8;
+    fn index(&self, index: usize) -> &Self::Output {
+        self.sections
+            .iter()
+            .find_map(|section| section.1.get(index - section.0))
+            .unwrap()
+    }
+}
+impl<'data> Index<Range<usize>> for MountedPE<'data> {
+    type Output = [u8];
+    fn index(&self, index: Range<usize>) -> &Self::Output {
+        self.sections
+            .iter()
+            .find_map(|section| {
+                if index.start >= section.0 && index.end < section.0 + section.1.len() {
+                    let relative_range = index.start - section.0..index.end - section.0;
+                    Some(&section.1[relative_range])
+                } else {
+                    None
+                }
+            })
+            .unwrap()
     }
 }

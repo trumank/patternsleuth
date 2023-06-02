@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::{Pattern, PatternConfig, Resolution};
+use super::{MountedPE, Pattern, PatternConfig, Resolution};
 
 #[derive(
     Debug, Hash, Eq, PartialEq, PartialOrd, strum::Display, strum::EnumString, strum::EnumIter,
@@ -160,22 +160,22 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
 }
 
 /// do nothing, return address of pattern
-pub fn resolve_self(_data: &[u8], section: String, _base: usize, m: usize) -> Resolution {
+pub fn resolve_self(_memory: &MountedPE, section: String, match_address: usize) -> Resolution {
     Resolution {
         section,
         stages: vec![],
-        address: Some(m),
+        address: Some(match_address),
     }
 }
 
 #[allow(non_snake_case)]
 mod FNameToStringID {
     use super::*;
-    pub fn resolve(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-        let stages = vec![m];
-        let n = (m - base).checked_add_signed(5).unwrap();
-        let rel = i32::from_le_bytes(data[n - 4..n].try_into().unwrap());
-        let address = n.checked_add_signed(rel as isize).map(|a| base + a);
+    pub fn resolve(memory: &MountedPE, section: String, match_address: usize) -> Resolution {
+        let stages = vec![match_address];
+        let n = match_address + 5;
+        let rel = i32::from_le_bytes(memory[n - 4..n].try_into().unwrap());
+        let address = n.checked_add_signed(rel as isize);
         Resolution {
             section,
             stages,
@@ -187,24 +187,22 @@ mod FNameToStringID {
 #[allow(non_snake_case)]
 mod FNameFNameID {
     use super::*;
-    pub fn resolve_a(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-        let stages = vec![m];
-        let n = (m - base).checked_add_signed(0x18 + 5).unwrap();
-        let address = n
-            .checked_add_signed(i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize)
-            .map(|a| base + a);
+    pub fn resolve_a(memory: &MountedPE, section: String, match_address: usize) -> Resolution {
+        let stages = vec![match_address];
+        let n = match_address.checked_add_signed(0x18 + 5).unwrap();
+        let address =
+            n.checked_add_signed(i32::from_le_bytes(memory[n - 4..n].try_into().unwrap()) as isize);
         Resolution {
             section,
             stages,
             address,
         }
     }
-    pub fn resolve_v5_1(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-        let stages = vec![m];
-        let n = (m - base).checked_add_signed(0x1C + 5).unwrap();
-        let address = n
-            .checked_add_signed(i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize)
-            .map(|a| base + a);
+    pub fn resolve_v5_1(memory: &MountedPE, section: String, match_address: usize) -> Resolution {
+        let stages = vec![match_address];
+        let n = match_address.checked_add_signed(0x1C + 5).unwrap();
+        let address =
+            n.checked_add_signed(i32::from_le_bytes(memory[n - 4..n].try_into().unwrap()) as isize);
         Resolution {
             section,
             stages,
@@ -216,12 +214,15 @@ mod FNameFNameID {
 #[allow(non_snake_case)]
 mod StaticConstructObjectInternalID {
     use super::*;
-    pub fn resolve_a_v4_12(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-        let stages = vec![m];
-        let n = m - base - 0x0e;
-        let address = n
-            .checked_add_signed(i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize)
-            .map(|a| base + a);
+    pub fn resolve_a_v4_12(
+        memory: &MountedPE,
+        section: String,
+        match_address: usize,
+    ) -> Resolution {
+        let stages = vec![match_address];
+        let n = match_address - 0x0e;
+        let address =
+            n.checked_add_signed(i32::from_le_bytes(memory[n - 4..n].try_into().unwrap()) as isize);
         Resolution {
             section,
             stages,
@@ -229,16 +230,14 @@ mod StaticConstructObjectInternalID {
         }
     }
     pub fn resolve_v4_16_4_19_v5_0(
-        data: &[u8],
+        memory: &MountedPE,
         section: String,
-        base: usize,
-        m: usize,
+        match_address: usize,
     ) -> Resolution {
-        let stages = vec![m];
-        let n = m - base + 5;
-        let address = n
-            .checked_add_signed(i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize)
-            .map(|a| base + a);
+        let stages = vec![match_address];
+        let n = match_address + 5;
+        let address =
+            n.checked_add_signed(i32::from_le_bytes(memory[n - 4..n].try_into().unwrap()) as isize);
         Resolution {
             section,
             stages,
@@ -250,19 +249,20 @@ mod StaticConstructObjectInternalID {
 #[allow(non_snake_case)]
 mod GUObjectArrayID {
     use super::*;
-    pub fn resolve_a(_data: &[u8], section: String, _base: usize, m: usize) -> Resolution {
-        Resolution { // TODO
+    pub fn resolve_a(_memory: &MountedPE, section: String, match_address: usize) -> Resolution {
+        Resolution {
+            // TODO
             section,
             stages: vec![],
-            address: Some(m),
+            address: Some(match_address),
         }
     }
-    pub fn resolve_v_20(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-        let stages = vec![m];
-        let n = m - base + 3;
+    pub fn resolve_v_20(memory: &MountedPE, section: String, match_address: usize) -> Resolution {
+        let stages = vec![match_address];
+        let n = match_address + 3;
         let address = n
-            .checked_add_signed(i32::from_le_bytes(data[n..n + 4].try_into().unwrap()) as isize)
-            .map(|a| base + a - 0xc);
+            .checked_add_signed(i32::from_le_bytes(memory[n..n + 4].try_into().unwrap()) as isize)
+            .map(|a| a - 0xc);
         Resolution {
             section,
             stages,
@@ -274,15 +274,15 @@ mod GUObjectArrayID {
 #[allow(non_snake_case)]
 mod GNatives {
     use super::*;
-    pub fn resolve(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-        let stages = vec![m];
-        for i in m - base..m - base + 400 {
-            if data[i] == 0x4c
-                && data[i + 1] == 0x8d
-                && (data[i + 2] & 0xc7 == 5 && data[i + 2] > 0x20)
+    pub fn resolve(memory: &MountedPE, section: String, match_address: usize) -> Resolution {
+        let stages = vec![match_address];
+        for i in match_address..match_address + 400 {
+            if memory[i] == 0x4c
+                && memory[i + 1] == 0x8d
+                && (memory[i + 2] & 0xc7 == 5 && memory[i + 2] > 0x20)
             {
-                let address = (base + i + 7).checked_add_signed(i32::from_le_bytes(
-                    data[i + 3..i + 3 + 4].try_into().unwrap(),
+                let address = (i + 7).checked_add_signed(i32::from_le_bytes(
+                    memory[i + 3..i + 3 + 4].try_into().unwrap(),
                 ) as isize);
                 return Resolution {
                     section,
@@ -302,48 +302,48 @@ mod GNatives {
 #[allow(non_snake_case)]
 mod Test {
     use super::*;
-    pub fn resolve_a(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-        let stages = vec![m];
-        let n = m - base + 3;
+    pub fn resolve_a(memory: &MountedPE, section: String, match_address: usize) -> Resolution {
+        let stages = vec![match_address];
+        let n = match_address + 3;
         let address = n
-            .checked_add_signed(i32::from_le_bytes(data[n..n + 4].try_into().unwrap()) as isize)
-            .map(|a| base + a - 4);
+            .checked_add_signed(i32::from_le_bytes(memory[n..n + 4].try_into().unwrap()) as isize)
+            .map(|a| a - 4);
         Resolution {
             section,
             stages,
             address,
         }
     }
-    pub fn resolve_b(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-        let stages = vec![m];
-        let n = m - base + 3;
+    pub fn resolve_b(memory: &MountedPE, section: String, match_address: usize) -> Resolution {
+        let stages = vec![match_address];
+        let n = match_address + 3;
         let address = n
-            .checked_add_signed(i32::from_le_bytes(data[n..n + 4].try_into().unwrap()) as isize)
-            .map(|a| base + a - 4);
+            .checked_add_signed(i32::from_le_bytes(memory[n..n + 4].try_into().unwrap()) as isize)
+            .map(|a| a - 4);
         Resolution {
             section,
             stages,
             address,
         }
     }
-    pub fn resolve_c(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-        let stages = vec![m];
-        let n = m - base + 7;
+    pub fn resolve_c(memory: &MountedPE, section: String, match_address: usize) -> Resolution {
+        let stages = vec![match_address];
+        let n = match_address + 7;
         let address = n
-            .checked_add_signed(i32::from_le_bytes(data[n..n + 4].try_into().unwrap()) as isize)
-            .map(|a| base + a - 4);
+            .checked_add_signed(i32::from_le_bytes(memory[n..n + 4].try_into().unwrap()) as isize)
+            .map(|a| a - 4);
         Resolution {
             section,
             stages,
             address,
         }
     }
-    pub fn resolve_d(data: &[u8], section: String, base: usize, m: usize) -> Resolution {
-        let stages = vec![m];
-        let n = m - base + 3;
+    pub fn resolve_d(memory: &MountedPE, section: String, match_address: usize) -> Resolution {
+        let stages = vec![match_address];
+        let n = match_address + 3;
         let address = n
-            .checked_add_signed(i32::from_le_bytes(data[n..n + 4].try_into().unwrap()) as isize)
-            .map(|a| base + a - 4);
+            .checked_add_signed(i32::from_le_bytes(memory[n..n + 4].try_into().unwrap()) as isize)
+            .map(|a| a - 4);
         Resolution {
             section,
             stages,

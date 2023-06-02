@@ -8,6 +8,7 @@ use std::str::FromStr;
 use anyhow::{bail, Context, Result};
 use itertools::Itertools;
 use object::{Object, ObjectSection};
+use patternsleuth::MountedPE;
 use strum::IntoEnumIterator;
 
 use patternsleuth::{
@@ -171,6 +172,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         let obj_file = object::File::parse(&*bin_data)?;
         let exe_base = obj_file.relative_address_base() as usize;
+        let mount = MountedPE::new(&obj_file)?;
 
         games.insert(game.to_string());
 
@@ -206,7 +208,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .map(|(config, m)| {
                         (
                             *config,
-                            (config.resolve)(data, section_name.to_owned(), base_address, m),
+                            (config.resolve)(&mount, section_name.to_owned(), m),
                         )
                     })
                     .collect(),
