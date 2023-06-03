@@ -353,7 +353,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             )));
                         } else {
                             #[allow(clippy::unnecessary_to_owned)]
-                            cells.push(Cell::new(&"failed".red().to_string()));
+                            cells.push(Cell::new(&format!("{}\n{}", m.0, "failed".red())));
                         }
                         for (i, stage) in m.1.stages.iter().enumerate().rev() {
                             cells.push(Cell::new(&format!(
