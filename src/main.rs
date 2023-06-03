@@ -228,14 +228,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         let log_path = entry.path().join("UE4SS.log");
 
-        let log = match read_addresses_from_log(log_path)
-            .with_context(|| format!("{}: read UE4SS.log", game))
-        {
-            Ok(log) => Some(log),
-            Err(e) => {
-                println!("    Error: {:?}", e);
-                None
+        let log = if log_path.exists() {
+            match read_addresses_from_log(log_path)
+                .with_context(|| format!("{}: read UE4SS.log", game))
+            {
+                Ok(log) => Some(log),
+                Err(e) => {
+                    println!("Error: {:?}", e);
+                    None
+                }
             }
+        } else {
+            None
         };
 
         let exe_path = if let Some(ref log) = log {
@@ -268,10 +272,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         games.insert(game.to_string());
 
         println!(
-            "{} {} exe_base={:016x?}",
+            "{:?} {:?}",
             game,
             exe_path.display(),
-            exe_base,
         );
 
         struct Scan<'a> {
