@@ -283,12 +283,13 @@ mod GUObjectArrayID {
 mod GNatives {
     use super::*;
     pub fn resolve(memory: &MountedPE, section: String, match_address: usize) -> Resolution {
-        let stages = vec![match_address];
+        let mut stages = vec![match_address - 1];
         for i in match_address..match_address + 400 {
             if memory[i] == 0x4c
                 && memory[i + 1] == 0x8d
                 && (memory[i + 2] & 0xc7 == 5 && memory[i + 2] > 0x20)
             {
+                stages.push(i);
                 let address = (i + 7).checked_add_signed(i32::from_le_bytes(
                     memory[i + 3..i + 3 + 4].try_into().unwrap(),
                 ) as isize);

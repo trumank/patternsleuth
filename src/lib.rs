@@ -115,8 +115,24 @@ impl PatternConfig {
     }
 }
 
+pub struct PESection<'data> {
+    pub name: String,
+    pub address: usize,
+    pub data: &'data [u8],
+}
+
+impl<'data> PESection<'data> {
+    fn new(name: String, address: usize, data: &'data [u8]) -> Self {
+        Self {
+            name,
+            address,
+            data,
+        }
+    }
+}
+
 pub struct MountedPE<'data> {
-    sections: Vec<(usize, &'data [u8])>,
+    sections: Vec<PESection<'data>>,
 }
 
 impl<'data> MountedPE<'data> {
@@ -124,8 +140,19 @@ impl<'data> MountedPE<'data> {
         Ok(Self {
             sections: object
                 .sections()
-                .map(|s| Ok((s.address() as usize, s.data()?)))
+                .map(|s| {
+                    Ok(PESection::new(
+                        s.name()?.to_string(),
+                        s.address() as usize,
+                        s.data()?,
+                    ))
+                })
                 .collect::<Result<Vec<_>>>()?,
+        })
+    }
+    pub fn get_section_containing(&self, address: usize) -> Option<&PESection> {
+        self.sections.iter().find(|section| {
+            address >= section.address && address < section.address + section.data.len()
         })
     }
 }
@@ -134,7 +161,7 @@ impl<'data> Index<usize> for MountedPE<'data> {
     fn index(&self, index: usize) -> &Self::Output {
         self.sections
             .iter()
-            .find_map(|section| section.1.get(index - section.0))
+            .find_map(|section| section.data.get(index - section.address))
             .unwrap()
     }
 }
@@ -144,9 +171,11 @@ impl<'data> Index<Range<usize>> for MountedPE<'data> {
         self.sections
             .iter()
             .find_map(|section| {
-                if index.start >= section.0 && index.end < section.0 + section.1.len() {
-                    let relative_range = index.start - section.0..index.end - section.0;
-                    Some(&section.1[relative_range])
+                if index.start >= section.address
+                    && index.end < section.address + section.data.len()
+                {
+                    let relative_range = index.start - section.address..index.end - section.address;
+                    Some(&section.data[relative_range])
                 } else {
                     None
                 }

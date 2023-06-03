@@ -26,6 +26,11 @@ struct CommandScan {
     /// A signature to scan for (can be specified multiple times). Scans for all signatures if omitted
     #[arg(short, long)]
     signature: Vec<Sig>,
+
+    /// Show disassembly context for each stage of every match (I recommend only using with
+    /// aggressive filters)
+    #[arg(short, long)]
+    disassemble: bool,
 }
 
 struct Log {
@@ -86,6 +91,98 @@ fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Log> {
     })
 }
 
+mod disassemble {
+    use colored::{ColoredString, Colorize};
+    use iced_x86::{
+        Decoder, DecoderOptions, Formatter, FormatterOutput, FormatterTextKind, IntelFormatter,
+    };
+    use patternsleuth::MountedPE;
+
+    #[derive(Default)]
+    struct Output {
+        pub buffer: String,
+    }
+
+    impl FormatterOutput for Output {
+        fn write(&mut self, text: &str, kind: FormatterTextKind) {
+            #[allow(clippy::unnecessary_to_owned)]
+            self.buffer.push_str(&get_color(text, kind).to_string());
+        }
+    }
+
+    pub(crate) fn disassemble(memory: &MountedPE, address: usize) -> String {
+        let context = 20; // number of instructions before and after
+        let max_inst = 16; // max size of x86 instruction in bytes
+
+        let mut output = Output::default();
+
+        if let Some(section) = memory.get_section_containing(address) {
+            let data = &section.data[(address - context * max_inst).saturating_sub(section.address)
+                ..(address + context * max_inst).saturating_sub(section.address)];
+
+            output.buffer.push_str(&format!(
+                "{:016x}\n{}\n{:016x} - {:016x}\n\n",
+                address,
+                section.name,
+                section.address,
+                section.address + section.data.len()
+            ));
+
+            let mut decoder = Decoder::with_ip(
+                64,
+                data,
+                (address - context * max_inst) as u64,
+                DecoderOptions::NONE,
+            );
+
+            let instructions = decoder.iter().collect::<Vec<_>>();
+            let instructions = if let Some((middle, _)) = instructions
+                .iter()
+                .enumerate()
+                .find(|(_, inst)| inst.ip() >= address as u64)
+            {
+                instructions
+                    .into_iter()
+                    .skip(middle - context)
+                    .take(context * 2 + 1)
+                    .collect::<Vec<_>>()
+            } else {
+                instructions
+            };
+
+            let mut formatter = IntelFormatter::new();
+            formatter.options_mut().set_first_operand_char_index(8);
+            for instruction in instructions {
+                let ip = format!("{:016x}", instruction.ip());
+                if instruction.ip() == address as u64 {
+                    #[allow(clippy::unnecessary_to_owned)]
+                    output.buffer.push_str(&ip.reversed().to_string());
+                } else {
+                    output.buffer.push_str(&ip);
+                }
+                output.buffer.push(' ');
+                formatter.format(&instruction, &mut output);
+                output.buffer.push('\n');
+            }
+        } else {
+            output
+                .buffer
+                .push_str(&format!("{:016x}\nno section", address));
+        }
+        output.buffer
+    }
+
+    fn get_color(s: &str, kind: FormatterTextKind) -> ColoredString {
+        match kind {
+            FormatterTextKind::Directive | FormatterTextKind::Keyword => s.bright_yellow(),
+            FormatterTextKind::Prefix | FormatterTextKind::Mnemonic => s.bright_red(),
+            FormatterTextKind::Register => s.bright_blue(),
+            FormatterTextKind::Number => s.bright_cyan(),
+            _ => s.white(),
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = CommandScan::parse();
 
@@ -113,7 +210,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     use colored::Colorize;
     use itertools::join;
-    use prettytable::{row, Cell, Row, Table};
+    use prettytable::{format, row, Cell, Row, Table};
 
     'loop_games: for entry in fs::read_dir("games")?
         .collect::<Result<Vec<_>, _>>()?
@@ -234,55 +331,90 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .and_then(|a| a.addresses.addresses.get(&sig))
                 .map(|a| a + exe_base);
 
-            table.add_row(row![
-                sig,
-                sig_log
+            let mut cells = vec![];
+            cells.push(Cell::new(&sig.to_string()));
+            cells.push(Cell::new(
+                &sig_log
                     .map(|a| format!("{:016x}", a))
                     .unwrap_or("not found".to_owned()),
-                folded_scans
-                    .get(&sig)
-                    .map(|m| join(
-                        m.iter()
-                            // group and count matches by (pattern name, address)
-                            .fold(
-                                HashMap::<(&String, Option<usize>), usize>::new(),
-                                |mut map, m| {
-                                    *map.entry((m.0, m.1.address)).or_default() += 1;
-                                    map
-                                }
-                            )
-                            .iter()
-                            // sort by pattern name, then match address
-                            .sorted_by_key(|(&m, _)| m)
-                            .map(|(m, count)| {
-                                // add count indicator if more than 1
-                                let count = if *count > 1 {
-                                    format!(" (x{count})")
-                                } else {
-                                    "".to_string()
-                                };
+            ));
 
-                                let s = format!(
-                                    "{} {:?}{}",
-                                    m.1.map_or("failed".to_string(), |a| format!("{:016x}", a)),
-                                    m.0,
-                                    count,
-                                );
-                                if m.1.is_none() {
-                                    s.red() // match addresss is None (resolution failed)
-                                } else if sig_log.is_none() {
-                                    s.normal() // log is not present so unsure if correct
-                                } else if m.1.unwrap() == sig_log.unwrap() {
-                                    s.green() // address matches log
-                                } else {
-                                    s.red() // match found but does not match log
-                                }
-                            }),
-                        "\n"
-                    )
-                    .normal())
-                    .unwrap_or("not found".to_owned().red()),
-            ]);
+            if let Some(sig_scans) = folded_scans.get(&sig) {
+                if cli.disassemble {
+                    let mut table = Table::new();
+                    table.set_format(*format::consts::FORMAT_NO_BORDER);
+                    for m in sig_scans.iter() {
+                        if let Some(address) = m.1.address {
+                            let mut cells = vec![];
+                            cells.push(Cell::new(&format!(
+                                "{}\n{}",
+                                m.0,
+                                disassemble::disassemble(&mount, address)
+                            )));
+                            for (i, stage) in m.1.stages.iter().enumerate().rev() {
+                                cells.push(Cell::new(&format!(
+                                    "stage[{}]\n{}",
+                                    i,
+                                    disassemble::disassemble(&mount, *stage)
+                                )));
+                            }
+                            table.add_row(Row::new(cells));
+                        } else {
+                            table.add_row(row!["none"]);
+                        }
+                    }
+                    cells.push(Cell::new(&table.to_string()));
+                } else {
+                    cells.push(Cell::new(
+                        &join(
+                            sig_scans
+                                .iter()
+                                // group and count matches by (pattern name, address)
+                                .fold(
+                                    HashMap::<(&String, Option<usize>), usize>::new(),
+                                    |mut map, m| {
+                                        *map.entry((m.0, m.1.address)).or_default() += 1;
+                                        map
+                                    },
+                                )
+                                .iter()
+                                // sort by pattern name, then match address
+                                .sorted_by_key(|(&m, _)| m)
+                                .map(|(m, count)| {
+                                    // add count indicator if more than 1
+                                    let count = if *count > 1 {
+                                        format!(" (x{count})")
+                                    } else {
+                                        "".to_string()
+                                    };
+
+                                    let s = format!(
+                                        "{} {:?}{}",
+                                        m.1.map_or("failed".to_string(), |a| format!("{:016x}", a)),
+                                        m.0,
+                                        count,
+                                    );
+                                    if m.1.is_none() {
+                                        s.red() // match addresss is None (resolution failed)
+                                    } else if sig_log.is_none() {
+                                        s.normal() // log is not present so unsure if correct
+                                    } else if m.1.unwrap() == sig_log.unwrap() {
+                                        s.green() // address matches log
+                                    } else {
+                                        s.red() // match found but does not match log
+                                    }
+                                }),
+                            "\n",
+                        )
+                        .to_string(),
+                    ));
+                }
+            } else {
+                #[allow(clippy::unnecessary_to_owned)]
+                cells.push(Cell::new(&"not found".red().to_string()));
+            }
+
+            table.add_row(Row::new(cells));
         }
         table.printstd();
 
