@@ -299,7 +299,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 memory: &mount,
                                 section: section_name.to_owned(),
                                 match_address: m,
-                                custom_offset: config.pattern.custom_offset,
                             }),
                         )
                     })

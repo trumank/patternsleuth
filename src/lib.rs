@@ -11,25 +11,17 @@ use object::{File, Object, ObjectSection};
 use patterns::Sig;
 
 #[derive(Debug)]
-enum PatternMode {
-    Direct,
-    Relative32(isize),
-}
-
-#[derive(Debug)]
 pub struct Pattern {
     sig: Vec<u8>,
     mask: Vec<u8>,
-    mode: PatternMode,
-    pub custom_offset: usize,
+    custom_offset: usize,
 }
 
 impl Pattern {
     pub fn new(s: &str) -> Result<Self> {
         let mut sig = vec![];
         let mut mask = vec![];
-        let mut mode = PatternMode::Direct;
-        let mut custom_offset: usize = 0;
+        let mut custom_offset = 0;
         for (i, w) in s.split_whitespace().enumerate() {
             if let Ok(b) = u8::from_str_radix(w, 16) {
                 sig.push(b);
@@ -45,14 +37,6 @@ impl Pattern {
             } else if w == "|" {
                 custom_offset = i;
                 continue;
-            } else if let Some(r) = w.strip_prefix("R32") {
-                if r.is_empty() {
-                    mode = PatternMode::Relative32(sig.len() as isize);
-                    continue;
-                } else if let Ok(offset) = isize::from_str_radix(r, 16) {
-                    mode = PatternMode::Relative32(sig.len() as isize + offset);
-                    continue;
-                }
             }
             bail!("bad pattern word \"{}\"", w);
         }
@@ -60,7 +44,6 @@ impl Pattern {
         Ok(Self {
             sig,
             mask,
-            mode,
             custom_offset,
         })
     }
@@ -73,18 +56,10 @@ impl Pattern {
         }
         true
     }
-    fn compute_result(&self, data: &[u8], base_address: usize, index: usize) -> usize {
-        base_address
-            + match self.mode {
-                PatternMode::Direct => index,
-                PatternMode::Relative32(offset) => {
-                    let n = index.checked_add_signed(offset).unwrap();
-                    n.checked_add_signed(
-                        i32::from_le_bytes(data[n - 4..n].try_into().unwrap()) as isize
-                    )
-                    .unwrap()
-                }
-            }
+    /// compute virtual address from address relative to section as well as account for
+    /// custom_offset
+    fn compute_result(&self, _data: &[u8], base_address: usize, index: usize) -> usize {
+        base_address + index + self.custom_offset
     }
 }
 
@@ -92,7 +67,6 @@ pub struct ResolveContext<'memory> {
     pub memory: &'memory MountedPE<'memory>,
     pub section: String,
     pub match_address: usize,
-    pub custom_offset: usize,
 }
 
 #[derive(Debug)]

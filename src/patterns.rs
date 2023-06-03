@@ -968,7 +968,7 @@ pub fn resolve_multi_self(_ctx: ResolveContext) -> Resolution {
 
 /// simply returns 0x1 as constant address so the scanner will pack multiple instances together as 1 and mention the amount.
 pub fn resolve_engine_version(ctx: ResolveContext) -> Resolution {
-    let version_value_address = ctx.match_address + ctx.custom_offset;
+    let version_value_address = ctx.match_address;
     let version_value = i32::from_be_bytes(
         ctx.memory[version_value_address..version_value_address + 4]
             .try_into()
@@ -987,11 +987,10 @@ mod RIPRelativeResolvers {
     fn resolve_RIP(
         memory: &MountedPE,
         match_address: usize,
-        custom_offset: usize,
         next_opcode_offset: usize,
     ) -> Resolution {
         let stages = vec![match_address];
-        let rip_relative_value_address = match_address + custom_offset;
+        let rip_relative_value_address = match_address;
         // calculate the absolute address from the RIP relative value.
         let address = rip_relative_value_address
             .checked_add_signed(i32::from_le_bytes(
@@ -1004,11 +1003,11 @@ mod RIPRelativeResolvers {
     }
 
     pub fn resolve_RIP4(ctx: ResolveContext) -> Resolution {
-        return resolve_RIP(ctx.memory, ctx.match_address, ctx.custom_offset, 4);
+        return resolve_RIP(ctx.memory, ctx.match_address, 4);
     }
 
     pub fn resolve_RIP5(ctx: ResolveContext) -> Resolution {
-        return resolve_RIP(ctx.memory, ctx.match_address, ctx.custom_offset, 5);
+        return resolve_RIP(ctx.memory, ctx.match_address, 5);
     }
 }
 
