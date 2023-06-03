@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use itertools::Itertools;
 use object::{Object, ObjectSection};
-use patternsleuth::MountedPE;
+use patternsleuth::{MountedPE, ResolveContext};
 use strum::IntoEnumIterator;
 
 use patternsleuth::{
@@ -290,21 +290,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 results: patternsleuth::scanner::scan(pat_ref.as_slice(), base_address, data)
                     .into_iter()
                     .filter(|(config, _)| {
-                        if let Some(s) = config.section {
-                            s == section.kind()
-                        } else {
-                            true
-                        }
+                        config.section.map(|s| s == section.kind()).unwrap_or(true)
                     })
                     .map(|(config, m)| {
                         (
                             *config,
-                            (config.resolve)(
-                                &mount,
-                                section_name.to_owned(),
-                                m,
-                                config.pattern.custom_offset,
-                            ),
+                            (config.resolve)(ResolveContext {
+                                memory: &mount,
+                                section: section_name.to_owned(),
+                                match_address: m,
+                                custom_offset: config.pattern.custom_offset,
+                            }),
                         )
                     })
                     .collect(),

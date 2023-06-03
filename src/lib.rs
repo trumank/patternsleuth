@@ -88,22 +88,22 @@ impl Pattern {
     }
 }
 
+pub struct ResolveContext<'memory> {
+    pub memory: &'memory MountedPE<'memory>,
+    pub section: String,
+    pub match_address: usize,
+    pub custom_offset: usize,
+}
+
 #[derive(Debug)]
 pub struct Resolution {
-    /// name of section pattern was found in
-    pub section: String,
     /// intermediate addresses of interest before reaching the final address
     pub stages: Vec<usize>,
     /// final, fully resolved address
     pub address: Option<usize>,
 }
 
-type Resolve = fn(
-    memory: &MountedPE,
-    section: String,
-    match_address: usize,
-    custom_offset: usize,
-) -> Resolution;
+type Resolve = fn(ctx: ResolveContext) -> Resolution;
 pub struct PatternConfig {
     pub sig: Sig,
     pub name: String,
