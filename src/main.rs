@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use itertools::Itertools;
 use object::{Object, ObjectSection};
-use patternsleuth::{MountedPE, ResolveContext};
+use patternsleuth::{MountedPE, ResolutionType, ResolveContext};
 use strum::IntoEnumIterator;
 
 use patternsleuth::{
@@ -271,11 +271,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         games.insert(game.to_string());
 
-        println!(
-            "{:?} {:?}",
-            game,
-            exe_path.display(),
-        );
+        println!("{:?} {:?}", game, exe_path.display());
 
         struct Scan<'a> {
             base_address: usize,
@@ -348,15 +344,25 @@ fn main() -> Result<(), Box<dyn Error>> {
                     table.set_format(*format::consts::FORMAT_NO_BORDER);
                     for m in sig_scans.iter() {
                         let mut cells = vec![];
-                        if let Some(address) = m.1.address {
-                            cells.push(Cell::new(&format!(
-                                "{}\n{}",
-                                m.0,
-                                disassemble::disassemble(&mount, address)
-                            )));
-                        } else {
-                            #[allow(clippy::unnecessary_to_owned)]
-                            cells.push(Cell::new(&format!("{}\n{}", m.0, "failed".red())));
+                        match &m.1.res {
+                            ResolutionType::Address(address) => {
+                                cells.push(Cell::new(&format!(
+                                    "{}\n{}",
+                                    m.0,
+                                    disassemble::disassemble(&mount, *address)
+                                )));
+                            }
+                            ResolutionType::String(string) => {
+                                cells.push(Cell::new(&format!("{:?}\n{:?}", m.0, string)));
+                            }
+                            ResolutionType::Count => {
+                                #[allow(clippy::unnecessary_to_owned)]
+                                cells.push(Cell::new(&format!("{}\ncount", m.0)));
+                            }
+                            ResolutionType::Failed => {
+                                #[allow(clippy::unnecessary_to_owned)]
+                                cells.push(Cell::new(&format!("{}\n{}", m.0, "failed".red())));
+                            }
                         }
                         for (i, stage) in m.1.stages.iter().enumerate().rev() {
                             cells.push(Cell::new(&format!(
@@ -375,15 +381,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 .iter()
                                 // group and count matches by (pattern name, address)
                                 .fold(
-                                    HashMap::<(&String, Option<usize>), usize>::new(),
+                                    HashMap::<(&String, &ResolutionType), usize>::new(),
                                     |mut map, m| {
-                                        *map.entry((m.0, m.1.address)).or_default() += 1;
+                                        *map.entry((m.0, &m.1.res)).or_default() += 1;
                                         map
                                     },
                                 )
                                 .iter()
                                 // sort by pattern name, then match address
-                                .sorted_by_key(|(&m, _)| m)
+                                .sorted_by_key(|&data| data.0)
                                 .map(|(m, count)| {
                                     // add count indicator if more than 1
                                     let count = if *count > 1 {
@@ -392,20 +398,29 @@ fn main() -> Result<(), Box<dyn Error>> {
                                         "".to_string()
                                     };
 
-                                    let s = format!(
-                                        "{} {:?}{}",
-                                        m.1.map_or("failed".to_string(), |a| format!("{:016x}", a)),
-                                        m.0,
-                                        count,
-                                    );
-                                    if m.1.is_none() {
-                                        s.red() // match addresss is None (resolution failed)
-                                    } else if sig_log.is_none() {
-                                        s.normal() // log is not present so unsure if correct
-                                    } else if m.1.unwrap() == sig_log.unwrap() {
-                                        s.green() // address matches log
-                                    } else {
-                                        s.red() // match found but does not match log
+                                    match &m.1 {
+                                        ResolutionType::Address(address) => {
+                                            let s = format!("{:016x} {:?}{}", address, m.0, count);
+                                            if let Some(sig_address) = sig_log {
+                                                if *address == sig_address {
+                                                    s.green() // address matches log
+                                                } else {
+                                                    s.red() // match found but does not match log
+                                                }
+                                            } else {
+                                                s.normal() // log is not present so unsure if correct
+                                            }
+                                        }
+                                        ResolutionType::String(string) => {
+                                            format!("{:?} {:?}{}", string, m.0, count).normal()
+                                        }
+
+                                        ResolutionType::Count => {
+                                            format!("count {:?}{}", m.0, count).normal()
+                                        }
+                                        ResolutionType::Failed => {
+                                            format!("failed {:?}{}", m.0, count).red()
+                                        }
                                     }
                                 }),
                             "\n",
@@ -474,8 +489,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if let Some(res) = res {
                     Summary {
                         matches: res.len(),
-                        resolved: res.iter().filter(|res| res.address.is_some()).count(),
-                        failed: res.iter().filter(|res| res.address.is_none()).count(),
+                        resolved: res
+                            .iter()
+                            .filter(|res| !matches!(res.res, ResolutionType::Failed))
+                            .count(),
+                        failed: res
+                            .iter()
+                            .filter(|res| matches!(res.res, ResolutionType::Failed))
+                            .count(),
                     }
                 } else {
                     Summary {

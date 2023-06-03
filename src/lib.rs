@@ -72,9 +72,36 @@ pub struct ResolveContext<'memory> {
 #[derive(Debug)]
 pub struct Resolution {
     /// intermediate addresses of interest before reaching the final address
+    /// can be used for inspecting/debugging patterns (shown with the --disassemble flag)
     pub stages: Vec<usize>,
     /// final, fully resolved address
-    pub address: Option<usize>,
+    pub res: ResolutionType,
+}
+
+#[derive(Debug, Hash, Ord, PartialOrd, Eq, PartialEq)]
+pub enum ResolutionType {
+    /// address of resolved match
+    Address(usize),
+    /// string resolution (e.g. Unreal Engine version)
+    String(String),
+    /// report no data and just count successful matches
+    Count,
+    /// error during resolution or failes some criteria
+    Failed,
+}
+
+impl From<Option<usize>> for ResolutionType {
+    fn from(opt_address: Option<usize>) -> Self {
+        match opt_address {
+            Some(addr) => ResolutionType::Address(addr),
+            None => ResolutionType::Failed,
+        }
+    }
+}
+impl From<usize> for ResolutionType {
+    fn from(address: usize) -> Self {
+        ResolutionType::Address(address)
+    }
 }
 
 type Resolve = fn(ctx: ResolveContext) -> Resolution;

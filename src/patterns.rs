@@ -1,5 +1,7 @@
 use anyhow::Result;
 
+use crate::ResolutionType;
+
 use super::{MountedPE, Pattern, PatternConfig, Resolution, ResolveContext};
 
 #[derive(
@@ -954,7 +956,7 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
 pub fn resolve_self(ctx: ResolveContext) -> Resolution {
     Resolution {
         stages: vec![],
-        address: Some(ctx.match_address),
+        res: ResolutionType::Address(ctx.match_address),
     }
 }
 
@@ -962,21 +964,26 @@ pub fn resolve_self(ctx: ResolveContext) -> Resolution {
 pub fn resolve_multi_self(_ctx: ResolveContext) -> Resolution {
     Resolution {
         stages: vec![],
-        address: Some(0x12345678),
+        res: ResolutionType::Count,
     }
 }
 
 /// simply returns 0x1 as constant address so the scanner will pack multiple instances together as 1 and mention the amount.
 pub fn resolve_engine_version(ctx: ResolveContext) -> Resolution {
     let version_value_address = ctx.match_address;
-    let version_value = i32::from_be_bytes(
-        ctx.memory[version_value_address..version_value_address + 4]
+    let version_major = i16::from_le_bytes(
+        ctx.memory[version_value_address..version_value_address + 2]
             .try_into()
             .unwrap(),
-    ) as usize;
+    );
+    let version_minor = i16::from_le_bytes(
+        ctx.memory[version_value_address + 2..version_value_address + 4]
+            .try_into()
+            .unwrap(),
+    );
     Resolution {
-        stages: vec![],
-        address: Some(version_value),
+        stages: vec![ctx.match_address],
+        res: ResolutionType::String(format!("{}.{}", version_major, version_minor)),
     }
 }
 
@@ -999,15 +1006,18 @@ mod RIPRelativeResolvers {
                     .unwrap(),
             ) as isize)
             .map(|a| a + next_opcode_offset);
-        Resolution { stages, address }
+        Resolution {
+            stages,
+            res: address.into(),
+        }
     }
 
     pub fn resolve_RIP4(ctx: ResolveContext) -> Resolution {
-        return resolve_RIP(ctx.memory, ctx.match_address, 4);
+        resolve_RIP(ctx.memory, ctx.match_address, 4)
     }
 
     pub fn resolve_RIP5(ctx: ResolveContext) -> Resolution {
-        return resolve_RIP(ctx.memory, ctx.match_address, 5);
+        resolve_RIP(ctx.memory, ctx.match_address, 5)
     }
 }
 
@@ -1019,7 +1029,10 @@ mod FNameToStringID {
         let n = ctx.match_address + 5;
         let rel = i32::from_le_bytes(ctx.memory[n - 4..n].try_into().unwrap());
         let address = n.checked_add_signed(rel as isize);
-        Resolution { stages, address }
+        Resolution {
+            stages,
+            res: address.into(),
+        }
     }
 }
 
@@ -1032,7 +1045,10 @@ mod FNameFNameID {
         let address = n.checked_add_signed(i32::from_le_bytes(
             ctx.memory[n - 4..n].try_into().unwrap(),
         ) as isize);
-        Resolution { stages, address }
+        Resolution {
+            stages,
+            res: address.into(),
+        }
     }
     pub fn resolve_v5_1(ctx: ResolveContext) -> Resolution {
         let stages = vec![ctx.match_address];
@@ -1040,7 +1056,10 @@ mod FNameFNameID {
         let address = n.checked_add_signed(i32::from_le_bytes(
             ctx.memory[n - 4..n].try_into().unwrap(),
         ) as isize);
-        Resolution { stages, address }
+        Resolution {
+            stages,
+            res: address.into(),
+        }
     }
 }
 
@@ -1053,7 +1072,10 @@ mod StaticConstructObjectInternalID {
         let address = n.checked_add_signed(i32::from_le_bytes(
             ctx.memory[n - 4..n].try_into().unwrap(),
         ) as isize);
-        Resolution { stages, address }
+        Resolution {
+            stages,
+            res: address.into(),
+        }
     }
     pub fn resolve_v4_16_4_19_v5_0(ctx: ResolveContext) -> Resolution {
         let stages = vec![ctx.match_address];
@@ -1061,7 +1083,10 @@ mod StaticConstructObjectInternalID {
         let address = n.checked_add_signed(i32::from_le_bytes(
             ctx.memory[n - 4..n].try_into().unwrap(),
         ) as isize);
-        Resolution { stages, address }
+        Resolution {
+            stages,
+            res: address.into(),
+        }
     }
 }
 
@@ -1072,7 +1097,7 @@ mod GUObjectArrayID {
         Resolution {
             // TODO
             stages: vec![],
-            address: Some(ctx.match_address),
+            res: ctx.match_address.into(),
         }
     }
     pub fn resolve_v_20(ctx: ResolveContext) -> Resolution {
@@ -1083,7 +1108,10 @@ mod GUObjectArrayID {
                 i32::from_le_bytes(ctx.memory[n..n + 4].try_into().unwrap()) as isize
             )
             .map(|a| a - 0xc);
-        Resolution { stages, address }
+        Resolution {
+            stages,
+            res: address.into(),
+        }
     }
 }
 
@@ -1101,12 +1129,15 @@ mod GNatives {
                 let address = (i + 7).checked_add_signed(i32::from_le_bytes(
                     ctx.memory[i + 3..i + 3 + 4].try_into().unwrap(),
                 ) as isize);
-                return Resolution { stages, address };
+                return Resolution {
+                    stages,
+                    res: address.into(),
+                };
             }
         }
         Resolution {
             stages,
-            address: None,
+            res: ResolutionType::Failed,
         }
     }
 }
