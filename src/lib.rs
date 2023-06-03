@@ -21,6 +21,7 @@ pub struct Pattern {
     sig: Vec<u8>,
     mask: Vec<u8>,
     mode: PatternMode,
+    pub custom_offset: usize,
 }
 
 impl Pattern {
@@ -28,8 +29,8 @@ impl Pattern {
         let mut sig = vec![];
         let mut mask = vec![];
         let mut mode = PatternMode::Direct;
-
-        for w in s.split_whitespace() {
+        let mut custom_offset: usize = 0;
+        for (i, w) in s.split_whitespace().enumerate() {
             if let Ok(b) = u8::from_str_radix(w, 16) {
                 sig.push(b);
                 mask.push(0xff);
@@ -40,6 +41,9 @@ impl Pattern {
                 }
                 sig.push(0);
                 mask.push(0);
+                continue;
+            } else if w == "|" {
+                custom_offset = i;
                 continue;
             } else if let Some(r) = w.strip_prefix("R32") {
                 if r.is_empty() {
@@ -53,7 +57,12 @@ impl Pattern {
             bail!("bad pattern word \"{}\"", w);
         }
 
-        Ok(Self { sig, mask, mode })
+        Ok(Self {
+            sig,
+            mask,
+            mode,
+            custom_offset,
+        })
     }
     #[inline]
     fn is_match(&self, data: &[u8], index: usize) -> bool {
@@ -89,7 +98,12 @@ pub struct Resolution {
     pub address: Option<usize>,
 }
 
-type Resolve = fn(memory: &MountedPE, section: String, match_address: usize) -> Resolution;
+type Resolve = fn(
+    memory: &MountedPE,
+    section: String,
+    match_address: usize,
+    custom_offset: usize,
+) -> Resolution;
 pub struct PatternConfig {
     pub sig: Sig,
     pub name: String,

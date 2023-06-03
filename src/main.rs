@@ -299,7 +299,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .map(|(config, m)| {
                         (
                             *config,
-                            (config.resolve)(&mount, section_name.to_owned(), m),
+                            (config.resolve)(
+                                &mount,
+                                section_name.to_owned(),
+                                m,
+                                config.pattern.custom_offset,
+                            ),
                         )
                     })
                     .collect(),
