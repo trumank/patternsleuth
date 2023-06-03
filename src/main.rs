@@ -344,24 +344,25 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let mut table = Table::new();
                     table.set_format(*format::consts::FORMAT_NO_BORDER);
                     for m in sig_scans.iter() {
+                        let mut cells = vec![];
                         if let Some(address) = m.1.address {
-                            let mut cells = vec![];
                             cells.push(Cell::new(&format!(
                                 "{}\n{}",
                                 m.0,
                                 disassemble::disassemble(&mount, address)
                             )));
-                            for (i, stage) in m.1.stages.iter().enumerate().rev() {
-                                cells.push(Cell::new(&format!(
-                                    "stage[{}]\n{}",
-                                    i,
-                                    disassemble::disassemble(&mount, *stage)
-                                )));
-                            }
-                            table.add_row(Row::new(cells));
                         } else {
-                            table.add_row(row!["none"]);
+                            #[allow(clippy::unnecessary_to_owned)]
+                            cells.push(Cell::new(&"failed".red().to_string()));
                         }
+                        for (i, stage) in m.1.stages.iter().enumerate().rev() {
+                            cells.push(Cell::new(&format!(
+                                "stage[{}]\n{}",
+                                i,
+                                disassemble::disassemble(&mount, *stage)
+                            )));
+                        }
+                        table.add_row(Row::new(cells));
                     }
                     cells.push(Cell::new(&table.to_string()));
                 } else {
