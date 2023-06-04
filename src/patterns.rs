@@ -59,6 +59,8 @@ pub enum Sig {
     WidgetPaintOpacityRead,
     #[strum(serialize = "FPakPlatformFile::Initialize")]
     FPakPlatformFileInitialize,
+    #[strum(serialize = "FPakPlatformFile::~FPakPlatformFile")]
+    FPakPlatformFileDtor,
 }
 
 pub fn get_patterns() -> Result<Vec<PatternConfig>> {
@@ -952,13 +954,20 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             RIPRelativeResolvers::resolve_RIP4,
         ),
 
-        //===============================[FPakPlatformFileInitialize]=============================================================================================
+        //===============================[FPakPlatformFile]=============================================================================================
         PatternConfig::new(
             Sig::FPakPlatformFileInitialize,
             "A".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 89 5c 24 10 48 89 74 24 18 48 89 7c 24 20 55 41 54 41 55 41 56 41 57 48 8d ac 24 20 fe ff ff 48 81 ec e0 02 00 00 48 8b 05 ?? ?? ?? ?? 48 33 c4 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 8d 4c 24 78")?,
-            FPakPlatformFileInitialize::resolve,
+            FPakPlatformFile::resolve_initialize,
+        ),
+        PatternConfig::new(
+            Sig::FPakPlatformFileDtor,
+            "A".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("40 53 56 57 48 83 ec 20 48 8d 05 ?? ?? ?? ?? 4c 89 74 24 50 48 89 01 48 8b f9 e8 ?? ?? ?? ?? 48 8b c8")?,
+            FPakPlatformFile::resolve_dtor,
         ),
     ])
 }
@@ -1153,9 +1162,9 @@ mod GNatives {
     }
 }
 #[allow(non_snake_case)]
-mod FPakPlatformFileInitialize {
+mod FPakPlatformFile {
     use super::*;
-    pub fn resolve(ctx: ResolveContext) -> Resolution {
+    pub fn resolve_initialize(ctx: ResolveContext) -> Resolution {
         let mut stages = vec![ctx.match_address];
 
         let patterns = [
@@ -1189,6 +1198,44 @@ mod FPakPlatformFileInitialize {
                     .collect::<Vec<_>>();
                 addresses.dedup();
                 // TODO: implement returning multiple addresses
+                format!("{:x?}", addresses)
+            });
+
+        Resolution {
+            stages,
+            res: addresses.into(),
+        }
+    }
+    pub fn resolve_dtor(ctx: ResolveContext) -> Resolution {
+        let mut stages = vec![ctx.match_address];
+
+        let patterns = [
+            Pattern::new("48 8b 0d | ").unwrap(),
+        ];
+
+        let addresses = ctx
+            .memory
+            .get_section_containing(ctx.match_address)
+            .map(|section| {
+                let start = ctx.match_address - section.address;
+                let res = crate::scanner::scan(
+                    &patterns.iter().map(|p| (&(), p)).collect::<Vec<_>>(),
+                    start,
+                    &section.data[start..start + 400],
+                );
+                let mut addresses = res
+                    .into_iter()
+                    .map(|(_, address)| {
+                        stages.push(section.address + address);
+                        section.address
+                            + (address + 4)
+                                .checked_add_signed(i32::from_le_bytes(
+                                    section.data[address..address + 4].try_into().unwrap(),
+                                ) as isize)
+                                .unwrap()
+                    })
+                    .collect::<Vec<_>>();
+                addresses.dedup();
                 format!("{:x?}", addresses)
             });
 
