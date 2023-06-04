@@ -103,6 +103,19 @@ impl From<usize> for ResolutionType {
         ResolutionType::Address(address)
     }
 }
+impl From<Option<String>> for ResolutionType {
+    fn from(opt_string: Option<String>) -> Self {
+        match opt_string {
+            Some(string) => ResolutionType::String(string),
+            None => ResolutionType::Failed,
+        }
+    }
+}
+impl From<String> for ResolutionType {
+    fn from(string: String) -> Self {
+        ResolutionType::String(string)
+    }
+}
 
 type Resolve = fn(ctx: ResolveContext) -> Resolution;
 pub struct PatternConfig {

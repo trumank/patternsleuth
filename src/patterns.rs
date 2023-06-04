@@ -57,6 +57,8 @@ pub enum Sig {
     UWorldSpawnActorFromCall,
     WidgetOpacityBlendMultiply, // In SCompoundWidget::OnPaint
     WidgetPaintOpacityRead,
+    #[strum(serialize = "FPakPlatformFile::Initialize")]
+    FPakPlatformFileInitialize,
 }
 
 pub fn get_patterns() -> Result<Vec<PatternConfig>> {
@@ -949,6 +951,15 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::new("E8 ?? ?? ?? ?? 48 89 D8 48 89 1D | ?? ?? ?? ?? 48 8B 5C 24 20 48 83 C4 28 C3 48 8B 5C")?,
             RIPRelativeResolvers::resolve_RIP4,
         ),
+
+        //===============================[FPakPlatformFileInitialize]=============================================================================================
+        PatternConfig::new(
+            Sig::FPakPlatformFileInitialize,
+            "A".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 89 5c 24 10 48 89 74 24 18 48 89 7c 24 20 55 41 54 41 55 41 56 41 57 48 8d ac 24 20 fe ff ff 48 81 ec e0 02 00 00 48 8b 05 ?? ?? ?? ?? 48 33 c4 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 8d 4c 24 78")?,
+            FPakPlatformFileInitialize::resolve,
+        ),
     ])
 }
 
@@ -1138,6 +1149,52 @@ mod GNatives {
         Resolution {
             stages,
             res: ResolutionType::Failed,
+        }
+    }
+}
+#[allow(non_snake_case)]
+mod FPakPlatformFileInitialize {
+    use super::*;
+    pub fn resolve(ctx: ResolveContext) -> Resolution {
+        let mut stages = vec![ctx.match_address];
+
+        let patterns = [
+            Pattern::new("48 8d 15 | ?? ?? ?? ?? 48 8b cf ff 50 40 eb 3e 39 1d ?? ?? ?? ?? 74 36 48 8b 0d ?? ?? ?? ??").unwrap(),
+            Pattern::new("39 1d ?? ?? ?? ?? 74 36 48 8b 0d | ?? ?? ?? ??").unwrap(),
+            Pattern::new("83 3d ?? ?? ?? ?? 00 74 37 48 8b 0d | ?? ?? ?? ??").unwrap(),
+        ];
+
+        let addresses = ctx
+            .memory
+            .get_section_containing(ctx.match_address)
+            .map(|section| {
+                let res = crate::scanner::scan(
+                    &patterns.iter().map(|p| (&(), p)).collect::<Vec<_>>(),
+                    0,
+                    section.data,
+                );
+                let mut addresses = res
+                    .into_iter()
+                    .map(|(_, address)| {
+                        // TODO allow passing sub-patterns to stages?
+                        // TODO rename 'stages' to 'addresses_of_interest' or similar and give them names
+                        stages.push(section.address + address);
+                        section.address
+                            + (address + 4)
+                                .checked_add_signed(i32::from_le_bytes(
+                                    section.data[address..address + 4].try_into().unwrap(),
+                                ) as isize)
+                                .unwrap()
+                    })
+                    .collect::<Vec<_>>();
+                addresses.dedup();
+                // TODO: implement returning multiple addresses
+                format!("{:x?}", addresses)
+            });
+
+        Resolution {
+            stages,
+            res: addresses.into(),
         }
     }
 }
