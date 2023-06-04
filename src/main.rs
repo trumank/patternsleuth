@@ -96,7 +96,7 @@ mod disassemble {
     use iced_x86::{
         Decoder, DecoderOptions, Formatter, FormatterOutput, FormatterTextKind, IntelFormatter,
     };
-    use patternsleuth::MountedPE;
+    use patternsleuth::{MountedPE, Pattern};
 
     #[derive(Default)]
     struct Output {
@@ -110,7 +110,11 @@ mod disassemble {
         }
     }
 
-    pub(crate) fn disassemble(memory: &MountedPE, address: usize) -> String {
+    pub(crate) fn disassemble(
+        memory: &MountedPE,
+        address: usize,
+        pattern: Option<&Pattern>,
+    ) -> String {
         let context = 20; // number of instructions before and after
         let max_inst = 16; // max size of x86 instruction in bytes
 
@@ -128,12 +132,8 @@ mod disassemble {
                 section.address + section.data.len()
             ));
 
-            let mut decoder = Decoder::with_ip(
-                64,
-                data,
-                (address - context * max_inst) as u64,
-                DecoderOptions::NONE,
-            );
+            let start_address = (address - context * max_inst) as u64;
+            let mut decoder = Decoder::with_ip(64, data, start_address, DecoderOptions::NONE);
 
             let instructions = decoder.iter().collect::<Vec<_>>();
             let instructions = if let Some((middle, _)) = instructions
@@ -160,7 +160,34 @@ mod disassemble {
                 } else {
                     output.buffer.push_str(&ip);
                 }
-                output.buffer.push(' ');
+                output.buffer.push_str(":  ");
+
+                let index = (instruction.ip() - start_address) as usize;
+                for (i, b) in data[index..index + instruction.len()].iter().enumerate() {
+                    let s = format!("{:02x} ", b);
+                    let highlight = pattern
+                        .and_then(|p| -> Option<bool> {
+                            let offset = (instruction.ip() as usize)
+                                .checked_sub(address)?
+                                .checked_add(i)?;
+                            Some(*p.mask.get(offset)? != 0)
+                        })
+                        .unwrap_or_default();
+                    #[allow(clippy::unnecessary_to_owned)]
+                    output.buffer.push_str(
+                        &if highlight {
+                            s.bright_white()
+                        } else {
+                            s.bright_black()
+                        }
+                        .to_string(),
+                    );
+                }
+
+                for _ in 0..8usize.saturating_sub(instruction.len()) {
+                    output.buffer.push_str("   ");
+                }
+
                 formatter.format(&instruction, &mut output);
                 output.buffer.push('\n');
             }
@@ -309,7 +336,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let folded_scans = scans
             .iter()
             .flat_map(|scan| scan.results.iter())
-            .map(|(config, m)| (&config.sig, (&config.name, m)))
+            .map(|(config, m)| (&config.sig, (config, m)))
             .fold(HashMap::new(), |mut map, (k, v)| {
                 map.entry(k).or_insert_with(Vec::new).push(v);
                 map
@@ -348,27 +375,35 @@ fn main() -> Result<(), Box<dyn Error>> {
                             ResolutionType::Address(address) => {
                                 cells.push(Cell::new(&format!(
                                     "{}\n{}",
-                                    m.0,
-                                    disassemble::disassemble(&mount, *address)
+                                    m.0.name,
+                                    disassemble::disassemble(
+                                        &mount,
+                                        *address,
+                                        m.1.stages.is_empty().then_some(&m.0.pattern)
+                                    )
                                 )));
                             }
                             ResolutionType::String(string) => {
-                                cells.push(Cell::new(&format!("{:?}\n{:?}", m.0, string)));
+                                cells.push(Cell::new(&format!("{:?}\n{:?}", m.0.name, string)));
                             }
                             ResolutionType::Count => {
                                 #[allow(clippy::unnecessary_to_owned)]
-                                cells.push(Cell::new(&format!("{}\ncount", m.0)));
+                                cells.push(Cell::new(&format!("{}\ncount", m.0.name)));
                             }
                             ResolutionType::Failed => {
                                 #[allow(clippy::unnecessary_to_owned)]
-                                cells.push(Cell::new(&format!("{}\n{}", m.0, "failed".red())));
+                                cells.push(Cell::new(&format!("{}\n{}", m.0.name, "failed".red())));
                             }
                         }
                         for (i, stage) in m.1.stages.iter().enumerate().rev() {
                             cells.push(Cell::new(&format!(
                                 "stage[{}]\n{}",
                                 i,
-                                disassemble::disassemble(&mount, *stage)
+                                disassemble::disassemble(
+                                    &mount,
+                                    *stage,
+                                    (i == 0).then_some(&m.0.pattern)
+                                )
                             )));
                         }
                         table.add_row(Row::new(cells));
@@ -383,7 +418,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 .fold(
                                     HashMap::<(&String, &ResolutionType), usize>::new(),
                                     |mut map, m| {
-                                        *map.entry((m.0, &m.1.res)).or_default() += 1;
+                                        *map.entry((&m.0.name, &m.1.res)).or_default() += 1;
                                         map
                                     },
                                 )

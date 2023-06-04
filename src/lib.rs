@@ -12,9 +12,9 @@ use patterns::Sig;
 
 #[derive(Debug)]
 pub struct Pattern {
-    sig: Vec<u8>,
-    mask: Vec<u8>,
-    custom_offset: usize,
+    pub sig: Vec<u8>,
+    pub mask: Vec<u8>,
+    pub custom_offset: usize,
 }
 
 impl Pattern {
