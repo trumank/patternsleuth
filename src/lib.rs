@@ -200,7 +200,7 @@ impl<'data> Index<Range<usize>> for MountedPE<'data> {
             .iter()
             .find_map(|section| {
                 if index.start >= section.address
-                    && index.end < section.address + section.data.len()
+                    && index.end <= section.address + section.data.len()
                 {
                     let relative_range = index.start - section.address..index.end - section.address;
                     Some(&section.data[relative_range])
