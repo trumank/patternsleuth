@@ -382,6 +382,7 @@ mod fns {
 
                     for dist in distances {
                         println!("{:#x?}", dist);
+                        println!("wdiff <(objdump -M intel --no-show-raw-insn --no-addresses --start-address=0x{:x} --stop-address=0x{:x} --demangle -d {}) <(objdump -M intel --no-show-raw-insn --no-addresses --start-address=0x{:x} --stop-address=0x{:x} --demangle -d {}) | colordiff | less -SR", function.range.start, function.range.end, action.exe.display(), dist.1.range.start, dist.1.range.end, action.other_exe.display());
                     }
                 }
             }
