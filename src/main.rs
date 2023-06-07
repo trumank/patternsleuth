@@ -17,8 +17,23 @@ use patternsleuth::{
     PatternConfig, Resolution,
 };
 
+#[derive(clap::Subcommand)]
+enum Action {
+    Functions(ActionFunctions),
+}
+
+#[derive(Parser)]
+pub struct ActionFunctions {
+    exe: std::path::PathBuf,
+    other_exe: std::path::PathBuf,
+    address: Option<String>,
+}
+
 #[derive(Parser)]
 struct CommandScan {
+    #[command(subcommand)]
+    action: Option<Action>,
+
     /// A game to scan (can be specified multiple times). Scans everything if omitted. Supports
     /// globs
     #[arg(short, long)]
@@ -210,6 +225,58 @@ mod disassemble {
         output.buffer
     }
 
+    pub(crate) fn disassemble_fixed(data: &[u8], address: usize) -> String {
+        let mut output = Output::default();
+
+        let decoder = Decoder::with_ip(64, data, address as u64, DecoderOptions::NONE);
+
+        let mut formatter = IntelFormatter::new();
+        formatter.options_mut().set_first_operand_char_index(8);
+        for instruction in decoder {
+            let ip = format!("{:016x}", instruction.ip());
+            output.buffer.push_str(&ip);
+            output.buffer.push_str(":  ");
+
+            let index = (instruction.ip() - address as u64) as usize;
+            for b in &data[index..index + instruction.len()] {
+                #[allow(clippy::unnecessary_to_owned)]
+                output
+                    .buffer
+                    .push_str(&format!("{:02x} ", b).bright_black().to_string());
+            }
+
+            for _ in 0..8usize.saturating_sub(instruction.len()) {
+                output.buffer.push_str("   ");
+            }
+
+            formatter.format(&instruction, &mut output);
+
+            if instruction.is_ip_rel_memory_operand() {
+                output.buffer.push_str(" rel");
+            }
+            output
+                .buffer
+                .push_str(&format!(" {:x}", instruction.near_branch_target()));
+
+            output.buffer.push('\n');
+        }
+        output.buffer
+    }
+
+    pub(crate) fn disassemble_fixed_small(data: &[u8], address: usize) -> String {
+        let mut output = String::new();
+
+        let decoder = Decoder::with_ip(64, data, address as u64, DecoderOptions::NONE);
+
+        let mut formatter = IntelFormatter::new();
+        formatter.options_mut().set_first_operand_char_index(8);
+        for instruction in decoder {
+            formatter.format(&instruction, &mut output);
+            output.push('\n');
+        }
+        output
+    }
+
     fn get_color(s: &str, kind: FormatterTextKind) -> ColoredString {
         match kind {
             FormatterTextKind::Directive | FormatterTextKind::Keyword => s.bright_yellow(),
@@ -221,8 +288,124 @@ mod disassemble {
     }
 }
 
+mod fns {
+    use super::*;
+
+    use byteorder::{ReadBytesExt, LE};
+    use std::io::Read;
+    use std::ops::Range;
+
+    #[derive(Debug, Clone)]
+    struct RuntimeFunction {
+        range: Range<usize>,
+        _unwind: usize,
+    }
+    impl RuntimeFunction {
+        fn read(base_address: usize, data: &mut impl Read) -> Result<Self> {
+            Ok(Self {
+                range: base_address + data.read_u32::<LE>()? as usize
+                    ..base_address + data.read_u32::<LE>()? as usize,
+                _unwind: base_address + data.read_u32::<LE>()? as usize,
+            })
+        }
+    }
+
+    fn read_exe<'data>(
+        exe_data: &'data [u8],
+        obj_file: &'data object::File,
+    ) -> Result<Vec<RuntimeFunction>, Box<dyn Error>> {
+        use std::io::Cursor;
+
+        let exe_base = obj_file.relative_address_base() as usize;
+
+        let mut pdata = Cursor::new(
+            obj_file
+                .section_by_name(".pdata")
+                .context(".pdata section does not exist")?
+                .data()?,
+        );
+
+        Ok(std::iter::from_fn(|| RuntimeFunction::read(exe_base, &mut pdata).ok()).collect())
+    }
+
+    pub fn functions(action: ActionFunctions) -> Result<(), Box<dyn Error>> {
+        let exe_data = fs::read(&action.exe)
+            .with_context(|| format!("reading game exe {}", action.exe.display()))?;
+        let exe_obj = object::File::parse(&*exe_data)?;
+        let memory = MountedPE::new(&exe_obj)?;
+
+        let other_exe_data = fs::read(&action.other_exe)
+            .with_context(|| format!("reading game exe {}", action.other_exe.display()))?;
+        let other_exe_obj = object::File::parse(&*other_exe_data)?;
+        let other_memory = MountedPE::new(&other_exe_obj)?;
+
+        let functions = read_exe(&exe_data, &exe_obj)?;
+        let other_functions = read_exe(&other_exe_data, &other_exe_obj)?;
+
+        if let Some(address) = action.address {
+            let address = usize::from_str_radix(&address, 16)?;
+            for function in &functions {
+                if function.range.contains(&address) {
+                    let dis = disassemble::disassemble_fixed(
+                        &memory[function.range.clone()],
+                        function.range.start,
+                    );
+                    println!("{:#x?}\n{}", function, dis);
+
+                    /*
+                    #[derive(Debug, derivative::Derivative)]
+                    #[derivative(Eq, Ord, PartialEq, PartialOrd)]
+                    struct FnDist {
+                        distance: i32,
+                        #[derivative(Ord = "ignore")]
+                        #[derivative(PartialEq = "ignore")]
+                        #[derivative(PartialOrd = "ignore")]
+                        function: RuntimeFunction,
+                    }
+
+                    let mut distances = BinaryHeap::new();
+                    */
+
+                    let mut distances = vec![];
+
+                    for other in other_functions.iter() {
+                        //println!("{:#x?}", other);
+                        let dis_other = disassemble::disassemble_fixed(
+                            &other_memory[other.range.clone()],
+                            other.range.start,
+                        );
+
+                        let distance = sift4::simple(&dis, &dis_other);
+                        distances.push((distance, other.clone()));
+                    }
+                    distances.sort_by_key(|e| std::cmp::Reverse(e.0));
+
+                    for dist in distances {
+                        println!("{:#x?}", dist);
+                    }
+                }
+            }
+        } else {
+            for function in functions {
+                let dis = disassemble::disassemble_fixed(
+                    &memory[function.range.clone()],
+                    function.range.start,
+                );
+                println!("{:#x?}\n{}", function, dis);
+            }
+        }
+
+        Ok(())
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = CommandScan::parse();
+
+    match cli.action {
+        Some(Action::Functions(action)) => return fns::functions(action),
+        None => {}
+    }
 
     let sig_filter = cli.signature.into_iter().collect::<HashSet<_>>();
     let games_filter = cli
