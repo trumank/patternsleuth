@@ -329,6 +329,8 @@ mod fns {
     }
 
     pub fn functions(action: ActionFunctions) -> Result<(), Box<dyn Error>> {
+        use rayon::prelude::*;
+
         let exe_data = fs::read(&action.exe)
             .with_context(|| format!("reading game exe {}", action.exe.display()))?;
         let exe_obj = object::File::parse(&*exe_data)?;
@@ -341,6 +343,76 @@ mod fns {
 
         let functions = read_exe(&exe_data, &exe_obj)?;
         let other_functions = read_exe(&other_exe_data, &other_exe_obj)?;
+
+        println!("disassembling {}", action.exe.display());
+        let fn_dis = functions
+            .par_iter()
+            .map(|f| {
+                (
+                    f,
+                    disassemble::disassemble_fixed_small(&memory[f.range.clone()], f.range.start),
+                )
+            })
+            .collect::<Vec<_>>();
+        println!("disassembling {}", action.other_exe.display());
+        let other_fn_dis = other_functions
+            .par_iter()
+            .map(|f| {
+                (
+                    f,
+                    disassemble::disassemble_fixed_small(&other_memory[f.range.clone()], f.range.start),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        const S: f32 = 30.0;
+        fn bin(s: &str) -> usize {
+            ((s.len() as f32).log10() * S) as usize
+        }
+        fn inv_bin(b: usize) -> usize {
+            10f32.powf(b as f32 / S) as usize
+        }
+
+        let mut bins: HashMap<usize, Vec<&(&RuntimeFunction, String)>> = Default::default();
+
+        for f in &fn_dis {
+            let i = bin(&f.1);
+            bins.entry(i - 1).or_default().push(&f);
+            bins.entry(i).or_default().push(&f);
+            bins.entry(i + 1).or_default().push(&f);
+        }
+        for (k, v) in bins.iter().sorted_by_key(|e| e.0) {
+            println!("{} ({}): {}", k, inv_bin(*k), v.len());
+        }
+
+        other_fn_dis.par_iter().for_each(|of| {
+            //if of.1.len() < 1000 { return; }
+            let m = bins
+                .get(&bin(&of.1))
+                .map(|f| f.iter())
+                .unwrap_or_default()
+                .map(|f| {
+                    let distance = sift4::simple(&of.1, &f.1);
+                    (f.0.clone(), distance, &f.1)
+                })
+                .min_by_key(|f| f.1);
+
+            if let Some(m) = m {
+                //println!("{}", of.1);
+                println!("diff = {:>8} fn.len() = {:>8} match.len() = {:>8} fn addr = {:x} match addr = {:x}", m.1, of.1.len(), m.2.len(), m.0.range.start, of.0.range.start);
+                //println!("wdiff -n <(objdump -M intel --no-show-raw-insn --no-addresses --start-address=0x{:x} --stop-address=0x{:x} --demangle -d {}) <(objdump -M intel --no-show-raw-insn --no-addresses --start-address=0x{:x} --stop-address=0x{:x} --demangle -d {}) | colordiff | less -SR",
+                    //m.0.range.start, m.0.range.end, action.exe.display(), of.0.range.start, of.0.range.end, action.other_exe.display());
+            }
+            //distances.sort_by_key(|e| std::cmp::Reverse(e.0));
+
+            /*
+            for dist in distances {
+                println!("{:#x?}", dist);
+                println!("wdiff <(objdump -M intel --no-show-raw-insn --no-addresses --start-address=0x{:x} --stop-address=0x{:x} --demangle -d {}) <(objdump -M intel --no-show-raw-insn --no-addresses --start-address=0x{:x} --stop-address=0x{:x} --demangle -d {}) | colordiff | less -SR", function.range.start, function.range.end, action.exe.display(), dist.1.range.start, dist.1.range.end, action.other_exe.display());
+            }*/
+        });
+
+        return Ok(());
 
         if let Some(address) = action.address {
             let address = usize::from_str_radix(&address, 16)?;
