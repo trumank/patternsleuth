@@ -1209,9 +1209,7 @@ mod FPakPlatformFile {
     pub fn resolve_dtor(ctx: ResolveContext) -> Resolution {
         let mut stages = vec![ctx.match_address];
 
-        let patterns = [
-            Pattern::new("48 8b 0d | ").unwrap(),
-        ];
+        let patterns = [Pattern::new("48 8b 0d | ").unwrap()];
 
         let addresses = ctx
             .memory

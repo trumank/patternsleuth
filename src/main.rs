@@ -154,7 +154,9 @@ mod disassemble {
             formatter.options_mut().set_first_operand_char_index(8);
             for instruction in instructions {
                 let ip = format!("{:016x}", instruction.ip());
-                if instruction.ip() == address as u64 {
+                if (instruction.ip()..instruction.ip() + instruction.len() as u64)
+                    .contains(&(address as u64))
+                {
                     #[allow(clippy::unnecessary_to_owned)]
                     output.buffer.push_str(&ip.reversed().to_string());
                 } else {
@@ -164,7 +166,6 @@ mod disassemble {
 
                 let index = (instruction.ip() - start_address) as usize;
                 for (i, b) in data[index..index + instruction.len()].iter().enumerate() {
-                    let s = format!("{:02x} ", b);
                     let highlight = pattern
                         .and_then(|p| -> Option<bool> {
                             let offset = (instruction.ip() as usize)
@@ -173,15 +174,23 @@ mod disassemble {
                             Some(*p.mask.get(offset)? != 0)
                         })
                         .unwrap_or_default();
+                    let s = format!("{:02x}", b);
+                    let mut colored = if highlight {
+                        s.bright_white()
+                    } else {
+                        s.bright_black()
+                    };
+                    if instruction
+                        .ip()
+                        .checked_add(i as u64)
+                        .map(|a| a == address as u64)
+                        .unwrap_or_default()
+                    {
+                        colored = colored.reversed();
+                    }
                     #[allow(clippy::unnecessary_to_owned)]
-                    output.buffer.push_str(
-                        &if highlight {
-                            s.bright_white()
-                        } else {
-                            s.bright_black()
-                        }
-                        .to_string(),
-                    );
+                    output.buffer.push_str(&colored.to_string());
+                    output.buffer.push(' ');
                 }
 
                 for _ in 0..8usize.saturating_sub(instruction.len()) {
