@@ -227,7 +227,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let games_filter = cli
         .game
         .into_iter()
-        .map(|g| Ok(globset::Glob::new(&g)?.compile_matcher()))
+        .map(|g| {
+            Ok(globset::GlobBuilder::new(&g)
+                .case_insensitive(true)
+                .build()?
+                .compile_matcher())
+        })
         .collect::<Result<Vec<_>>>()?;
 
     let patterns = get_patterns()?
