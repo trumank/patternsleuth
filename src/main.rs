@@ -19,7 +19,8 @@ use patternsleuth::{
 
 #[derive(Parser)]
 struct CommandScan {
-    /// A game to scan (can be specified multiple times). Scans everything if omitted
+    /// A game to scan (can be specified multiple times). Scans everything if omitted. Supports
+    /// globs
     #[arg(short, long)]
     game: Vec<String>,
 
@@ -223,7 +224,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let cli = CommandScan::parse();
 
     let sig_filter = cli.signature.into_iter().collect::<HashSet<_>>();
-    let games_filter = cli.game.into_iter().collect::<HashSet<_>>();
+    let games_filter = cli
+        .game
+        .into_iter()
+        .map(|g| Ok(globset::Glob::new(&g)?.compile_matcher()))
+        .collect::<Result<Vec<_>>>()?;
 
     let patterns = get_patterns()?
         .into_iter()
@@ -258,7 +263,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         if !games_filter
             .is_empty()
             .then_some(true)
-            .unwrap_or_else(|| games_filter.contains(&game))
+            .unwrap_or_else(|| games_filter.iter().any(|g| g.is_match(&game)))
         {
             continue;
         }
