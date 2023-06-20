@@ -48,7 +48,7 @@ impl Pattern {
         })
     }
     #[inline]
-    fn is_match(&self, data: &[u8], index: usize) -> bool {
+    pub fn is_match(&self, data: &[u8], index: usize) -> bool {
         for i in 0..self.mask.len() {
             if data[index + i] & self.mask[i] != self.sig[i] {
                 return false;
@@ -58,7 +58,7 @@ impl Pattern {
     }
     /// compute virtual address from address relative to section as well as account for
     /// custom_offset
-    fn compute_result(&self, _data: &[u8], base_address: usize, index: usize) -> usize {
+    pub fn compute_result(&self, _data: &[u8], base_address: usize, index: usize) -> usize {
         base_address + index + self.custom_offset
     }
 }

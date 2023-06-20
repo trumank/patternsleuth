@@ -85,12 +85,66 @@ pub fn scan<'id, ID: Sync>(
     matches
 }
 
+pub fn scan_memchr<'id, ID: Sync>(
+    patterns: &[(&'id ID, &Pattern)],
+    base_address: usize,
+    data: &[u8],
+) -> Vec<(&'id ID, usize)> {
+    use rayon::prelude::*;
+
+    let mut matches = vec![];
+
+    for (id, pattern) in patterns {
+        let first_byte_data = &data[0..data.len().saturating_sub(pattern.sig.len() - 1)];
+        let chunk_size = (first_byte_data.len()
+            / std::thread::available_parallelism()
+                .unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
+        .max(1);
+
+        let chunks: Vec<_> = first_byte_data.chunks(chunk_size).enumerate().collect();
+        matches.append(
+            &mut chunks
+                .par_iter()
+                .map(|(chunk_index, chunk)| {
+                    let mut matches = vec![];
+                    let offset = chunk_index * chunk_size;
+
+                    for i in memchr::memchr_iter(pattern.sig[0], chunk) {
+                        let j = offset + i;
+                        if pattern.is_match(data, j) {
+                            matches.push((*id, pattern.compute_result(data, base_address, j)));
+                        }
+                    }
+                    matches
+                })
+                .flatten()
+                .collect::<Vec<_>>(),
+        );
+    }
+    matches
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
 
+    type ScanFn<'id> = fn(
+        patterns: &[(&'id (), &Pattern)],
+        base_address: usize,
+        data: &[u8],
+    ) -> Vec<(&'id (), usize)>;
+
     #[test]
     fn test_scan() {
+        test_scan_algo(scan);
+    }
+
+    #[test]
+    fn test_scan_memchr() {
+        test_scan_algo(scan_memchr);
+    }
+
+    fn test_scan_algo(scan: ScanFn) {
         let patterns = [(&(), &Pattern::new("01").unwrap())];
 
         let len = 64;

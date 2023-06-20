@@ -16,8 +16,14 @@ fn gig(c: &mut Criterion) {
     let result = patternsleuth::scanner::scan(&[(&(), &pattern)], 0, &data);
     assert_eq!(result, [(&(), size - needle.len())]);
 
-    c.bench_function("gig", |b| {
+    let result = patternsleuth::scanner::scan_memchr(&[(&(), &pattern)], 0, &data);
+    assert_eq!(result, [(&(), size - needle.len())]);
+
+    c.bench_function("gig scan", |b| {
         b.iter(|| patternsleuth::scanner::scan(&[(&(), &pattern)], 0, &data))
+    });
+    c.bench_function("gig scan_memchr", |b| {
+        b.iter(|| patternsleuth::scanner::scan_memchr(&[(&(), &pattern)], 0, &data))
     });
 }
 
