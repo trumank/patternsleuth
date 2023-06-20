@@ -288,6 +288,86 @@ mod disassemble {
     }
 }
 
+// modified version of sift4 crate to operate directly on bytes
+mod sift4_bin {
+    pub fn simple(s1: &[u8], s2: &[u8]) -> i32 {
+        return sift4_offset(s1, s2, 5);
+    }
+
+    fn min_usize(u1: usize, u2: usize) -> usize {
+        if u1 <= u2 {
+            u1
+        } else {
+            u2
+        }
+    }
+
+    fn max_usize(u1: usize, u2: usize) -> usize {
+        if u1 >= u2 {
+            u1
+        } else {
+            u2
+        }
+    }
+
+    fn sift4_offset(s1: &[u8], s2: &[u8], max_offset: usize) -> i32 {
+        let l1 = s1.len();
+        let l2 = s2.len();
+
+        // handle empty strings
+        if l1 == 0 {
+            if l2 == 0 {
+                return 0;
+            } else {
+                return l2 as i32;
+            }
+        }
+
+        if l2 == 0 {
+            return l1 as i32;
+        }
+
+        let mut c1 = 0; // cursor for string 1
+        let mut c2 = 0; // cursor for string 2
+        let mut lcss = 0; // largest common subsequence
+        let mut local_cs = 0; // local common substring
+
+        while c1 < l1 && c2 < l2 {
+            if s1[c1] == s2[c2] {
+                local_cs += 1;
+            } else {
+                lcss += local_cs;
+                local_cs = 0;
+                if c1 != c2 {
+                    c1 = min_usize(c1, c2);
+                    c2 = c1; // using min allows the computation of transpositions
+                }
+
+                for i in 0..max_offset {
+                    if (c1 + 1 < l1 || c2 + i < l2) == false {
+                        break;
+                    }
+
+                    if c1 + i < l1 && s1[c1 + i] == s2[c2] {
+                        c1 += i;
+                        local_cs += 1;
+                        break;
+                    }
+                    if (c2 + i < l2) && (s1[c1] == s2[c2 + i]) {
+                        c2 += i;
+                        local_cs += 1;
+                        break;
+                    }
+                }
+            }
+            c1 += 1;
+            c2 += 1;
+        }
+        lcss += local_cs;
+        (max_usize(l1, l2) - lcss) as i32
+    }
+}
+
 mod fns {
     use super::*;
 
@@ -344,13 +424,17 @@ mod fns {
         let functions = read_exe(&exe_data, &exe_obj)?;
         let other_functions = read_exe(&other_exe_data, &other_exe_obj)?;
 
+        //println!("{:#x?}", other_functions.iter().filter(|f| f.range.contains(&0x1424c87b0)).collect_vec());
+        //println!("{:#x?}", other_functions.iter().filter(|f| f.range.contains(&0x1424c87bf)).collect_vec());
+        //return Ok(());
+
         println!("disassembling {}", action.exe.display());
         let fn_dis = functions
             .par_iter()
             .map(|f| {
                 (
                     f,
-                    disassemble::disassemble_fixed_small(&memory[f.range.clone()], f.range.start),
+                    &memory[f.range.clone()],
                 )
             })
             .collect::<Vec<_>>();
@@ -360,20 +444,20 @@ mod fns {
             .map(|f| {
                 (
                     f,
-                    disassemble::disassemble_fixed_small(&other_memory[f.range.clone()], f.range.start),
+                    &other_memory[f.range.clone()],
                 )
             })
             .collect::<Vec<_>>();
 
         const S: f32 = 30.0;
-        fn bin(s: &str) -> usize {
+        fn bin(s: &[u8]) -> usize {
             ((s.len() as f32).log10() * S) as usize
         }
         fn inv_bin(b: usize) -> usize {
             10f32.powf(b as f32 / S) as usize
         }
 
-        let mut bins: HashMap<usize, Vec<&(&RuntimeFunction, String)>> = Default::default();
+        let mut bins: HashMap<usize, Vec<&(&RuntimeFunction, &[u8])>> = Default::default();
 
         for f in &fn_dis {
             let i = bin(&f.1);
@@ -392,7 +476,7 @@ mod fns {
                 .map(|f| f.iter())
                 .unwrap_or_default()
                 .map(|f| {
-                    let distance = sift4::simple(&of.1, &f.1);
+                    let distance = sift4_bin::simple(&of.1, &f.1);
                     (f.0.clone(), distance, &f.1)
                 })
                 .min_by_key(|f| f.1);
@@ -400,8 +484,8 @@ mod fns {
             if let Some(m) = m {
                 //println!("{}", of.1);
                 println!("diff = {:>8} fn.len() = {:>8} match.len() = {:>8} fn addr = {:x} match addr = {:x}", m.1, of.1.len(), m.2.len(), m.0.range.start, of.0.range.start);
-                //println!("wdiff -n <(objdump -M intel --no-show-raw-insn --no-addresses --start-address=0x{:x} --stop-address=0x{:x} --demangle -d {}) <(objdump -M intel --no-show-raw-insn --no-addresses --start-address=0x{:x} --stop-address=0x{:x} --demangle -d {}) | colordiff | less -SR",
-                    //m.0.range.start, m.0.range.end, action.exe.display(), of.0.range.start, of.0.range.end, action.other_exe.display());
+                println!("wdiff -n <(objdump -M intel --no-show-raw-insn --no-addresses --start-address=0x{:x} --stop-address=0x{:x} --demangle -d {}) <(objdump -M intel --no-show-raw-insn --no-addresses --start-address=0x{:x} --stop-address=0x{:x} --demangle -d {}) | colordiff | less -SR",
+                    m.0.range.start, m.0.range.end, action.exe.display(), of.0.range.start, of.0.range.end, action.other_exe.display());
             }
             //distances.sort_by_key(|e| std::cmp::Reverse(e.0));
 

@@ -682,6 +682,7 @@ dependencies = [
  "globset",
  "iced-x86",
  "itertools",
+ "memchr",
  "object",
  "prettytable-rs",
  "rand",

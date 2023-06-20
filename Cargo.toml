@@ -28,4 +28,5 @@ strum = {version = "0.24.1", features = ["strum_macros", "derive"]}
 
 [dev-dependencies]
 criterion = "0.4.0"
+memchr = "2.5.0"
 rand = "0.8.5"
