@@ -61,6 +61,7 @@ pub enum Sig {
     FPakPlatformFileInitialize,
     #[strum(serialize = "FPakPlatformFile::~FPakPlatformFile")]
     FPakPlatformFileDtor,
+	FCustomVersionContainer,
 }
 
 pub fn get_patterns() -> Result<Vec<PatternConfig>> {
@@ -625,6 +626,90 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::new("E8 ?? ?? ?? ?? BD 01 00 00 00 41 39 6E ?? 0F 8E")?,
             FNameToStringID::resolve,
         ),
+        PatternConfig::new(
+            Sig::FNameToString,//419-427
+            "SetEnums".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("0f 84 ?? ?? ?? ?? 48 8b ?? e8 ?? ?? ?? ?? 84 c0 0f 85 ?? ?? ?? ?? 48 8d ?? 24 ?? 48 8b ?? e8 ?? ?? ?? ??")?,
+            FNameToStringID::setenums,
+        ),
+        PatternConfig::new(
+            Sig::FNameToString,
+            "LW".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 8b 48 ?? 48 89 4c 24 ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00 48 8d")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameToString,
+            "Bnew3".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("E8 ?? ?? ?? ?? ?? 01 00 00 00 ?? 39 ?? 48 0F 8E")?,
+            FNameToStringID::resolve,
+        ),
+        PatternConfig::new(
+            Sig::FNameToString,
+            "C".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("E8 ?? ?? ?? ?? 83 7D C8 00 48 8D 15 ?? ?? ?? ?? 0F 5A DE")?,
+            FNameToStringID::resolve,
+        ), 
+        PatternConfig::new(
+            Sig::FNameToString,
+            "Dnew".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("E8 ?? ?? ?? ?? 83 7D C8 00 48 8D 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? 48 0f")?,
+            FNameToStringID::resolve,
+        ),
+        PatternConfig::new(
+            Sig::FNameToString,
+            "KH3".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 89 5C 24 ?? 48 89 ?? 24 ?? 48 89 ?? 24 ?? 41 56 48 83 EC ?? 48 8B DA 4C 8B F1 e8 ?? ?? ?? ?? 4C 8B C8 41 8B 06 99")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::FNameToString,
+            "FullyLoad".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("c6 ?? 2a 01 48 89 44 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameToString,
+            "FMemoryArchive".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 89 0f eb 15 48 8b cf e8 | ?? ?? ?? ?? 48 8d ?? 24 ?? 48 8b cb e8 ?? ?? ?? ??  48 8b ?? 24 ?? 48 85 c9 74 05")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameToString,
+            "FLoadTimeTracker".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 63 c9 48 c1 ?? 05 48 03 ?? e8 | ?? ?? ?? ?? 48 8b ?? ?? 48 85 c9 74 05")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameToString,
+            "ISlateStyleJoin".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("e8 ?? ?? ?? ?? 48 ?? ?? 24 ?? 48 ?? ?? 24 98 00 00 00 e8 | ?? ?? ?? ?? 8b 48 ?? 83 f9 01")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameToString,
+            "UClassRename".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("00 74 ?? 48 8d ?? 24 ?? 48 8b ?? e8 ?? ?? ?? ?? 48 8b c8 48 8d ?? 24 ?? e8 | ?? ?? ?? ?? 83 78 08 00 74 ?? ?? ?? ?? eb")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameToString,
+            "LinkerManagerExec".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 8d 0c c1 e8 | ?? ?? ?? ?? 83 78 08 00")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
 
         //===============================[FNameFName]=============================================================================================
         PatternConfig::new(
@@ -636,26 +721,103 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
         ),
         PatternConfig::new(
             Sig::FNameFName,
+            "<=V4.22".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("40 53 48 83 EC ?? 48 8B D9 48 85 D2 74 21 45 8B C8 C7 44 24 ?? FF FF FF FF 45 33 C0 C6 44 24 ?? 01 E8")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::FNameFName,
+            "V4.23".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("40 53 48 83 EC ?? 45 33 D2 48 89 54 24 ?? 48 8B D9 48 8B C2 48 85 D2 74 2C 44 0F B7")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::FNameFName,
+            ">=V4.24".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 89 5C 24 ?? 57 48 83 EC ?? 48 8B D9 48 89 54 24 ?? 33 C9 41 8B F8 4C 8B ?? 44 8B")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::FNameFName,
             "V5.1".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("57 48 83 EC 50 41 B8 01 00 00 00 0F 29 74 24 40 48 8D ?? ?? ?? ?? ?? 48 8D 4C 24 60 E8")?,
             FNameFNameID::resolve_v5_1,
         ),
+        PatternConfig::new(
+            Sig::FNameFName,
+            "LW0".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("41 b8 01 00 00 00 48 8d 15 ?? ?? ?? ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ??")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameFName,
+            "LW01".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 83 ec ?? 41 b8 01 00 00 00 48 8d 15 ?? ?? ?? ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 48 8b")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameFName,
+            "LW1".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("41 b8 01 00 00 00 48 8d 15 ?? ?? ?? ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 48 8b ?? e8")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameFName,
+            "LW11".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("e8 ?? ?? ?? ?? 41 b8 01 00 00 00 48 8d 15 ?? ?? ?? ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 48 8b 44")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameFName,
+            "LW2".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("ff 50 ?? 41 b8 01 00 00 00 48 8d 15 ?? ?? ?? ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? ")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameFName,
+            "LW3".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("41 ?? 01 00 00 00 48 8d ?? 24 ?? 48 0f 45 ?? 24 ?? e8 | ?? ?? ?? ??")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+		PatternConfig::new(
+            Sig::FNameFName,
+            "LW4".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("41 ?? 01 00 00 00 48 8d ?? ?? 48 0f 45 ?? ?? e8 | ?? ?? ?? ??")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameFName,
+            "LW5".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("75 ?? 41 ?? 01 00 00 00 48 8d ?? ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 | ?? ?? ?? ?? 48 8d ?? ?? ?? ?? ?? e8")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::FNameFName,
+            "LW51".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("ff 0f 85 ?? ?? ?? ?? 41 ?? 01 00 00 00 48 8d ?? ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 | ?? ?? ?? ?? 48 8d ?? ?? ?? ?? ?? e8 ?? ?? ?? ?? e9")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
 
         //===============================[StaticConstructObjectInternal]=============================================================================================
-        PatternConfig::new(
-            Sig::StaticConstructObjectInternal,
-            "A".to_string(),
-            Some(object::SectionKind::Text),
-            Pattern::new("C0 E9 02 32 88 ?? ?? ?? ?? 80 E1 01 30 88 ?? ?? ?? ?? 48")?,
-            StaticConstructObjectInternalID::resolve_a_v4_12,
-        ),
         PatternConfig::new(
             Sig::StaticConstructObjectInternal,
             "V4.12".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("89 8E C8 03 00 00 3B 8E CC 03 00 00 7E 0F 41 8B D6 48 8D 8E C0 03 00 00")?,
-            StaticConstructObjectInternalID::resolve_v4_16_4_19_v5_0,
+            StaticConstructObjectInternalID::resolve_a_v4_20,
         ),
         PatternConfig::new(
             Sig::StaticConstructObjectInternal,
@@ -666,12 +828,40 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
         ),
         PatternConfig::new(
             Sig::StaticConstructObjectInternal,
+            ">=V4.20".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("C0 E9 ?? 32 88 ?? ?? ?? ?? 80 E1 01 30 88 ?? ?? ?? ?? 48")?,
+            StaticConstructObjectInternalID::resolve_a_v4_20,
+        ),
+        PatternConfig::new(
+            Sig::StaticConstructObjectInternal,
             "V5.0".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("E8 ?? ?? ?? ?? 48 8B D8 48 39 75 30 74 15")?,
             StaticConstructObjectInternalID::resolve_v4_16_4_19_v5_0,
         ),
-       PatternConfig::new(
+        PatternConfig::new(
+            Sig::StaticConstructObjectInternal,
+            "LW".to_string(),
+            None,
+            Pattern::new("48 89 ?? 24 ?? c7 ?? 24 ?? 00 00 00 00 E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8b ?? 24")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::StaticConstructObjectInternal,
+            "LW1".to_string(),
+            None,
+            Pattern::new("00 48 89 ?? 24 ?? c7 ?? 24 ?? 00 00 00 00 E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8b ?? 24")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::StaticConstructObjectInternal,
+            "LW2".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("E8 ?? ?? ?? ?? 48 89 47 ?? 40 38 35 ?? ?? ?? ?? 75 09 40 38 35")?,
+            StaticConstructObjectInternalID::resolve_v4_16_4_19_v5_0,
+        ),
+        PatternConfig::new(
             Sig::StaticConstructObjectInternal,
             "UUU4_Alternative0".to_string(),
             None,
@@ -712,24 +902,59 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Sig::GMalloc,
             "A".to_string(),
             Some(object::SectionKind::Text),
-            Pattern::new("48 85 C9 74 2E 53 48 83 EC 20 48 8B D9 48 8B ?? ?? ?? ?? ?? 48 85 C9")?,
-            resolve_self,
+            Pattern::new("48 85 C9 74 2E 53 48 83 EC 20 48 8B D9 48 8B ?? | ?? ?? ?? ?? 48 85 C9")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::GMalloc,
+            "B".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("E8 ?? ?? ?? ?? 48 8b 0d | ?? ?? ?? ?? 48 8b ?? 48 8b ?? ff 50 ?? 48 83 c4 ?? ?? c3 cc")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::GMalloc,
+            "alt".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 85 C9 74 ?? 4C 8B 05 | ?? ?? ?? ?? 4D 85 C0 0F 84 ?? ?? ?? ?? 49 8B 00 48")?,
+            RIPRelativeResolvers::resolve_RIP4,
         ),
 
         //===============================[GUObjectArray]=============================================================================================
         PatternConfig::new(
             Sig::GUObjectArray,
-            "A".to_string(),
+            "<=V4.12".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 03 ?? ?? ?? ?? ?? 48 8B 10 48 85 D2 74 07")?,
-            GUObjectArrayID::resolve_a,
+            GUObjectArrayID::resolve_v_20,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
-            ">V4.20".to_string(),
+            "<=V4.13".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 83 79 10 00 74 F6 48 8B D1 48 8D | ??")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::GUObjectArray,
+            "<=V4.19".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 8B ?? ?? ?? ?? ?? 4C 8B 04 C8 4D 85 C0 74 07")?,
+            GUObjectArrayID::resolve_v_20,
+        ),
+        PatternConfig::new(
+            Sig::GUObjectArray,
+            ">=V4.20".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 8B ?? ?? ?? ?? ?? 48 8B 0C C8 ?? 8B 04 ?? 48 85 C0")?,
             GUObjectArrayID::resolve_v_20,
+        ),
+        PatternConfig::new(
+            Sig::GUObjectArray,
+            "B_Ext".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 8B C8 48 89 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? ?? ?? ?? 0F 84")?,
+            GUObjectArrayID::resolve_b_ext,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
@@ -737,7 +962,14 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             None,
             Pattern::new("48 8D 0D | ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 C6 05 ?? ?? ?? ?? 00 80 3D")?,
             RIPRelativeResolvers::resolve_RIP4,
-       ),
+        ),
+        PatternConfig::new(
+            Sig::GUObjectArray,
+            "UUU4_Alternative0_LW".to_string(),
+            None,
+            Pattern::new("74 ?? 48 8D 0D | ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative1".to_string(),
@@ -771,6 +1003,13 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             "UUU4_Alternative5".to_string(),
             None,
             Pattern::new("48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 45 ?? C9 4C 89 74 24")?,
+            RIPRelativeResolvers::resolve_RIP4,
+        ),
+        PatternConfig::new(
+            Sig::GUObjectArray,
+            "UUU4_Alternative5_LW".to_string(),
+            None,
+            Pattern::new("75 ?? 48 ?? ?? 48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 45 33 C9 4C 89 74 24")?,
             RIPRelativeResolvers::resolve_RIP4,
         ),
         PatternConfig::new(
@@ -969,6 +1208,15 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::new("40 53 56 57 48 83 ec 20 48 8d 05 ?? ?? ?? ?? 4c 89 74 24 50 48 89 01 48 8b f9 e8 ?? ?? ?? ?? 48 8b c8")?,
             FPakPlatformFile::resolve_dtor,
         ),
+		
+	//===============================[FCustomVersionContainer]=============================================================================================
+        PatternConfig::new(
+            Sig::FCustomVersionContainer,
+            "Direct".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 89 5c 24 ?? 48 89 74 24 ?? 57 48 83 ec ?? 48 8b f9 e8 ?? ?? ?? ?? 48 8b c8 48 8b d8 ff 15")?,
+            resolve_self,
+        ),
     ])
 }
 
@@ -1054,6 +1302,31 @@ mod FNameToStringID {
             res: address.into(),
         }
     }
+    pub fn setenums(ctx: ResolveContext) -> Resolution {
+        let mut stages = vec![ctx.match_address];
+        let n = ctx.match_address + 35;
+        let rel = i32::from_le_bytes(ctx.memory[n - 4..n].try_into().unwrap());
+        let address = n.checked_add_signed(rel as isize).unwrap();
+		
+		for i in address..address + 400 {
+            if ctx.memory[i] == 0xe8
+            {
+                stages.push(i.checked_add_signed(0).unwrap());
+				let n = i.checked_add_signed(5).unwrap();
+                let address = n.checked_add_signed(i32::from_le_bytes(
+                    ctx.memory[n -4 .. n].try_into().unwrap(),
+                ) as isize);
+                return Resolution {
+                    stages,
+                    res: address.into(),
+                };
+            }
+        }
+        Resolution {
+            stages,
+            res: address.into(),
+        }
+    }
 }
 
 #[allow(non_snake_case)]
@@ -1086,7 +1359,7 @@ mod FNameFNameID {
 #[allow(non_snake_case)]
 mod StaticConstructObjectInternalID {
     use super::*;
-    pub fn resolve_a_v4_12(ctx: ResolveContext) -> Resolution {
+    pub fn resolve_a_v4_20(ctx: ResolveContext) -> Resolution {
         let stages = vec![ctx.match_address];
         let n = ctx.match_address - 0x0e;
         let address = n.checked_add_signed(i32::from_le_bytes(
@@ -1113,11 +1386,15 @@ mod StaticConstructObjectInternalID {
 #[allow(non_snake_case)]
 mod GUObjectArrayID {
     use super::*;
-    pub fn resolve_a(ctx: ResolveContext) -> Resolution {
+    pub fn resolve_v_14(ctx: ResolveContext) -> Resolution {
+        let stages = vec![ctx.match_address];
+        let n = ctx.match_address + 0xc;
+        let address = n
+            .checked_add_signed(i32::from_le_bytes(ctx.memory[n..n + 4].try_into().unwrap()) as isize)
+            .map(|a| a + 0x4);
         Resolution {
-            // TODO
-            stages: vec![],
-            res: ctx.match_address.into(),
+            stages,
+            res: address.into(),
         }
     }
     pub fn resolve_v_20(ctx: ResolveContext) -> Resolution {
@@ -1127,6 +1404,17 @@ mod GUObjectArrayID {
             .checked_add_signed(
                 i32::from_le_bytes(ctx.memory[n..n + 4].try_into().unwrap()) as isize
             )
+            .map(|a| a - 0xc);
+        Resolution {
+            stages,
+            res: address.into(),
+        }
+    }
+    pub fn resolve_b_ext(ctx: ResolveContext) -> Resolution {
+        let stages = vec![ctx.match_address];
+        let n = ctx.match_address + 6;
+        let address = n
+            .checked_add_signed(i32::from_le_bytes(ctx.memory[n..n + 4].try_into().unwrap()) as isize)
             .map(|a| a - 0xc);
         Resolution {
             stages,
