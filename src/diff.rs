@@ -52,7 +52,7 @@ struct DiffRecord {
     #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
     b_end: u64,
     symbol: Option<String>,
-    score: i32,
+    distance: i32,
 }
 
 fn read_exe(obj_file: &object::File) -> Result<Vec<RuntimeFunction>, Box<dyn Error>> {
@@ -68,6 +68,38 @@ fn read_exe(obj_file: &object::File) -> Result<Vec<RuntimeFunction>, Box<dyn Err
     );
 
     Ok(std::iter::from_fn(|| RuntimeFunction::read(exe_base, &mut pdata).ok()).collect())
+}
+
+struct FunctionBody<'a> {
+    func: &'a RuntimeFunction,
+    body: &'a [u8],
+}
+struct Diff<'a> {
+    a: &'a FunctionBody<'a>,
+    b: &'a FunctionBody<'a>,
+    distance: i32,
+}
+
+const S: f32 = 30.0;
+fn bin(s: &[u8]) -> usize {
+    ((s.len() as f32).log10() * S) as usize
+}
+fn inv_bin(b: usize) -> usize {
+    10f32.powf(b as f32 / S) as usize
+}
+
+fn bin_functions<'a>(fn_dis: &'a Vec<FunctionBody<'a>>) -> HashMap<usize, Vec<&'a FunctionBody>> {
+    let mut bins = HashMap::<usize, Vec<_>>::new();
+    for f in fn_dis {
+        let i = bin(f.body);
+        bins.entry(i - 1).or_default().push(f);
+        bins.entry(i).or_default().push(f);
+        bins.entry(i + 1).or_default().push(f);
+    }
+    for (k, v) in bins.iter().sorted_by_key(|e| e.0) {
+        println!("{} ({}): {}", k, inv_bin(*k), v.len());
+    }
+    bins
 }
 
 pub fn functions(
@@ -97,36 +129,23 @@ pub fn functions(
     println!("disassembling {}", exe.display());
     let fn_dis = functions
         .par_iter()
-        .map(|f| (f, &memory[f.range.clone()]))
+        .map(|func| FunctionBody {
+            func,
+            body: &memory[func.range.clone()],
+        })
         .collect::<Vec<_>>();
     println!("disassembling {}", other_exe.display());
     let other_fn_dis = other_functions
         .par_iter()
-        .map(|f| (f, &other_memory[f.range.clone()]))
+        .map(|func| FunctionBody {
+            func,
+            body: &other_memory[func.range.clone()],
+        })
         .collect::<Vec<_>>();
 
-    const S: f32 = 30.0;
-    fn bin(s: &[u8]) -> usize {
-        ((s.len() as f32).log10() * S) as usize
-    }
-    fn inv_bin(b: usize) -> usize {
-        10f32.powf(b as f32 / S) as usize
-    }
-
-    let mut bins: HashMap<usize, Vec<&(&RuntimeFunction, &[u8])>> = Default::default();
-
-    for f in &fn_dis {
-        let i = bin(f.1);
-        bins.entry(i - 1).or_default().push(f);
-        bins.entry(i).or_default().push(f);
-        bins.entry(i + 1).or_default().push(f);
-    }
-    for (k, v) in bins.iter().sorted_by_key(|e| e.0) {
-        println!("{} ({}): {}", k, inv_bin(*k), v.len());
-    }
+    let bins = bin_functions(&fn_dis);
 
     use indicatif::ParallelProgressIterator;
-
     let records = other_fn_dis
         .par_iter()
         .progress_with_style(
@@ -138,23 +157,27 @@ pub fn functions(
         .filter_map(|of| {
             //if of.1.len() < 1000 { return; }
             let m = bins
-                .get(&bin(of.1))
+                .get(&bin(of.body))
                 .map(|f| f.iter())
                 .unwrap_or_default()
                 .map(|f| {
-                    let distance = sift4_bin::simple(of.1, f.1);
-                    (f.0.clone(), distance, &f.1)
+                    let distance = sift4_bin::simple(of.body, f.body);
+                    Diff {
+                        a: f,
+                        b: of,
+                        distance,
+                    }
                 })
-                .min_by_key(|f| f.1);
+                .min_by_key(|f| f.distance);
 
             if let Some(m) = m {
                 return Some(DiffRecord {
-                    a_start: m.0.range.start as u64,
-                    a_end: m.0.range.end as u64,
-                    b_start: of.0.range.start as u64,
-                    b_end: of.0.range.end as u64,
-                    symbol: symbols.get(&(of.0.range.start as u64)).cloned(),
-                    score: m.1,
+                    a_start: m.a.func.range.start as u64,
+                    a_end: m.a.func.range.end as u64,
+                    b_start: m.b.func.range.start as u64,
+                    b_end: m.b.func.range.end as u64,
+                    symbol: symbols.get(&(of.func.range.start as u64)).cloned(),
+                    distance: m.distance,
                 });
             }
             None
@@ -213,7 +236,7 @@ pub fn sym(
                     if let Some(DiffRecord {
                         a_start,
                         a_end,
-                        score,
+                        distance: score,
                         symbol: Some(symbol),
                         ..
                     }) = find_record_containing(
