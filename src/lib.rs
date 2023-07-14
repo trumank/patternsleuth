@@ -3,6 +3,9 @@
 pub mod patterns;
 pub mod scanner;
 
+pub mod diff;
+pub mod sift4_bin;
+
 use std::ops::{Index, Range};
 
 use anyhow::{bail, Result};
