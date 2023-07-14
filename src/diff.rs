@@ -144,10 +144,10 @@ pub fn functions(exe_path: std::path::PathBuf, other_exe_path: std::path::PathBu
         .with_context(|| format!("reading game exe {}", other_exe_path.display()))?;
     let other_exe = read_exe(&other_exe_data, Some(&symbols))?;
 
-    let bins = bin_functions(&exe.functions);
+    let bins = bin_functions(&other_exe.functions);
 
     use indicatif::ParallelProgressIterator;
-    let records = other_exe
+    let records = exe
         .functions
         .par_iter()
         .progress_with_style(
@@ -157,17 +157,17 @@ pub fn functions(exe_path: std::path::PathBuf, other_exe_path: std::path::PathBu
             .unwrap(),
         )
         //.take(100)
-        .filter_map(|of| {
+        .filter_map(|func| {
             //if of.1.len() < 1000 { return; }
             let m = bins
-                .get(&bin(of.body))
+                .get(&bin(func.body))
                 .map(|f| f.iter())
                 .unwrap_or_default()
-                .map(|f| {
-                    let distance = sift4_bin::simple(of.body, f.body);
+                .map(|other_func| {
+                    let distance = sift4_bin::simple(func.body, other_func.body);
                     Diff {
-                        a: f,
-                        b: of,
+                        a: func,
+                        b: other_func,
                         distance,
                     }
                 })
@@ -179,7 +179,7 @@ pub fn functions(exe_path: std::path::PathBuf, other_exe_path: std::path::PathBu
                     a_end: m.a.func.range.end as u64,
                     b_start: m.b.func.range.start as u64,
                     b_end: m.b.func.range.end as u64,
-                    symbol: of.symbol.clone(),
+                    symbol: m.b.symbol.clone(),
                     distance: m.distance,
                 });
             }
