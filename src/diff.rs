@@ -224,12 +224,8 @@ pub fn sym(
             let file = std::fs::File::open(address)?;
             let lines = std::io::BufReader::new(file).lines();
 
-            use regex::Regex;
+            use regex::{Captures, Regex, Replacer};
             let re = Regex::new(r#"(?<start>LogWindows: Error: \[Callstack\] 0x(?<address>[0-9a-fA-F]+) FSD-Win64-Shipping.exe!)(?<symbol>UnknownFunction)(?<end> \[\])"#).unwrap();
-            //let result = re.replace_all("Hello World!", "x");
-            //println!("{}", result); // => "xxxxx xxxxx!"
-
-            use regex::{Captures, Replacer};
 
             struct SymbolResolver<'re>(&'re [DiffRecord]);
 
@@ -240,18 +236,18 @@ pub fn sym(
                         a_start,
                         a_end,
                         distance: score,
-                        symbol: Some(symbol),
+                        symbol,
                         ..
                     }) = find_record_containing(
                         self.0,
                         u64::from_str_radix(&caps["address"], 16).unwrap(),
                     ) {
                         dst.push_str(&format!(
-                            "{:x} @ {:_>5}/{:_>5} {}",
-                            a_start,
+                            "{:_>5}/{:_>5} @ {:x} {}",
                             score,
                             a_end - a_start,
-                            symbol
+                            a_start,
+                            symbol.as_ref().map(|s| s.as_str()).unwrap_or("[NO SYMBOL]")
                         ));
                     } else {
                         dst.push_str(&caps["symbol"]);
