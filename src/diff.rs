@@ -155,7 +155,8 @@ pub fn functions(exe_path: std::path::PathBuf, other_exe_path: std::path::PathBu
                 "[{elapsed_precise}] [{wide_bar}] {pos}/{len} ({eta})",
             )
             .unwrap(),
-        ) //.take(10)
+        )
+        //.take(100)
         .filter_map(|of| {
             //if of.1.len() < 1000 { return; }
             let m = bins

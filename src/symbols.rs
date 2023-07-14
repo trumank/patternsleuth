@@ -8,11 +8,16 @@ fn print_row(
     offset: PdbInternalSectionOffset,
     name: pdb::RawString<'_>,
 ) {
+    let flags = msvc_demangler::DemangleFlags::llvm();
+
     let name = name.to_string().to_string();
+    let name_demangled =
+        msvc_demangler::demangle(&name, flags).unwrap_or_else(|_| name.to_string());
+
     if let Some(rva) = offset.to_rva(address_map) {
-        symbols.insert(rva.0 as u64, name);
+        symbols.insert(rva.0 as u64, name_demangled);
     } else {
-        println!("failed to calc RVA for {}", name);
+        println!("failed to calc RVA for {}", name_demangled);
     }
 }
 

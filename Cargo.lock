@@ -670,6 +670,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "msvc-demangler"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfb67c6dd0fa9b00619c41c5700b6f92d5f418be49b45ddb9970fbd4569df3c8"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -739,6 +748,7 @@ dependencies = [
  "indicatif",
  "itertools",
  "memchr",
+ "msvc-demangler",
  "object",
  "pdb",
  "prettytable-rs",

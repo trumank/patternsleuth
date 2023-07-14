@@ -21,6 +21,7 @@ globset = "0.4.11"
 iced-x86 = "1.18.0"
 indicatif = { version = "0.17.5", features = ["rayon"] }
 itertools = "0.10.5"
+msvc-demangler = "0.9.0"
 object = "0.31.1"
 pdb = "0.8.0"
 prettytable-rs = "0.10.0"
