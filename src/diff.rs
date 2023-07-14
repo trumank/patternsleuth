@@ -7,7 +7,6 @@ use itertools::Itertools;
 use object::{Object, ObjectSection};
 
 use std::collections::HashMap;
-use std::error::Error;
 use std::ops::Range;
 use std::{io::BufRead, io::Read};
 
@@ -55,18 +54,27 @@ struct DiffRecord {
     distance: i32,
 }
 
-fn read_exe<'data>(data: &'data [u8]) -> Result<Exe<'data>> {
-    let object = object::File::parse(&*data)?;
+fn read_exe<'data>(
+    data: &'data [u8],
+    symbols: Option<&HashMap<u64, String>>,
+) -> Result<Exe<'data>> {
+    let object = object::File::parse(data)?;
     let memory = MountedPE::new(&object)?;
+    let base_address = object.relative_address_base();
     let functions = read_exception_table(&object)?
         .into_iter()
         .map(|func| FunctionBody {
             body: memory.get_range(func.range.clone()),
+            symbol: symbols.and_then(|s| s.get(&(func.range.start as u64 - base_address)).cloned()),
             func,
         })
         .collect::<Vec<_>>();
 
-    Ok(Exe { object, memory, functions })
+    Ok(Exe {
+        object,
+        memory,
+        functions,
+    })
 }
 
 fn read_exception_table(obj_file: &object::File) -> Result<Vec<RuntimeFunction>> {
@@ -92,6 +100,7 @@ struct Exe<'data> {
 
 struct FunctionBody<'a> {
     func: RuntimeFunction,
+    symbol: Option<String>,
     body: &'a [u8],
 }
 struct Diff<'a> {
@@ -122,24 +131,18 @@ fn bin_functions<'a>(fns: &'a Vec<FunctionBody<'a>>) -> HashMap<usize, Vec<&'a F
     bins
 }
 
-pub fn functions(
-    exe_path: std::path::PathBuf,
-    other_exe_path: std::path::PathBuf,
-) -> Result<()> {
+pub fn functions(exe_path: std::path::PathBuf, other_exe_path: std::path::PathBuf) -> Result<()> {
     use rayon::prelude::*;
 
     let exe_data = std::fs::read(&exe_path)
         .with_context(|| format!("reading game exe {}", exe_path.display()))?;
-    let exe = read_exe(&exe_data)?;
+    let exe = read_exe(&exe_data, None)?;
+
+    let symbols = dump_pdb_symbols(other_exe_path.with_extension("pdb"))?;
 
     let other_exe_data = std::fs::read(&other_exe_path)
         .with_context(|| format!("reading game exe {}", other_exe_path.display()))?;
-    let other_exe = read_exe(&other_exe_data)?;
-
-    let symbols = dump_pdb_symbols(
-        other_exe_path.with_extension("pdb"),
-        other_exe.object.relative_address_base(),
-    )?;
+    let other_exe = read_exe(&other_exe_data, Some(&symbols))?;
 
     let bins = bin_functions(&exe.functions);
 
@@ -175,7 +178,7 @@ pub fn functions(
                     a_end: m.a.func.range.end as u64,
                     b_start: m.b.func.range.start as u64,
                     b_end: m.b.func.range.end as u64,
-                    symbol: symbols.get(&(of.func.range.start as u64)).cloned(),
+                    symbol: of.symbol.clone(),
                     distance: m.distance,
                 });
             }
