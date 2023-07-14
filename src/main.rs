@@ -25,7 +25,7 @@ enum Action {
 #[derive(Parser)]
 pub struct ActionFunctions {
     exe: std::path::PathBuf,
-    other_exe: std::path::PathBuf,
+    other_exes: Vec<std::path::PathBuf>,
 }
 
 #[derive(Parser)]
@@ -299,7 +299,7 @@ fn main() -> Result<()> {
 
     match cli.action {
         Some(Action::Functions(action)) => {
-            return patternsleuth::diff::functions(action.exe, action.other_exe)
+            return patternsleuth::diff::functions(action.exe, action.other_exes)
         }
         Some(Action::Sym(action)) => {
             return patternsleuth::diff::sym(action.exe, action.other_exe, action.address)

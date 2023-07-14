@@ -8,6 +8,7 @@ use object::{Object, ObjectSection};
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::{io::BufRead, io::Read};
 
 #[derive(Debug, Clone)]
@@ -50,11 +51,13 @@ struct DiffRecord {
     b_start: u64,
     #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
     b_end: u64,
-    symbol: Option<String>,
     distance: i32,
+    exe: PathBuf,
+    symbol: Option<String>,
 }
 
-fn read_exe<'data>(
+fn read_exe<'path: 'data, 'data>(
+    exe: &'path Path,
     data: &'data [u8],
     symbols: Option<&HashMap<u64, String>>,
 ) -> Result<Exe<'data>> {
@@ -64,6 +67,7 @@ fn read_exe<'data>(
     let functions = read_exception_table(&object)?
         .into_iter()
         .map(|func| FunctionBody {
+            exe,
             body: memory.get_range(func.range.clone()),
             symbol: symbols.and_then(|s| s.get(&(func.range.start as u64 - base_address)).cloned()),
             func,
@@ -101,6 +105,7 @@ struct Exe<'data> {
 struct FunctionBody<'a> {
     func: RuntimeFunction,
     symbol: Option<String>,
+    exe: &'a Path,
     body: &'a [u8],
 }
 struct Diff<'a> {
@@ -117,7 +122,9 @@ fn inv_bin(b: usize) -> usize {
     10f32.powf(b as f32 / S) as usize
 }
 
-fn bin_functions<'a>(fns: &'a Vec<FunctionBody<'a>>) -> HashMap<usize, Vec<&'a FunctionBody>> {
+fn bin_functions<'a>(
+    fns: impl Iterator<Item = &'a FunctionBody<'a>>,
+) -> HashMap<usize, Vec<&'a FunctionBody<'a>>> {
     let mut bins = HashMap::<usize, Vec<_>>::new();
     for f in fns {
         let i = bin(f.body);
@@ -131,20 +138,31 @@ fn bin_functions<'a>(fns: &'a Vec<FunctionBody<'a>>) -> HashMap<usize, Vec<&'a F
     bins
 }
 
-pub fn functions(exe_path: std::path::PathBuf, other_exe_path: std::path::PathBuf) -> Result<()> {
+pub fn functions(
+    exe_path: std::path::PathBuf,
+    other_exe_paths: Vec<std::path::PathBuf>,
+) -> Result<()> {
     use rayon::prelude::*;
 
     let exe_data = std::fs::read(&exe_path)
         .with_context(|| format!("reading game exe {}", exe_path.display()))?;
-    let exe = read_exe(&exe_data, None)?;
+    let exe = read_exe(&exe_path, &exe_data, None)?;
 
-    let symbols = dump_pdb_symbols(other_exe_path.with_extension("pdb"))?;
+    let other_exe_datas = other_exe_paths
+        .iter()
+        .map(|p| std::fs::read(p).with_context(|| format!("reading game exe {}", p.display())))
+        .collect::<Result<Vec<_>>>()?;
 
-    let other_exe_data = std::fs::read(&other_exe_path)
-        .with_context(|| format!("reading game exe {}", other_exe_path.display()))?;
-    let other_exe = read_exe(&other_exe_data, Some(&symbols))?;
+    let other_exes = other_exe_datas
+        .iter()
+        .zip(other_exe_paths.iter())
+        .map(|(d, p)| {
+            let symbols = dump_pdb_symbols(p.with_extension("pdb"))?;
+            read_exe(p, d, Some(&symbols))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    let bins = bin_functions(&other_exe.functions);
+    let bins = bin_functions(other_exes.iter().flat_map(|e| &e.functions));
 
     use indicatif::ParallelProgressIterator;
     let records = exe
@@ -180,6 +198,7 @@ pub fn functions(exe_path: std::path::PathBuf, other_exe_path: std::path::PathBu
                     b_start: m.b.func.range.start as u64,
                     b_end: m.b.func.range.end as u64,
                     symbol: m.b.symbol.clone(),
+                    exe: m.b.exe.to_path_buf(),
                     distance: m.distance,
                 });
             }
