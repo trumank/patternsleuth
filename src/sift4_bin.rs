@@ -1,6 +1,6 @@
 // modified version of sift4 crate to operate directly on bytes
 pub fn simple(s1: &[u8], s2: &[u8]) -> i32 {
-    return sift4_offset(s1, s2, 5);
+    sift4_offset(s1, s2, 5)
 }
 
 fn min_usize(u1: usize, u2: usize) -> usize {
@@ -25,11 +25,7 @@ fn sift4_offset(s1: &[u8], s2: &[u8], max_offset: usize) -> i32 {
 
     // handle empty strings
     if l1 == 0 {
-        if l2 == 0 {
-            return 0;
-        } else {
-            return l2 as i32;
-        }
+        return if l2 == 0 { 0 } else { l2 as i32 };
     }
 
     if l2 == 0 {
@@ -53,7 +49,7 @@ fn sift4_offset(s1: &[u8], s2: &[u8], max_offset: usize) -> i32 {
             }
 
             for i in 0..max_offset {
-                if (c1 + 1 < l1 || c2 + i < l2) == false {
+                if !(c1 + 1 < l1 || c2 + i < l2) {
                     break;
                 }
 

@@ -108,7 +108,7 @@ fn walk_symbols(
     while let Some(symbol) = symbols.next()? {
         match print_symbol(symbols_map, address_map, base_address, &symbol) {
             Ok(_) => (),
-            Err(e) => {
+            Err(_e) => {
                 //eprintln!("error printing symbol {:?}: {}", symbol, e);
             }
         }
@@ -150,10 +150,7 @@ fn dump_pdb<P: AsRef<Path>>(filename: P, base_address: u64) -> pdb::Result<Symbo
     Ok(symbols)
 }
 
-fn read_exe<'data>(
-    exe_data: &'data [u8],
-    obj_file: &'data object::File,
-) -> Result<Vec<RuntimeFunction>, Box<dyn Error>> {
+fn read_exe(obj_file: &object::File) -> Result<Vec<RuntimeFunction>, Box<dyn Error>> {
     use std::io::Cursor;
 
     let exe_base = obj_file.relative_address_base() as usize;
@@ -171,7 +168,6 @@ fn read_exe<'data>(
 pub fn functions(
     exe: std::path::PathBuf,
     other_exe: std::path::PathBuf,
-    address: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
     use rayon::prelude::*;
 
@@ -185,8 +181,8 @@ pub fn functions(
     let other_exe_obj = object::File::parse(&*other_exe_data)?;
     let other_memory = MountedPE::new(&other_exe_obj)?;
 
-    let functions = read_exe(&exe_data, &exe_obj)?;
-    let other_functions = read_exe(&other_exe_data, &other_exe_obj)?;
+    let functions = read_exe(&exe_obj)?;
+    let other_functions = read_exe(&other_exe_obj)?;
 
     let symbols = dump_pdb(
         other_exe.with_extension("pdb"),
@@ -215,10 +211,10 @@ pub fn functions(
     let mut bins: HashMap<usize, Vec<&(&RuntimeFunction, &[u8])>> = Default::default();
 
     for f in &fn_dis {
-        let i = bin(&f.1);
-        bins.entry(i - 1).or_default().push(&f);
-        bins.entry(i).or_default().push(&f);
-        bins.entry(i + 1).or_default().push(&f);
+        let i = bin(f.1);
+        bins.entry(i - 1).or_default().push(f);
+        bins.entry(i).or_default().push(f);
+        bins.entry(i + 1).or_default().push(f);
     }
     for (k, v) in bins.iter().sorted_by_key(|e| e.0) {
         println!("{} ({}): {}", k, inv_bin(*k), v.len());
@@ -237,11 +233,11 @@ pub fn functions(
         .filter_map(|of| {
             //if of.1.len() < 1000 { return; }
             let m = bins
-                .get(&bin(&of.1))
+                .get(&bin(of.1))
                 .map(|f| f.iter())
                 .unwrap_or_default()
                 .map(|f| {
-                    let distance = sift4_bin::simple(&of.1, &f.1);
+                    let distance = sift4_bin::simple(of.1, f.1);
                     (f.0.clone(), distance, &f.1)
                 })
                 .min_by_key(|f| f.1);
