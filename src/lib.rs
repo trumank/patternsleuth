@@ -167,7 +167,7 @@ pub struct MountedPE<'data> {
 }
 
 impl<'data> MountedPE<'data> {
-    pub fn new(object: &'data File) -> Result<Self> {
+    pub fn new(object: &File<'data>) -> Result<Self> {
         Ok(Self {
             sections: object
                 .sections()
@@ -186,19 +186,10 @@ impl<'data> MountedPE<'data> {
             address >= section.address && address < section.address + section.data.len()
         })
     }
-}
-impl<'data> Index<usize> for MountedPE<'data> {
-    type Output = u8;
-    fn index(&self, index: usize) -> &Self::Output {
-        self.sections
-            .iter()
-            .find_map(|section| section.data.get(index - section.address))
-            .unwrap()
-    }
-}
-impl<'data> Index<Range<usize>> for MountedPE<'data> {
-    type Output = [u8];
-    fn index(&self, index: Range<usize>) -> &Self::Output {
+    fn get_range<'file>(&'file self, index: Range<usize>) -> &'data [u8]
+    where
+        'data: 'file,
+    {
         self.sections
             .iter()
             .find_map(|section| {
@@ -214,3 +205,35 @@ impl<'data> Index<Range<usize>> for MountedPE<'data> {
             .unwrap()
     }
 }
+impl<'data> Index<usize> for MountedPE<'data> {
+    type Output = u8;
+    fn index(&self, index: usize) -> &Self::Output {
+        self.sections
+            .iter()
+            .find_map(|section| section.data.get(index - section.address))
+            .unwrap()
+    }
+}
+/*
+impl<'data, 'file> Index<Range<usize>> for MountedPE<'file>
+where
+    'data: 'file,
+{
+    type Output = [u8];
+    fn index(&'file self, index: Range<usize>) -> &'data Self::Output {
+        self.sections
+            .iter()
+            .find_map(|section| {
+                if index.start >= section.address
+                    && index.end <= section.address + section.data.len()
+                {
+                    let relative_range = index.start - section.address..index.end - section.address;
+                    Some(&section.data[relative_range])
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+    }
+}
+*/

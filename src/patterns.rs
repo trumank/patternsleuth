@@ -1240,12 +1240,14 @@ pub fn resolve_multi_self(_ctx: ResolveContext) -> Resolution {
 pub fn resolve_engine_version(ctx: ResolveContext) -> Resolution {
     let version_value_address = ctx.match_address;
     let version_major = i16::from_le_bytes(
-        ctx.memory[version_value_address..version_value_address + 2]
+        ctx.memory
+            .get_range(version_value_address..version_value_address + 2)
             .try_into()
             .unwrap(),
     );
     let version_minor = i16::from_le_bytes(
-        ctx.memory[version_value_address + 2..version_value_address + 4]
+        ctx.memory
+            .get_range(version_value_address + 2..version_value_address + 4)
             .try_into()
             .unwrap(),
     );
@@ -1269,7 +1271,8 @@ mod RIPRelativeResolvers {
         // calculate the absolute address from the RIP relative value.
         let address = rip_relative_value_address
             .checked_add_signed(i32::from_le_bytes(
-                memory[rip_relative_value_address..rip_relative_value_address + 4]
+                memory
+                    .get_range(rip_relative_value_address..rip_relative_value_address + 4)
                     .try_into()
                     .unwrap(),
             ) as isize)
@@ -1291,7 +1294,7 @@ mod FNameToStringID {
     pub fn resolve(ctx: ResolveContext) -> Resolution {
         let stages = vec![ctx.match_address];
         let n = ctx.match_address + 5;
-        let rel = i32::from_le_bytes(ctx.memory[n - 4..n].try_into().unwrap());
+        let rel = i32::from_le_bytes(ctx.memory.get_range(n - 4..n).try_into().unwrap());
         let address = n.checked_add_signed(rel as isize);
         Resolution {
             stages,
@@ -1331,7 +1334,7 @@ mod FNameFNameID {
         let stages = vec![ctx.match_address];
         let n = ctx.match_address.checked_add_signed(0x18 + 5).unwrap();
         let address = n.checked_add_signed(i32::from_le_bytes(
-            ctx.memory[n - 4..n].try_into().unwrap(),
+            ctx.memory.get_range(n - 4..n).try_into().unwrap(),
         ) as isize);
         Resolution {
             stages,
@@ -1342,7 +1345,7 @@ mod FNameFNameID {
         let stages = vec![ctx.match_address];
         let n = ctx.match_address.checked_add_signed(0x1C + 5).unwrap();
         let address = n.checked_add_signed(i32::from_le_bytes(
-            ctx.memory[n - 4..n].try_into().unwrap(),
+            ctx.memory.get_range(n - 4..n).try_into().unwrap(),
         ) as isize);
         Resolution {
             stages,
@@ -1358,7 +1361,7 @@ mod StaticConstructObjectInternalID {
         let stages = vec![ctx.match_address];
         let n = ctx.match_address - 0x0e;
         let address = n.checked_add_signed(i32::from_le_bytes(
-            ctx.memory[n - 4..n].try_into().unwrap(),
+            ctx.memory.get_range(n - 4..n).try_into().unwrap(),
         ) as isize);
         Resolution {
             stages,
@@ -1369,7 +1372,7 @@ mod StaticConstructObjectInternalID {
         let stages = vec![ctx.match_address];
         let n = ctx.match_address + 5;
         let address = n.checked_add_signed(i32::from_le_bytes(
-            ctx.memory[n - 4..n].try_into().unwrap(),
+            ctx.memory.get_range(n - 4..n).try_into().unwrap(),
         ) as isize);
         Resolution {
             stages,
@@ -1385,9 +1388,9 @@ mod GUObjectArrayID {
         let stages = vec![ctx.match_address];
         let n = ctx.match_address + 3;
         let address = n
-            .checked_add_signed(
-                i32::from_le_bytes(ctx.memory[n..n + 4].try_into().unwrap()) as isize
-            )
+            .checked_add_signed(i32::from_le_bytes(
+                ctx.memory.get_range(n..n + 4).try_into().unwrap(),
+            ) as isize)
             .map(|a| a - 0xc);
         Resolution {
             stages,
@@ -1421,7 +1424,7 @@ mod GNatives {
             {
                 stages.push(i);
                 let address = (i + 7).checked_add_signed(i32::from_le_bytes(
-                    ctx.memory[i + 3..i + 3 + 4].try_into().unwrap(),
+                    ctx.memory.get_range(i + 3..i + 3 + 4).try_into().unwrap(),
                 ) as isize);
                 return Resolution {
                     stages,

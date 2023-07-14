@@ -55,7 +55,21 @@ struct DiffRecord {
     distance: i32,
 }
 
-fn read_exe(obj_file: &object::File) -> Result<Vec<RuntimeFunction>, Box<dyn Error>> {
+fn read_exe<'data>(data: &'data [u8]) -> Result<Exe<'data>> {
+    let object = object::File::parse(&*data)?;
+    let memory = MountedPE::new(&object)?;
+    let functions = read_exception_table(&object)?
+        .into_iter()
+        .map(|func| FunctionBody {
+            body: memory.get_range(func.range.clone()),
+            func,
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Exe { object, memory, functions })
+}
+
+fn read_exception_table(obj_file: &object::File) -> Result<Vec<RuntimeFunction>> {
     use std::io::Cursor;
 
     let exe_base = obj_file.relative_address_base() as usize;
@@ -70,8 +84,14 @@ fn read_exe(obj_file: &object::File) -> Result<Vec<RuntimeFunction>, Box<dyn Err
     Ok(std::iter::from_fn(|| RuntimeFunction::read(exe_base, &mut pdata).ok()).collect())
 }
 
+struct Exe<'data> {
+    object: object::File<'data>,
+    memory: MountedPE<'data>,
+    functions: Vec<FunctionBody<'data>>,
+}
+
 struct FunctionBody<'a> {
-    func: &'a RuntimeFunction,
+    func: RuntimeFunction,
     body: &'a [u8],
 }
 struct Diff<'a> {
@@ -88,9 +108,9 @@ fn inv_bin(b: usize) -> usize {
     10f32.powf(b as f32 / S) as usize
 }
 
-fn bin_functions<'a>(fn_dis: &'a Vec<FunctionBody<'a>>) -> HashMap<usize, Vec<&'a FunctionBody>> {
+fn bin_functions<'a>(fns: &'a Vec<FunctionBody<'a>>) -> HashMap<usize, Vec<&'a FunctionBody>> {
     let mut bins = HashMap::<usize, Vec<_>>::new();
-    for f in fn_dis {
+    for f in fns {
         let i = bin(f.body);
         bins.entry(i - 1).or_default().push(f);
         bins.entry(i).or_default().push(f);
@@ -103,50 +123,29 @@ fn bin_functions<'a>(fn_dis: &'a Vec<FunctionBody<'a>>) -> HashMap<usize, Vec<&'
 }
 
 pub fn functions(
-    exe: std::path::PathBuf,
-    other_exe: std::path::PathBuf,
-) -> Result<(), Box<dyn Error>> {
+    exe_path: std::path::PathBuf,
+    other_exe_path: std::path::PathBuf,
+) -> Result<()> {
     use rayon::prelude::*;
 
-    let exe_data =
-        std::fs::read(&exe).with_context(|| format!("reading game exe {}", exe.display()))?;
-    let exe_obj = object::File::parse(&*exe_data)?;
-    let memory = MountedPE::new(&exe_obj)?;
+    let exe_data = std::fs::read(&exe_path)
+        .with_context(|| format!("reading game exe {}", exe_path.display()))?;
+    let exe = read_exe(&exe_data)?;
 
-    let other_exe_data = std::fs::read(&other_exe)
-        .with_context(|| format!("reading game exe {}", other_exe.display()))?;
-    let other_exe_obj = object::File::parse(&*other_exe_data)?;
-    let other_memory = MountedPE::new(&other_exe_obj)?;
-
-    let functions = read_exe(&exe_obj)?;
-    let other_functions = read_exe(&other_exe_obj)?;
+    let other_exe_data = std::fs::read(&other_exe_path)
+        .with_context(|| format!("reading game exe {}", other_exe_path.display()))?;
+    let other_exe = read_exe(&other_exe_data)?;
 
     let symbols = dump_pdb_symbols(
-        other_exe.with_extension("pdb"),
-        other_exe_obj.relative_address_base(),
+        other_exe_path.with_extension("pdb"),
+        other_exe.object.relative_address_base(),
     )?;
 
-    println!("disassembling {}", exe.display());
-    let fn_dis = functions
-        .par_iter()
-        .map(|func| FunctionBody {
-            func,
-            body: &memory[func.range.clone()],
-        })
-        .collect::<Vec<_>>();
-    println!("disassembling {}", other_exe.display());
-    let other_fn_dis = other_functions
-        .par_iter()
-        .map(|func| FunctionBody {
-            func,
-            body: &other_memory[func.range.clone()],
-        })
-        .collect::<Vec<_>>();
-
-    let bins = bin_functions(&fn_dis);
+    let bins = bin_functions(&exe.functions);
 
     use indicatif::ParallelProgressIterator;
-    let records = other_fn_dis
+    let records = other_exe
+        .functions
         .par_iter()
         .progress_with_style(
             indicatif::ProgressStyle::with_template(
@@ -197,7 +196,7 @@ pub fn sym(
     exe: std::path::PathBuf,
     other_exe: std::path::PathBuf,
     address: Option<String>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     let mut rdr = csv::Reader::from_path("diff.csv")?;
     let records = rdr
         .deserialize()
