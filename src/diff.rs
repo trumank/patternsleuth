@@ -1,3 +1,4 @@
+use crate::symbols::dump_pdb_symbols;
 use crate::{sift4_bin, MountedPE};
 
 use anyhow::{Context, Result};
@@ -8,7 +9,6 @@ use object::{Object, ObjectSection};
 use std::collections::HashMap;
 use std::error::Error;
 use std::ops::Range;
-use std::path::Path;
 use std::{io::BufRead, io::Read};
 
 #[derive(Debug, Clone)]
@@ -55,101 +55,6 @@ struct DiffRecord {
     score: i32,
 }
 
-type Symbols = HashMap<u64, String>;
-use pdb::{FallibleIterator, PdbInternalSectionOffset};
-
-fn print_row(
-    symbols: &mut Symbols,
-    address_map: &pdb::AddressMap<'_>,
-    base_address: u64,
-    offset: PdbInternalSectionOffset,
-    name: pdb::RawString<'_>,
-) {
-    let name = name.to_string().to_string();
-    if let Some(rva) = offset.to_rva(address_map) {
-        //println!("{:x} {name}", rva.0 as u64 + base_address);
-        symbols.insert(rva.0 as u64 + base_address, name);
-    } else {
-        println!("failed to calc RVA for {}", name);
-    }
-    //println!( "{:x}\t{:x}\t{}", offset.section, offset.offset, name);
-}
-
-fn print_symbol(
-    symbols: &mut Symbols,
-    address_map: &pdb::AddressMap<'_>,
-    base_address: u64,
-    symbol: &pdb::Symbol<'_>,
-) -> pdb::Result<()> {
-    match symbol.parse()? {
-        pdb::SymbolData::Public(data) => {
-            print_row(symbols, address_map, base_address, data.offset, data.name);
-        }
-        //pdb::SymbolData::Data(data) => {
-        //print_row(data.offset, "data", data.name);
-        //}
-        pdb::SymbolData::Procedure(data) => {
-            print_row(symbols, address_map, base_address, data.offset, data.name);
-        }
-        _ => {}
-    }
-
-    Ok(())
-}
-
-fn walk_symbols(
-    symbols_map: &mut Symbols,
-    address_map: &pdb::AddressMap<'_>,
-    base_address: u64,
-    mut symbols: pdb::SymbolIter<'_>,
-) -> pdb::Result<()> {
-    println!("segment\toffset\tkind\tname");
-
-    while let Some(symbol) = symbols.next()? {
-        match print_symbol(symbols_map, address_map, base_address, &symbol) {
-            Ok(_) => (),
-            Err(_e) => {
-                //eprintln!("error printing symbol {:?}: {}", symbol, e);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn dump_pdb<P: AsRef<Path>>(filename: P, base_address: u64) -> pdb::Result<Symbols> {
-    let mut symbols = Symbols::new();
-
-    let file = std::fs::File::open(filename)?;
-    let mut pdb = pdb::PDB::open(file)?;
-    let symbol_table = pdb.global_symbols()?;
-    let address_map = pdb.address_map()?;
-    println!("Global symbols:");
-    walk_symbols(
-        &mut symbols,
-        &address_map,
-        base_address,
-        symbol_table.iter(),
-    )?;
-
-    println!("Module private symbols:");
-    let dbi = pdb.debug_information()?;
-    let mut modules = dbi.modules()?;
-    while let Some(module) = modules.next()? {
-        println!("Module: {}", module.object_file_name());
-        let info = match pdb.module_info(&module)? {
-            Some(info) => info,
-            None => {
-                println!("  no module info");
-                continue;
-            }
-        };
-
-        walk_symbols(&mut symbols, &address_map, base_address, info.symbols()?)?;
-    }
-    Ok(symbols)
-}
-
 fn read_exe(obj_file: &object::File) -> Result<Vec<RuntimeFunction>, Box<dyn Error>> {
     use std::io::Cursor;
 
@@ -184,7 +89,7 @@ pub fn functions(
     let functions = read_exe(&exe_obj)?;
     let other_functions = read_exe(&other_exe_obj)?;
 
-    let symbols = dump_pdb(
+    let symbols = dump_pdb_symbols(
         other_exe.with_extension("pdb"),
         other_exe_obj.relative_address_base(),
     )?;

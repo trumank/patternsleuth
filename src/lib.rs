@@ -1,10 +1,10 @@
 #![feature(portable_simd)]
 
+pub mod diff;
 pub mod patterns;
 pub mod scanner;
-
-pub mod diff;
-pub mod sift4_bin;
+mod sift4_bin;
+mod symbols;
 
 use std::ops::{Index, Range};
 
