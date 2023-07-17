@@ -47,6 +47,14 @@ impl Pattern {
             custom_offset,
         })
     }
+    /// Create a pattern from a literal Vec<u8> with `mask` filled with 0xff and `custom_offset = 0`.
+    pub fn from_bytes(sig: Vec<u8>) -> Result<Self> {
+        Ok(Self {
+            mask: vec![0xff; sig.len()],
+            sig,
+            custom_offset: 0,
+        })
+    }
     #[inline]
     pub fn is_match(&self, data: &[u8], index: usize) -> bool {
         for i in 0..self.mask.len() {
