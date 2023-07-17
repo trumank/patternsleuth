@@ -146,14 +146,16 @@ impl PatternConfig {
 pub struct PESection<'data> {
     pub name: String,
     pub address: usize,
+    pub kind: object::SectionKind,
     pub data: &'data [u8],
 }
 
 impl<'data> PESection<'data> {
-    fn new(name: String, address: usize, data: &'data [u8]) -> Self {
+    fn new(name: String, address: usize, kind: object::SectionKind, data: &'data [u8]) -> Self {
         Self {
             name,
             address,
+            kind,
             data,
         }
     }
@@ -172,6 +174,7 @@ impl<'data> MountedPE<'data> {
                     Ok(PESection::new(
                         s.name()?.to_string(),
                         s.address() as usize,
+                        s.kind(),
                         s.data()?,
                     ))
                 })
@@ -181,6 +184,20 @@ impl<'data> MountedPE<'data> {
     pub fn get_section_containing(&self, address: usize) -> Option<&PESection> {
         self.sections.iter().find(|section| {
             address >= section.address && address < section.address + section.data.len()
+        })
+    }
+    pub fn find<F>(&self, kind: object::SectionKind, filter: F) -> Option<usize>
+    where
+        F: Fn(usize, &[u8]) -> bool,
+    {
+        self.sections.iter().find_map(|section| {
+            if section.kind == kind {
+                section.data.windows(4).enumerate().find_map(|(i, slice)| {
+                    filter(section.address + i, slice).then_some(section.address + i)
+                })
+            } else {
+                None
+            }
         })
     }
 }

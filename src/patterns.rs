@@ -62,6 +62,8 @@ pub enum Sig {
     #[strum(serialize = "FPakPlatformFile::~FPakPlatformFile")]
     FPakPlatformFileDtor,
     FCustomVersionContainer,
+
+    StringFTagMetaData,
 }
 
 pub fn get_patterns() -> Result<Vec<PatternConfig>> {
@@ -1217,6 +1219,16 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::new("48 89 5c 24 ?? 48 89 74 24 ?? 57 48 83 ec ?? 48 8b f9 e8 ?? ?? ?? ?? 48 8b c8 48 8b d8 ff 15")?,
             resolve_self,
         ),
+
+
+        //===============================[Strings]=============================================================================================
+        PatternConfig::new(
+            Sig::StringFTagMetaData,
+            "FTagMetaData".to_string(),
+            Some(object::SectionKind::ReadOnlyData),
+            Pattern::new("46 00 54 00 61 00 67 00 4d 00 65 00 74 00 61 00 44 00 61 00 74 00 61 00")?,
+            strings::resolve,
+        ),
     ])
 }
 
@@ -1514,6 +1526,36 @@ mod FPakPlatformFile {
         Resolution {
             stages,
             res: addresses.into(),
+        }
+    }
+}
+
+mod strings {
+    use super::*;
+
+    pub fn resolve(ctx: ResolveContext) -> Resolution {
+        let stages = vec![ctx.match_address];
+        if let Some(xref) = ctx
+            .memory
+            .find(object::SectionKind::Text, |address, slice| {
+                ctx.match_address
+                    == (4 + address)
+                        .checked_add_signed(
+                            i32::from_le_bytes(slice.try_into().unwrap())
+                                .try_into()
+                                .unwrap(),
+                        )
+                        .unwrap()
+            })
+        {
+            return Resolution {
+                stages,
+                res: xref.into(),
+            };
+        }
+        Resolution {
+            stages,
+            res: ResolutionType::Failed,
         }
     }
 }
