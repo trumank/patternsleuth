@@ -42,6 +42,7 @@ struct Log {
 
 struct Addresses {
     /// base address of of MainExe module
+    #[allow(dead_code)]
     main_exe: usize,
     /// addresses of Sigs relative to MainExe
     addresses: HashMap<Sig, usize>,

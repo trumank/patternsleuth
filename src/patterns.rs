@@ -61,7 +61,7 @@ pub enum Sig {
     FPakPlatformFileInitialize,
     #[strum(serialize = "FPakPlatformFile::~FPakPlatformFile")]
     FPakPlatformFileDtor,
-	FCustomVersionContainer,
+    FCustomVersionContainer,
 }
 
 pub fn get_patterns() -> Result<Vec<PatternConfig>> {
@@ -653,7 +653,7 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Some(object::SectionKind::Text),
             Pattern::new("E8 ?? ?? ?? ?? 83 7D C8 00 48 8D 15 ?? ?? ?? ?? 0F 5A DE")?,
             FNameToStringID::resolve,
-        ), 
+        ),
         PatternConfig::new(
             Sig::FNameToString,
             "Dnew".to_string(),
@@ -789,7 +789,7 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::new("41 ?? 01 00 00 00 48 8d ?? 24 ?? 48 0f 45 ?? 24 ?? e8 | ?? ?? ?? ??")?,
             RIPRelativeResolvers::resolve_RIP_offset::<4>,
         ),
-		PatternConfig::new(
+        PatternConfig::new(
             Sig::FNameFName,
             "LW4".to_string(),
             Some(object::SectionKind::Text),
@@ -1208,8 +1208,8 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::new("40 53 56 57 48 83 ec 20 48 8d 05 ?? ?? ?? ?? 4c 89 74 24 50 48 89 01 48 8b f9 e8 ?? ?? ?? ?? 48 8b c8")?,
             FPakPlatformFile::resolve_dtor,
         ),
-		
-	//===============================[FCustomVersionContainer]=============================================================================================
+
+        //===============================[FCustomVersionContainer]=============================================================================================
         PatternConfig::new(
             Sig::FCustomVersionContainer,
             "Direct".to_string(),
@@ -1303,14 +1303,13 @@ mod FNameToStringID {
         let n = ctx.match_address + 35;
         let rel = i32::from_le_bytes(ctx.memory[n - 4..n].try_into().unwrap());
         let address = n.checked_add_signed(rel as isize).unwrap();
-		
-		for i in address..address + 400 {
-            if ctx.memory[i] == 0xe8
-            {
+
+        for i in address..address + 400 {
+            if ctx.memory[i] == 0xe8 {
                 stages.push(i.checked_add_signed(0).unwrap());
-				let n = i.checked_add_signed(5).unwrap();
+                let n = i.checked_add_signed(5).unwrap();
                 let address = n.checked_add_signed(i32::from_le_bytes(
-                    ctx.memory[n -4 .. n].try_into().unwrap(),
+                    ctx.memory[n - 4..n].try_into().unwrap(),
                 ) as isize);
                 return Resolution {
                     stages,
@@ -1382,17 +1381,6 @@ mod StaticConstructObjectInternalID {
 #[allow(non_snake_case)]
 mod GUObjectArrayID {
     use super::*;
-    pub fn resolve_v_14(ctx: ResolveContext) -> Resolution {
-        let stages = vec![ctx.match_address];
-        let n = ctx.match_address + 0xc;
-        let address = n
-            .checked_add_signed(i32::from_le_bytes(ctx.memory[n..n + 4].try_into().unwrap()) as isize)
-            .map(|a| a + 0x4);
-        Resolution {
-            stages,
-            res: address.into(),
-        }
-    }
     pub fn resolve_v_20(ctx: ResolveContext) -> Resolution {
         let stages = vec![ctx.match_address];
         let n = ctx.match_address + 3;
@@ -1410,7 +1398,9 @@ mod GUObjectArrayID {
         let stages = vec![ctx.match_address];
         let n = ctx.match_address + 6;
         let address = n
-            .checked_add_signed(i32::from_le_bytes(ctx.memory[n..n + 4].try_into().unwrap()) as isize)
+            .checked_add_signed(
+                i32::from_le_bytes(ctx.memory[n..n + 4].try_into().unwrap()) as isize
+            )
             .map(|a| a - 0xc);
         Resolution {
             stages,
