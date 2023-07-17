@@ -1451,7 +1451,7 @@ mod FPakPlatformFile {
             .memory
             .get_section_containing(ctx.match_address)
             .map(|section| {
-                let res = crate::scanner::scan(
+                let res = crate::scanner::scan_memchr(
                     &patterns.iter().map(|p| (&(), p)).collect::<Vec<_>>(),
                     0,
                     section.data,
@@ -1490,7 +1490,7 @@ mod FPakPlatformFile {
             .get_section_containing(ctx.match_address)
             .map(|section| {
                 let start = ctx.match_address - section.address;
-                let res = crate::scanner::scan(
+                let res = crate::scanner::scan_memchr(
                     &patterns.iter().map(|p| (&(), p)).collect::<Vec<_>>(),
                     start,
                     &section.data[start..start + 400],

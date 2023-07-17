@@ -333,22 +333,24 @@ fn main() -> Result<(), Box<dyn Error>> {
             let data = section.data()?;
             scans.push(Scan {
                 base_address,
-                results: patternsleuth::scanner::scan(pat_ref.as_slice(), base_address, data)
-                    .into_iter()
-                    .filter(|(config, _)| {
-                        config.section.map(|s| s == section.kind()).unwrap_or(true)
-                    })
-                    .map(|(config, m)| {
-                        (
-                            *config,
-                            (config.resolve)(ResolveContext {
-                                memory: &mount,
-                                section: section_name.to_owned(),
-                                match_address: m,
-                            }),
-                        )
-                    })
-                    .collect(),
+                results: patternsleuth::scanner::scan_memchr(
+                    pat_ref.as_slice(),
+                    base_address,
+                    data,
+                )
+                .into_iter()
+                .filter(|(config, _)| config.section.map(|s| s == section.kind()).unwrap_or(true))
+                .map(|(config, m)| {
+                    (
+                        *config,
+                        (config.resolve)(ResolveContext {
+                            memory: &mount,
+                            section: section_name.to_owned(),
+                            match_address: m,
+                        }),
+                    )
+                })
+                .collect(),
             });
         }
 
