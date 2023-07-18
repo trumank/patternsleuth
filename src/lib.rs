@@ -125,13 +125,32 @@ impl From<String> for ResolutionType {
     }
 }
 
+pub struct Scan {
+    pub section: Option<object::SectionKind>,
+    pub scan_type: ScanType,
+    pub resolve: Resolve,
+}
+pub enum ScanType {
+    Pattern(Pattern),
+}
+impl ScanType {
+    pub fn unwrap_pattern(&self) -> &Pattern {
+        match self {
+            Self::Pattern(pattern) => pattern,
+        }
+    }
+}
+impl From<Pattern> for ScanType {
+    fn from(value: Pattern) -> Self {
+        Self::Pattern(value)
+    }
+}
+
 type Resolve = fn(ctx: ResolveContext) -> Resolution;
 pub struct PatternConfig {
     pub sig: Sig,
     pub name: String,
-    pub section: Option<object::SectionKind>,
-    pub pattern: Pattern,
-    pub resolve: Resolve,
+    pub scan: Scan,
 }
 impl PatternConfig {
     fn new(
@@ -144,9 +163,11 @@ impl PatternConfig {
         Self {
             sig,
             name,
-            section,
-            pattern,
-            resolve,
+            scan: Scan {
+                section,
+                scan_type: pattern.into(),
+                resolve,
+            },
         }
     }
 }

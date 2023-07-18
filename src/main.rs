@@ -247,7 +247,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect_vec();
     let pat = patterns
         .iter()
-        .map(|config| (config, &config.pattern))
+        .map(|config| (config, config.scan.scan_type.unwrap_pattern()))
         .collect_vec();
     let pat_ref = pat.iter().map(|(id, p)| (id, *p)).collect_vec();
 
@@ -339,11 +339,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                     data,
                 )
                 .into_iter()
-                .filter(|(config, _)| config.section.map(|s| s == section.kind()).unwrap_or(true))
+                .filter(|(config, _)| {
+                    config
+                        .scan
+                        .section
+                        .map(|s| s == section.kind())
+                        .unwrap_or(true)
+                })
                 .map(|(config, m)| {
                     (
                         *config,
-                        (config.resolve)(ResolveContext {
+                        (config.scan.resolve)(ResolveContext {
                             memory: &mount,
                             section: section_name.to_owned(),
                             match_address: m,
@@ -401,7 +407,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                                     disassemble::disassemble(
                                         &mount,
                                         *address,
-                                        m.1.stages.is_empty().then_some(&m.0.pattern)
+                                        m.1.stages
+                                            .is_empty()
+                                            .then_some(m.0.scan.scan_type.unwrap_pattern())
                                     )
                                 )));
                             }
@@ -424,7 +432,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 disassemble::disassemble(
                                     &mount,
                                     *stage,
-                                    (i == 0).then_some(&m.0.pattern)
+                                    (i == 0).then_some(m.0.scan.scan_type.unwrap_pattern())
                                 )
                             )));
                         }
