@@ -1,8 +1,6 @@
 use anyhow::Result;
 
-use crate::ResolutionType;
-
-use super::{MountedPE, Pattern, PatternConfig, Resolution, ResolveContext};
+use super::{MountedPE, Pattern, PatternConfig, Resolution, ResolutionType, ResolveContext, Xref};
 
 #[derive(
     Debug,
@@ -1231,6 +1229,20 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             strings::resolve,
         ),
         */
+        PatternConfig::xref(
+            Sig::StringFTagMetaData,
+            "xref".to_string(),
+            Some(object::SectionKind::Text),
+            Xref(0x1450BB398),
+            resolve_self,
+        ),
+        PatternConfig::xref(
+            Sig::StringFTagMetaData,
+            "fn".to_string(),
+            Some(object::SectionKind::Text),
+            Xref(0x1450B11B0),
+            resolve_self,
+        ),
     ])
 }
 

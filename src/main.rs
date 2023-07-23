@@ -7,12 +7,11 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use itertools::Itertools;
 use object::{Object, ObjectSection};
-use patternsleuth::{MountedPE, Pattern, ResolutionType, ResolveContext};
 use strum::IntoEnumIterator;
 
 use patternsleuth::{
     patterns::{get_patterns, Sig},
-    PatternConfig, Resolution,
+    MountedPE, PatternConfig, Resolution, ResolutionType, ResolveContext,
 };
 
 #[derive(Parser)]
@@ -181,42 +180,85 @@ struct Scan<'a> {
 fn scan_game<'bin, 'patterns>(
     obj: &'bin object::File,
     mount: &'bin MountedPE,
-    pat_ref: &Vec<(&'patterns PatternConfig, &'patterns Pattern)>,
-) -> Result<Vec<Scan<'patterns>>> {
-    let mut scans = vec![];
+    pattern_configs: &'patterns [PatternConfig],
+) -> Result<Scan<'patterns>> {
+    //patterns: &Vec<(&'patterns PatternConfig, &'patterns Pattern)>,
+    let mut results = vec![];
     for section in obj.sections() {
         let base_address = section.address() as usize;
         let section_name = section.name()?;
         let data = section.data()?;
-        scans.push(Scan {
-            results: patternsleuth::scanner::scan_memchr_lookup(
-                pat_ref.as_slice(),
-                base_address,
-                data,
-            )
-            .into_iter()
-            .filter(|(config, _)| {
+
+        let patterns = pattern_configs
+            .iter()
+            .filter_map(|config| {
                 config
                     .scan
                     .section
                     .map(|s| s == section.kind())
                     .unwrap_or(true)
+                    .then(|| {
+                        config
+                            .scan
+                            .scan_type
+                            .get_pattern()
+                            .map(|pattern| (config, pattern))
+                    })
+                    .flatten()
             })
-            .map(|(config, m)| {
-                (
-                    config,
-                    (config.scan.resolve)(ResolveContext {
-                        memory: mount,
-                        section: section_name.to_owned(),
-                        match_address: m,
-                    }),
-                )
+            .collect::<Vec<_>>();
+
+        results.extend(
+            patternsleuth::scanner::scan_memchr_lookup(&patterns, base_address, data)
+                .into_iter()
+                .map(|(config, m)| {
+                    (
+                        config,
+                        (config.scan.resolve)(ResolveContext {
+                            memory: mount,
+                            section: section_name.to_owned(),
+                            match_address: m,
+                        }),
+                    )
+                }),
+        );
+
+        let xrefs = pattern_configs
+            .iter()
+            .filter_map(|config| {
+                config
+                    .scan
+                    .section
+                    .map(|s| s == section.kind())
+                    .unwrap_or(true)
+                    .then(|| {
+                        config
+                            .scan
+                            .scan_type
+                            .get_xref()
+                            .map(|pattern| (config, pattern))
+                    })
+                    .flatten()
             })
-            .collect(),
-        });
+            .collect::<Vec<_>>();
+
+        results.extend(
+            patternsleuth::scanner::scan_xref_binary(&xrefs, base_address, data)
+                .into_iter()
+                .map(|(config, m)| {
+                    (
+                        config,
+                        (config.scan.resolve)(ResolveContext {
+                            memory: mount,
+                            section: section_name.to_owned(),
+                            match_address: m,
+                        }),
+                    )
+                }),
+        );
     }
 
-    Ok(scans)
+    Ok(Scan { results })
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -242,10 +284,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .then_some(true)
                 .unwrap_or_else(|| sig_filter.contains(&p.sig))
         })
-        .collect_vec();
-    let pat = patterns
-        .iter()
-        .map(|config| (config, config.scan.scan_type.unwrap_pattern()))
         .collect_vec();
 
     let mut games: HashSet<String> = Default::default();
@@ -285,12 +323,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         println!("{:?} {:?}", game, exe_path.display());
 
-        let scans = scan_game(&obj_file, &mount, &pat)?;
+        let scan = scan_game(&obj_file, &mount, &patterns)?;
 
         // group results by Sig
-        let folded_scans = scans
+        let folded_scans = scan
+            .results
             .iter()
-            .flat_map(|scan| scan.results.iter())
             .map(|(config, m)| (&config.sig, (config, m)))
             .fold(HashMap::new(), |mut map, (k, v)| {
                 map.entry(k).or_insert_with(Vec::new).push(v);
@@ -325,7 +363,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                                         *address,
                                         m.1.stages
                                             .is_empty()
-                                            .then_some(m.0.scan.scan_type.unwrap_pattern())
+                                            .then_some(m.0.scan.scan_type.get_pattern())
+                                            .flatten()
                                     )
                                 )));
                             }
@@ -348,7 +387,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 disassemble::disassemble(
                                     &mount,
                                     *stage,
-                                    (i == 0).then_some(m.0.scan.scan_type.unwrap_pattern())
+                                    (i == 0)
+                                        .then_some(m.0.scan.scan_type.get_pattern())
+                                        .flatten()
                                 )
                             )));
                         }
@@ -410,15 +451,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         table.printstd();
 
         // fold current game scans into summary scans
-        scans
-            .into_iter()
-            .flat_map(|scan| scan.results.into_iter())
-            .fold(&mut all, |map, m| {
-                map.entry((game.to_string(), (&m.0.sig, &m.0.name)))
-                    .or_default()
-                    .push(m.1);
-                map
-            });
+        scan.results.into_iter().fold(&mut all, |map, m| {
+            map.entry((game.to_string(), (&m.0.sig, &m.0.name)))
+                .or_default()
+                .push(m.1);
+            map
+        });
 
         println!();
     }

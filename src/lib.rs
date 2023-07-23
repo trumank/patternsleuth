@@ -10,7 +10,7 @@ use object::{File, Object, ObjectSection};
 
 use patterns::Sig;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Pattern {
     pub sig: Vec<u8>,
     pub mask: Vec<u8>,
@@ -138,16 +138,27 @@ pub enum ScanType {
     Xref(Xref),
 }
 impl ScanType {
-    pub fn unwrap_pattern(&self) -> &Pattern {
+    pub fn get_pattern(&self) -> Option<&Pattern> {
         match self {
-            Self::Pattern(pattern) => pattern,
-            _ => unreachable!(),
+            Self::Pattern(pattern) => Some(pattern),
+            _ => None,
+        }
+    }
+    pub fn get_xref(&self) -> Option<&Xref> {
+        match self {
+            Self::Xref(xref) => Some(xref),
+            _ => None,
         }
     }
 }
 impl From<Pattern> for ScanType {
     fn from(value: Pattern) -> Self {
         Self::Pattern(value)
+    }
+}
+impl From<Xref> for ScanType {
+    fn from(value: Xref) -> Self {
+        Self::Xref(value)
     }
 }
 
@@ -171,6 +182,23 @@ impl PatternConfig {
             scan: Scan {
                 section,
                 scan_type: pattern.into(),
+                resolve,
+            },
+        }
+    }
+    fn xref(
+        sig: Sig,
+        name: String,
+        section: Option<object::SectionKind>,
+        xref: Xref,
+        resolve: Resolve,
+    ) -> Self {
+        Self {
+            sig,
+            name,
+            scan: Scan {
+                section,
+                scan_type: xref.into(),
                 resolve,
             },
         }
