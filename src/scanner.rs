@@ -1,8 +1,11 @@
-use std::{simd::{SimdPartialEq, ToBitMask}, collections::HashMap};
+use std::{
+    collections::HashMap,
+    simd::{SimdPartialEq, ToBitMask},
+};
 
 use itertools::Itertools;
 
-use super::Pattern;
+use super::{Pattern, Xref};
 
 pub fn scan<'id, ID: Sync>(
     patterns: &[(&'id ID, &Pattern)],
@@ -126,8 +129,69 @@ pub fn scan_memchr<'id, ID: Sync>(
     matches
 }
 
-#[derive(Debug, Clone, Copy, Hash, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Xref(pub usize);
+pub fn scan_memchr_lookup<'id, ID: Sync>(
+    patterns: &[(&'id ID, &Pattern)],
+    base_address: usize,
+    data: &[u8],
+) -> Vec<(&'id ID, usize)> {
+    use rayon::prelude::*;
+
+    if patterns.is_empty() {
+        return vec![];
+    }
+
+    let mut bins: HashMap<u8, Vec<_>> = Default::default();
+    for p in patterns {
+        bins.entry(p.1.sig[0]).or_default().push(p);
+    }
+
+    let max = patterns.iter().map(|(_id, p)| p.sig.len()).max().unwrap();
+
+    // cut middle short such that even the longest pattern doesn't have to bounds check
+    let middle = &data[0..data.len().saturating_sub(max)];
+
+    let mut matches = vec![];
+
+    // middle
+    let chunk_size = (middle.len()
+        / std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
+    .max(1);
+    let chunks: Vec<_> = middle.chunks(chunk_size).enumerate().collect();
+    matches.append(
+        &mut chunks
+            .par_iter()
+            .map(|(index, chunk)| {
+                let mut matches = vec![];
+                let offset = index * chunk_size;
+
+                for (first, patterns) in &bins {
+                    for i in memchr::memchr_iter(*first, chunk) {
+                        let j = offset + i;
+                        for (id, p) in patterns {
+                            if p.is_match(data, j) {
+                                matches.push((*id, p.compute_result(data, base_address, j)));
+                            }
+                        }
+                    }
+                }
+                matches
+            })
+            .flatten()
+            .collect(),
+    );
+
+    // suffix
+    let start = middle.len();
+    for (id, p) in patterns {
+        for i in start..start + (data.len() - middle.len()).saturating_sub(p.sig.len() - 1) {
+            if p.is_match(data, i) {
+                matches.push((*id, base_address + i));
+            }
+        }
+    }
+
+    matches
+}
 
 pub fn scan_xref<'id, ID: Sync>(
     patterns: &[(&'id ID, &Xref)],
@@ -158,13 +222,11 @@ pub fn scan_xref<'id, ID: Sync>(
                 let offset = chunk_index * chunk_size;
 
                 for j in offset..offset + chunk.len() {
-                    if let Some(address) = (base_address + width + j)
-                        .checked_add_signed(
-                            i32::from_le_bytes(data[j..j + width].try_into().unwrap())
-                                .try_into()
-                                .unwrap(),
-                        ) {
-
+                    if let Some(address) = (base_address + width + j).checked_add_signed(
+                        i32::from_le_bytes(data[j..j + width].try_into().unwrap())
+                            .try_into()
+                            .unwrap(),
+                    ) {
                         for (id, p) in patterns {
                             if p.0 == address {
                                 matches.push((*id, base_address + j));
@@ -211,14 +273,12 @@ pub fn scan_xref_binary<'id, ID: Sync>(
                 let offset = chunk_index * chunk_size;
 
                 for j in offset..offset + chunk.len() {
-                    if let Some(address) = (base_address + width + j)
-                        .checked_add_signed(
-                            i32::from_le_bytes(data[j..j + width].try_into().unwrap())
-                                .try_into()
-                                .unwrap(),
-                        ) {
-
-                        if let Ok(i) = patterns.binary_search_by_key(&address, |p| p.1.0) {
+                    if let Some(address) = (base_address + width + j).checked_add_signed(
+                        i32::from_le_bytes(data[j..j + width].try_into().unwrap())
+                            .try_into()
+                            .unwrap(),
+                    ) {
+                        if let Ok(i) = patterns.binary_search_by_key(&address, |p| p.1 .0) {
                             matches.push((patterns[i].0, base_address + j));
                         }
                     }
@@ -242,7 +302,10 @@ pub fn scan_xref_hash<'id, ID: Sync>(
         return vec![];
     }
 
-    let patterns = patterns.iter().map(|(id, p)| (p.0, *id)).collect::<HashMap<_, _>>();
+    let patterns = patterns
+        .iter()
+        .map(|(id, p)| (p.0, *id))
+        .collect::<HashMap<_, _>>();
 
     let mut matches = vec![];
 
@@ -262,13 +325,11 @@ pub fn scan_xref_hash<'id, ID: Sync>(
                 let offset = chunk_index * chunk_size;
 
                 for j in offset..offset + chunk.len() {
-                    if let Some(address) = (base_address + width + j)
-                        .checked_add_signed(
-                            i32::from_le_bytes(data[j..j + width].try_into().unwrap())
-                                .try_into()
-                                .unwrap(),
-                        ) {
-
+                    if let Some(address) = (base_address + width + j).checked_add_signed(
+                        i32::from_le_bytes(data[j..j + width].try_into().unwrap())
+                            .try_into()
+                            .unwrap(),
+                    ) {
                         if let Some(id) = patterns.get(&address) {
                             matches.push((*id, base_address + j));
                         }

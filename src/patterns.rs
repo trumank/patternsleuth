@@ -1222,6 +1222,7 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
 
 
         //===============================[Strings]=============================================================================================
+        /*
         PatternConfig::new(
             Sig::StringFTagMetaData,
             "FTagMetaData".to_string(),
@@ -1229,6 +1230,7 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::from_bytes("FTagMetaData".encode_utf16().flat_map(u16::to_le_bytes).collect())?,
             strings::resolve,
         ),
+        */
     ])
 }
 

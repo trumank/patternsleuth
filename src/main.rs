@@ -1,15 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs;
-use std::io::{BufRead, BufReader};
-use std::path::Path;
-use std::str::FromStr;
+use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::Parser;
 use itertools::Itertools;
 use object::{Object, ObjectSection};
-use patternsleuth::{MountedPE, ResolutionType, ResolveContext};
+use patternsleuth::{MountedPE, Pattern, ResolutionType, ResolveContext};
 use strum::IntoEnumIterator;
 
 use patternsleuth::{
@@ -32,65 +30,6 @@ struct CommandScan {
     /// aggressive filters)
     #[arg(short, long)]
     disassemble: bool,
-}
-
-struct Log {
-    addresses: Addresses,
-    exe_name: String,
-    exe_size: usize,
-}
-
-struct Addresses {
-    /// base address of of MainExe module
-    #[allow(dead_code)]
-    main_exe: usize,
-    /// addresses of Sigs relative to MainExe
-    addresses: HashMap<Sig, usize>,
-}
-
-fn read_addresses_from_log<P: AsRef<Path>>(path: P) -> Result<Log> {
-    let mut addresses = HashMap::new();
-
-    let re_exe_path =
-        regex::Regex::new(r"game executable: .+[\\/](.+\.exe) \(([0-9]+) bytes\)$").unwrap();
-    let mut exe_path = None;
-
-    let re_main_exe = regex::Regex::new(r"MainExe @ 0x([0-9a-f]+) size=0x([0-9a-f]+)").unwrap();
-    let mut main_exe = None;
-
-    let re_address = regex::Regex::new(r"([^ ]+) address: 0x([0-9a-f]+)").unwrap();
-    for line in BufReader::new(fs::File::open(path)?).lines() {
-        let line = line?;
-        if let Some(captures) = re_address.captures(&line) {
-            if let Ok(sig) = Sig::from_str(&captures[1]) {
-                let address = usize::from_str_radix(&captures[2], 16)?;
-                if addresses.get(&sig).map(|a| *a != address).unwrap_or(false) {
-                    bail!("found multiple unique addresses for \"{}\"", sig);
-                }
-                addresses.insert(sig, address);
-            }
-        } else if let Some(captures) = re_main_exe.captures(&line) {
-            main_exe = Some(usize::from_str_radix(&captures[1], 16)?);
-        } else if let Some(captures) = re_exe_path.captures(&line) {
-            exe_path = Some((captures[1].to_owned(), usize::from_str(&captures[2])?));
-        }
-    }
-    let (exe_name, exe_size) = exe_path.context("game executable path not found in log")?;
-    let main_exe = main_exe.context("MainExe module not found in log")?;
-
-    // compute addresses relative to base module
-    let addresses = addresses
-        .into_iter()
-        .map(|(k, v)| (k, v - main_exe))
-        .collect::<HashMap<_, _>>();
-    Ok(Log {
-        exe_name,
-        exe_size,
-        addresses: Addresses {
-            main_exe,
-            addresses,
-        },
-    })
 }
 
 mod disassemble {
@@ -221,6 +160,61 @@ mod disassemble {
     }
 }
 
+fn find_ext<P: AsRef<Path>>(dir: P, ext: &str) -> Result<Option<PathBuf>> {
+    for f in fs::read_dir(dir)? {
+        let f = f?.path();
+        if f.is_file() && f.extension().and_then(std::ffi::OsStr::to_str) == Some(ext) {
+            return Ok(Some(f));
+        }
+    }
+    Ok(None)
+}
+
+struct Scan<'a> {
+    results: Vec<(&'a PatternConfig, Resolution)>,
+}
+
+fn scan_game<'bin, 'patterns>(
+    obj: &'bin object::File,
+    mount: &'bin MountedPE,
+    pat_ref: &Vec<(&'patterns PatternConfig, &'patterns Pattern)>,
+) -> Result<Vec<Scan<'patterns>>> {
+    let mut scans = vec![];
+    for section in obj.sections() {
+        let base_address = section.address() as usize;
+        let section_name = section.name()?;
+        let data = section.data()?;
+        scans.push(Scan {
+            results: patternsleuth::scanner::scan_memchr_lookup(
+                pat_ref.as_slice(),
+                base_address,
+                data,
+            )
+            .into_iter()
+            .filter(|(config, _)| {
+                config
+                    .scan
+                    .section
+                    .map(|s| s == section.kind())
+                    .unwrap_or(true)
+            })
+            .map(|(config, m)| {
+                (
+                    config,
+                    (config.scan.resolve)(ResolveContext {
+                        memory: mount,
+                        section: section_name.to_owned(),
+                        match_address: m,
+                    }),
+                )
+            })
+            .collect(),
+        });
+    }
+
+    Ok(scans)
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = CommandScan::parse();
 
@@ -249,7 +243,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         .iter()
         .map(|config| (config, config.scan.scan_type.unwrap_pattern()))
         .collect_vec();
-    let pat_ref = pat.iter().map(|(id, p)| (id, *p)).collect_vec();
 
     let mut games: HashSet<String> = Default::default();
 
@@ -259,7 +252,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     use itertools::join;
     use prettytable::{format, row, Cell, Row, Table};
 
-    'loop_games: for entry in fs::read_dir("games")?
+    for entry in fs::read_dir("games")?
         .collect::<Result<Vec<_>, _>>()?
         .iter()
         .sorted_by_key(|e| e.file_name())
@@ -273,92 +266,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         {
             continue;
         }
-        let log_path = entry.path().join("UE4SS.log");
 
-        let log = if log_path.exists() {
-            match read_addresses_from_log(log_path)
-                .with_context(|| format!("{}: read UE4SS.log", game))
-            {
-                Ok(log) => Some(log),
-                Err(e) => {
-                    println!("Error: {:?}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        let exe_path = if let Some(ref log) = log {
-            entry.path().join(&log.exe_name)
-        } else {
-            'exe: {
-                for f in fs::read_dir(entry.path())? {
-                    let f = f?.path();
-                    if f.is_file() && f.extension().and_then(std::ffi::OsStr::to_str) == Some("exe")
-                    {
-                        break 'exe f;
-                    }
-                }
-                continue 'loop_games;
-            }
+        let Some(exe_path) = find_ext(entry.path(), "exe")? else {
+            continue
         };
 
         let bin_data = fs::read(&exe_path)
             .with_context(|| format!("reading game exe {}", exe_path.display()))?;
-        if let Some(log) = &log {
-            if log.exe_size != bin_data.len() {
-                println!("size mismatch: log indicates {} bytes but {} is {} bytes. is this the correct exe?", log.exe_size, exe_path.display(), bin_data.len());
-                continue 'loop_games;
-            }
-        }
+
         let obj_file = object::File::parse(&*bin_data)?;
-        let exe_base = obj_file.relative_address_base() as usize;
         let mount = MountedPE::new(&obj_file)?;
 
         games.insert(game.to_string());
 
         println!("{:?} {:?}", game, exe_path.display());
 
-        struct Scan<'a> {
-            base_address: usize,
-            results: Vec<(&'a PatternConfig, Resolution)>,
-        }
-
-        // perform scans for game
-        let mut scans = vec![];
-        for section in obj_file.sections() {
-            let base_address = section.address() as usize;
-            let section_name = section.name()?;
-            let data = section.data()?;
-            scans.push(Scan {
-                base_address,
-                results: patternsleuth::scanner::scan_memchr(
-                    pat_ref.as_slice(),
-                    base_address,
-                    data,
-                )
-                .into_iter()
-                .filter(|(config, _)| {
-                    config
-                        .scan
-                        .section
-                        .map(|s| s == section.kind())
-                        .unwrap_or(true)
-                })
-                .map(|(config, m)| {
-                    (
-                        *config,
-                        (config.scan.resolve)(ResolveContext {
-                            memory: &mount,
-                            section: section_name.to_owned(),
-                            match_address: m,
-                        }),
-                    )
-                })
-                .collect(),
-            });
-        }
+        let scans = scan_game(&obj_file, &mount, &pat)?;
 
         // group results by Sig
         let folded_scans = scans
@@ -371,7 +294,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             });
 
         let mut table = Table::new();
-        table.set_titles(row!["sig", "log", "offline scan"]);
+        table.set_titles(row!["sig", "offline scan"]);
 
         for sig in Sig::iter().filter(|sig| {
             sig_filter
@@ -379,19 +302,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .then_some(true)
                 .unwrap_or_else(|| sig_filter.contains(sig))
         }) {
-            // get validated Sig addresses from log
-            let sig_log = log
-                .as_ref()
-                .and_then(|a| a.addresses.addresses.get(&sig))
-                .map(|a| a + exe_base);
-
             let mut cells = vec![];
             cells.push(Cell::new(&sig.to_string()));
-            cells.push(Cell::new(
-                &sig_log
-                    .map(|a| format!("{:016x}", a))
-                    .unwrap_or("not found".to_owned()),
-            ));
 
             if let Some(sig_scans) = folded_scans.get(&sig) {
                 if cli.disassemble {
@@ -465,16 +377,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                                     match &m.1 {
                                         ResolutionType::Address(address) => {
-                                            let s = format!("{:016x} {:?}{}", address, m.0, count);
-                                            if let Some(sig_address) = sig_log {
-                                                if *address == sig_address {
-                                                    s.green() // address matches log
-                                                } else {
-                                                    s.red() // match found but does not match log
-                                                }
-                                            } else {
-                                                s.normal() // log is not present so unsure if correct
-                                            }
+                                            format!("{:016x} {:?}{}", address, m.0, count).normal()
                                         }
                                         ResolutionType::String(string) => {
                                             format!("{:?} {:?}{}", string, m.0, count).normal()

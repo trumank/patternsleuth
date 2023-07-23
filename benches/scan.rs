@@ -1,5 +1,5 @@
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
-use patternsleuth::scanner::Xref;
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use patternsleuth::Xref;
 
 fn gig(c: &mut Criterion) {
     use rand::prelude::*;
@@ -33,7 +33,9 @@ fn xref(c: &mut Criterion) {
     use object::ObjectSection;
 
     //let bin_data = std::fs::read("games/FSD/FSD-Win64-Shipping.exe").unwrap();
-    let bin_data = std::fs::read("../../remnant/Windows/Remnant2/Binaries/Win64/Remnant2-Win64-Shipping.exe").unwrap();
+    let bin_data =
+        std::fs::read("../../remnant/Windows/Remnant2/Binaries/Win64/Remnant2-Win64-Shipping.exe")
+            .unwrap();
     let obj_file = object::File::parse(&*bin_data).unwrap();
     let section = obj_file.section_by_name(".text").unwrap();
     let base_address = section.address() as usize;
@@ -50,7 +52,6 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),
         Xref(0x144F4D6D8),
-
         Xref(0x146CAC280),
         Xref(0x146CAC288),
         Xref(0x141DBABA0),
@@ -61,7 +62,6 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),
         Xref(0x144F4D6D8),
-
         Xref(0x146CAC280),
         Xref(0x146CAC288),
         Xref(0x141DBABA0),
@@ -72,7 +72,6 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),
         Xref(0x144F4D6D8),
-
         Xref(0x146CAC280),
         Xref(0x146CAC288),
         Xref(0x141DBABA0),
@@ -83,7 +82,6 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),
         Xref(0x144F4D6D8),
-
         Xref(0x146CAC280),
         Xref(0x146CAC288),
         Xref(0x141DBABA0),
@@ -94,7 +92,6 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),
         Xref(0x144F4D6D8),
-
         Xref(0x146CAC280),
         Xref(0x146CAC288),
         Xref(0x141DBABA0),
@@ -105,7 +102,6 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),
         Xref(0x144F4D6D8),
-
         Xref(0x146CAC280),
         Xref(0x146CAC288),
         Xref(0x141DBABA0),
@@ -116,7 +112,6 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),
         Xref(0x144F4D6D8),
-
         Xref(0x146CAC280),
         Xref(0x146CAC288),
         Xref(0x141DBABA0),
@@ -127,7 +122,6 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),
         Xref(0x144F4D6D8),
-
         Xref(0x146CAC280),
         Xref(0x146CAC288),
         Xref(0x141DBABA0),
@@ -138,7 +132,6 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),
         Xref(0x144F4D6D8),
-
         Xref(0x146CAC280),
         Xref(0x146CAC288),
         Xref(0x141DBABA0),
@@ -149,7 +142,6 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),
         Xref(0x144F4D6D8),
-
         Xref(0x146CAC280),
         Xref(0x146CAC288),
         Xref(0x141DBABA0),
@@ -160,7 +152,6 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),
         Xref(0x144F4D6D8),
-
         Xref(0x146CAC280),
         Xref(0x146CAC288),
         Xref(0x141DBABA0),
@@ -171,7 +162,6 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),
         Xref(0x144F4D6D8),
-
         Xref(0x1450BB398),
         Xref(0x144F4DA28),
         Xref(0x144F4DA40),

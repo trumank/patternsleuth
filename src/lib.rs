@@ -71,6 +71,9 @@ impl Pattern {
     }
 }
 
+#[derive(Debug, Clone, Copy, Hash, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Xref(pub usize);
+
 pub struct ResolveContext<'memory> {
     pub memory: &'memory MountedPE<'memory>,
     pub section: String,
@@ -132,7 +135,7 @@ pub struct Scan {
 }
 pub enum ScanType {
     Pattern(Pattern),
-    Xref(usize),
+    Xref(Xref),
 }
 impl ScanType {
     pub fn unwrap_pattern(&self) -> &Pattern {
