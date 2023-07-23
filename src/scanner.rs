@@ -1,4 +1,6 @@
-use std::simd::{SimdPartialEq, ToBitMask};
+use std::{simd::{SimdPartialEq, ToBitMask}, collections::HashMap};
+
+use itertools::Itertools;
 
 use super::Pattern;
 
@@ -124,6 +126,162 @@ pub fn scan_memchr<'id, ID: Sync>(
     matches
 }
 
+#[derive(Debug, Clone, Copy, Hash, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Xref(pub usize);
+
+pub fn scan_xref<'id, ID: Sync>(
+    patterns: &[(&'id ID, &Xref)],
+    base_address: usize,
+    data: &[u8],
+) -> Vec<(&'id ID, usize)> {
+    use rayon::prelude::*;
+
+    if patterns.is_empty() {
+        return vec![];
+    }
+
+    let mut matches = vec![];
+
+    let width = 4;
+
+    let first_byte_data = &data[0..data.len().saturating_sub(width - 1)];
+    let chunk_size = (first_byte_data.len()
+        / std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
+    .max(1);
+
+    let chunks: Vec<_> = first_byte_data.chunks(chunk_size).enumerate().collect();
+    matches.append(
+        &mut chunks
+            .par_iter()
+            .map(|(chunk_index, chunk)| {
+                let mut matches = vec![];
+                let offset = chunk_index * chunk_size;
+
+                for j in offset..offset + chunk.len() {
+                    if let Some(address) = (base_address + width + j)
+                        .checked_add_signed(
+                            i32::from_le_bytes(data[j..j + width].try_into().unwrap())
+                                .try_into()
+                                .unwrap(),
+                        ) {
+
+                        for (id, p) in patterns {
+                            if p.0 == address {
+                                matches.push((*id, base_address + j));
+                            }
+                        }
+                    }
+                }
+                matches
+            })
+            .flatten()
+            .collect::<Vec<_>>(),
+    );
+    matches
+}
+
+pub fn scan_xref_binary<'id, ID: Sync>(
+    patterns: &[(&'id ID, &Xref)],
+    base_address: usize,
+    data: &[u8],
+) -> Vec<(&'id ID, usize)> {
+    use rayon::prelude::*;
+
+    if patterns.is_empty() {
+        return vec![];
+    }
+
+    let patterns = patterns.iter().sorted_by_key(|p| p.1).collect::<Vec<_>>();
+
+    let mut matches = vec![];
+
+    let width = 4;
+
+    let first_byte_data = &data[0..data.len().saturating_sub(width - 1)];
+    let chunk_size = (first_byte_data.len()
+        / std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
+    .max(1);
+
+    let chunks: Vec<_> = first_byte_data.chunks(chunk_size).enumerate().collect();
+    matches.append(
+        &mut chunks
+            .par_iter()
+            .map(|(chunk_index, chunk)| {
+                let mut matches = vec![];
+                let offset = chunk_index * chunk_size;
+
+                for j in offset..offset + chunk.len() {
+                    if let Some(address) = (base_address + width + j)
+                        .checked_add_signed(
+                            i32::from_le_bytes(data[j..j + width].try_into().unwrap())
+                                .try_into()
+                                .unwrap(),
+                        ) {
+
+                        if let Ok(i) = patterns.binary_search_by_key(&address, |p| p.1.0) {
+                            matches.push((patterns[i].0, base_address + j));
+                        }
+                    }
+                }
+                matches
+            })
+            .flatten()
+            .collect::<Vec<_>>(),
+    );
+    matches
+}
+
+pub fn scan_xref_hash<'id, ID: Sync>(
+    patterns: &[(&'id ID, &Xref)],
+    base_address: usize,
+    data: &[u8],
+) -> Vec<(&'id ID, usize)> {
+    use rayon::prelude::*;
+
+    if patterns.is_empty() {
+        return vec![];
+    }
+
+    let patterns = patterns.iter().map(|(id, p)| (p.0, *id)).collect::<HashMap<_, _>>();
+
+    let mut matches = vec![];
+
+    let width = 4;
+
+    let first_byte_data = &data[0..data.len().saturating_sub(width - 1)];
+    let chunk_size = (first_byte_data.len()
+        / std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
+    .max(1);
+
+    let chunks: Vec<_> = first_byte_data.chunks(chunk_size).enumerate().collect();
+    matches.append(
+        &mut chunks
+            .par_iter()
+            .map(|(chunk_index, chunk)| {
+                let mut matches = vec![];
+                let offset = chunk_index * chunk_size;
+
+                for j in offset..offset + chunk.len() {
+                    if let Some(address) = (base_address + width + j)
+                        .checked_add_signed(
+                            i32::from_le_bytes(data[j..j + width].try_into().unwrap())
+                                .try_into()
+                                .unwrap(),
+                        ) {
+
+                        if let Some(id) = patterns.get(&address) {
+                            matches.push((*id, base_address + j));
+                        }
+                    }
+                }
+                matches
+            })
+            .flatten()
+            .collect::<Vec<_>>(),
+    );
+    matches
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -180,5 +338,11 @@ mod test {
                 .collect::<Vec<_>>();
             assert_eq!(matches[(3 - (i % 3)) % 3], res);
         }
+    }
+
+    #[test]
+    fn test_scan_xref() {
+        let patterns = [(&(), &Xref(10))];
+        dbg!(scan_xref(&patterns, 0, &[0; 100]));
     }
 }

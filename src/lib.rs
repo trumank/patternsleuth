@@ -132,11 +132,13 @@ pub struct Scan {
 }
 pub enum ScanType {
     Pattern(Pattern),
+    Xref(usize),
 }
 impl ScanType {
     pub fn unwrap_pattern(&self) -> &Pattern {
         match self {
             Self::Pattern(pattern) => pattern,
+            _ => unreachable!(),
         }
     }
 }

@@ -1,4 +1,5 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use patternsleuth::scanner::Xref;
 
 fn gig(c: &mut Criterion) {
     use rand::prelude::*;
@@ -27,10 +28,183 @@ fn gig(c: &mut Criterion) {
     });
 }
 
+fn xref(c: &mut Criterion) {
+    use object::Object;
+    use object::ObjectSection;
+
+    //let bin_data = std::fs::read("games/FSD/FSD-Win64-Shipping.exe").unwrap();
+    let bin_data = std::fs::read("../../remnant/Windows/Remnant2/Binaries/Win64/Remnant2-Win64-Shipping.exe").unwrap();
+    let obj_file = object::File::parse(&*bin_data).unwrap();
+    let section = obj_file.section_by_name(".text").unwrap();
+    let base_address = section.address() as usize;
+    let data = section.data().unwrap();
+
+    let raw_patterns = [
+        Xref(0x146CAC280),
+        Xref(0x146CAC288),
+        Xref(0x141DBABA0),
+        Xref(0x1450BB188),
+        Xref(0x1450BB1A8),
+        Xref(0x1450BB378),
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+
+        Xref(0x146CAC280),
+        Xref(0x146CAC288),
+        Xref(0x141DBABA0),
+        Xref(0x1450BB188),
+        Xref(0x1450BB1A8),
+        Xref(0x1450BB378),
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+
+        Xref(0x146CAC280),
+        Xref(0x146CAC288),
+        Xref(0x141DBABA0),
+        Xref(0x1450BB188),
+        Xref(0x1450BB1A8),
+        Xref(0x1450BB378),
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+
+        Xref(0x146CAC280),
+        Xref(0x146CAC288),
+        Xref(0x141DBABA0),
+        Xref(0x1450BB188),
+        Xref(0x1450BB1A8),
+        Xref(0x1450BB378),
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+
+        Xref(0x146CAC280),
+        Xref(0x146CAC288),
+        Xref(0x141DBABA0),
+        Xref(0x1450BB188),
+        Xref(0x1450BB1A8),
+        Xref(0x1450BB378),
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+
+        Xref(0x146CAC280),
+        Xref(0x146CAC288),
+        Xref(0x141DBABA0),
+        Xref(0x1450BB188),
+        Xref(0x1450BB1A8),
+        Xref(0x1450BB378),
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+
+        Xref(0x146CAC280),
+        Xref(0x146CAC288),
+        Xref(0x141DBABA0),
+        Xref(0x1450BB188),
+        Xref(0x1450BB1A8),
+        Xref(0x1450BB378),
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+
+        Xref(0x146CAC280),
+        Xref(0x146CAC288),
+        Xref(0x141DBABA0),
+        Xref(0x1450BB188),
+        Xref(0x1450BB1A8),
+        Xref(0x1450BB378),
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+
+        Xref(0x146CAC280),
+        Xref(0x146CAC288),
+        Xref(0x141DBABA0),
+        Xref(0x1450BB188),
+        Xref(0x1450BB1A8),
+        Xref(0x1450BB378),
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+
+        Xref(0x146CAC280),
+        Xref(0x146CAC288),
+        Xref(0x141DBABA0),
+        Xref(0x1450BB188),
+        Xref(0x1450BB1A8),
+        Xref(0x1450BB378),
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+
+        Xref(0x146CAC280),
+        Xref(0x146CAC288),
+        Xref(0x141DBABA0),
+        Xref(0x1450BB188),
+        Xref(0x1450BB1A8),
+        Xref(0x1450BB378),
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+
+        Xref(0x146CAC280),
+        Xref(0x146CAC288),
+        Xref(0x141DBABA0),
+        Xref(0x1450BB188),
+        Xref(0x1450BB1A8),
+        Xref(0x1450BB378),
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+
+        Xref(0x1450BB398),
+        Xref(0x144F4DA28),
+        Xref(0x144F4DA40),
+        Xref(0x144F4D6D8),
+    ];
+
+    let id_patterns = raw_patterns.iter().map(|p| (&(), p)).collect::<Vec<_>>();
+
+    let mut group = c.benchmark_group("xref");
+
+    let t = 5;
+    for f in 0..t {
+        let size = (raw_patterns.len() as f64 * f as f64 / t as f64).round() as usize;
+        let p = &id_patterns[0..size];
+        group.bench_with_input(BenchmarkId::new("xref_linear", size), &size, |b, _size| {
+            b.iter(|| patternsleuth::scanner::scan_xref(&p, base_address, &data))
+        });
+        group.bench_with_input(BenchmarkId::new("xref_binary", size), &size, |b, _size| {
+            b.iter(|| patternsleuth::scanner::scan_xref_binary(&p, base_address, &data))
+        });
+        group.bench_with_input(BenchmarkId::new("xref_hash", size), &size, |b, _size| {
+            b.iter(|| patternsleuth::scanner::scan_xref_hash(&p, base_address, &data))
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group! {
     name = bench1;
     config = Criterion::default().sample_size(30);
     targets = gig
 }
+criterion_group!(bench2, xref);
 
-criterion_main!(bench1);
+criterion_main!(bench1, bench2);

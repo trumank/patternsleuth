@@ -25,5 +25,5 @@ regex = "1.8.1"
 strum = {version = "0.24.1", features = ["strum_macros", "derive"]}
 
 [dev-dependencies]
-criterion = "0.4.0"
+criterion = { version = "0.5.1", features = ["html_reports"] }
 rand = "0.8.5"
