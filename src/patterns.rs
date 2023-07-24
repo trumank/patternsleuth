@@ -1,6 +1,9 @@
 use anyhow::Result;
 
-use super::{MountedPE, Pattern, PatternConfig, Resolution, ResolutionType, ResolveContext, Xref};
+use super::{
+    MountedPE, Pattern, PatternConfig, ResolutionAction, ResolutionType, ResolveContext,
+    ResolveStages, Xref,
+};
 
 #[derive(
     Debug,
@@ -1220,7 +1223,6 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
 
 
         //===============================[Strings]=============================================================================================
-        /*
         PatternConfig::new(
             Sig::StringFTagMetaData,
             "FTagMetaData".to_string(),
@@ -1228,7 +1230,7 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::from_bytes("FTagMetaData".encode_utf16().flat_map(u16::to_le_bytes).collect())?,
             strings::resolve,
         ),
-        */
+        /*
         PatternConfig::xref(
             Sig::StringFTagMetaData,
             "xref".to_string(),
@@ -1243,27 +1245,22 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Xref(0x1450B11B0),
             resolve_self,
         ),
+        */
     ])
 }
 
 /// do nothing, return address of pattern
-pub fn resolve_self(ctx: ResolveContext) -> Resolution {
-    Resolution {
-        stages: vec![],
-        res: ResolutionType::Address(ctx.match_address),
-    }
+pub fn resolve_self(ctx: ResolveContext, _stages: &mut ResolveStages) -> ResolutionAction {
+    ResolutionType::Address(ctx.match_address).into()
 }
 
 /// do nothing, but return a constant so it's squashing all multiple matches to 1 value: 0x12345678
-pub fn resolve_multi_self(_ctx: ResolveContext) -> Resolution {
-    Resolution {
-        stages: vec![],
-        res: ResolutionType::Count,
-    }
+pub fn resolve_multi_self(_ctx: ResolveContext, _stages: &mut ResolveStages) -> ResolutionAction {
+    ResolutionType::Count.into()
 }
 
 /// simply returns 0x1 as constant address so the scanner will pack multiple instances together as 1 and mention the amount.
-pub fn resolve_engine_version(ctx: ResolveContext) -> Resolution {
+pub fn resolve_engine_version(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
     let version_value_address = ctx.match_address;
     let version_major = i16::from_le_bytes(
         ctx.memory[version_value_address..version_value_address + 2]
@@ -1275,10 +1272,8 @@ pub fn resolve_engine_version(ctx: ResolveContext) -> Resolution {
             .try_into()
             .unwrap(),
     );
-    Resolution {
-        stages: vec![ctx.match_address],
-        res: ResolutionType::String(format!("{}.{}", version_major, version_minor)),
-    }
+    stages.0.push(ctx.match_address);
+    ResolutionType::String(format!("{}.{}", version_major, version_minor)).into()
 }
 
 #[allow(non_snake_case)]
@@ -1289,8 +1284,9 @@ mod RIPRelativeResolvers {
         memory: &MountedPE,
         match_address: usize,
         next_opcode_offset: usize,
-    ) -> Resolution {
-        let stages = vec![match_address];
+        stages: &mut ResolveStages,
+    ) -> ResolutionAction {
+        stages.0.push(match_address);
         let rip_relative_value_address = match_address;
         // calculate the absolute address from the RIP relative value.
         let address = rip_relative_value_address
@@ -1300,172 +1296,142 @@ mod RIPRelativeResolvers {
                     .unwrap(),
             ) as isize)
             .map(|a| a + next_opcode_offset);
-        Resolution {
-            stages,
-            res: address.into(),
-        }
+        address.into()
     }
 
-    pub fn resolve_RIP_offset<const N: usize>(ctx: ResolveContext) -> Resolution {
-        resolve_RIP(ctx.memory, ctx.match_address, N)
+    pub fn resolve_RIP_offset<const N: usize>(
+        ctx: ResolveContext,
+        stages: &mut ResolveStages,
+    ) -> ResolutionAction {
+        resolve_RIP(ctx.memory, ctx.match_address, N, stages)
     }
 }
 
 #[allow(non_snake_case)]
 mod FNameToStringID {
     use super::*;
-    pub fn resolve(ctx: ResolveContext) -> Resolution {
-        let stages = vec![ctx.match_address];
+    pub fn resolve(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
         let n = ctx.match_address + 5;
         let rel = i32::from_le_bytes(ctx.memory[n - 4..n].try_into().unwrap());
         let address = n.checked_add_signed(rel as isize);
-        Resolution {
-            stages,
-            res: address.into(),
-        }
+        address.into()
     }
-    pub fn setenums(ctx: ResolveContext) -> Resolution {
-        let mut stages = vec![ctx.match_address];
+    pub fn setenums(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
         let n = ctx.match_address + 35;
         let rel = i32::from_le_bytes(ctx.memory[n - 4..n].try_into().unwrap());
         let address = n.checked_add_signed(rel as isize).unwrap();
 
         for i in address..address + 400 {
             if ctx.memory[i] == 0xe8 {
-                stages.push(i.checked_add_signed(0).unwrap());
+                stages.0.push(i.checked_add_signed(0).unwrap());
                 let n = i.checked_add_signed(5).unwrap();
                 let address = n.checked_add_signed(i32::from_le_bytes(
                     ctx.memory[n - 4..n].try_into().unwrap(),
                 ) as isize);
-                return Resolution {
-                    stages,
-                    res: address.into(),
-                };
+                return address.into();
             }
         }
-        Resolution {
-            stages,
-            res: address.into(),
-        }
+        address.into()
     }
 }
 
 #[allow(non_snake_case)]
 mod FNameFNameID {
     use super::*;
-    pub fn resolve_a(ctx: ResolveContext) -> Resolution {
-        let stages = vec![ctx.match_address];
+    pub fn resolve_a(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
         let n = ctx.match_address.checked_add_signed(0x18 + 5).unwrap();
         let address = n.checked_add_signed(i32::from_le_bytes(
             ctx.memory[n - 4..n].try_into().unwrap(),
         ) as isize);
-        Resolution {
-            stages,
-            res: address.into(),
-        }
+        address.into()
     }
-    pub fn resolve_v5_1(ctx: ResolveContext) -> Resolution {
-        let stages = vec![ctx.match_address];
+    pub fn resolve_v5_1(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
         let n = ctx.match_address.checked_add_signed(0x1C + 5).unwrap();
         let address = n.checked_add_signed(i32::from_le_bytes(
             ctx.memory[n - 4..n].try_into().unwrap(),
         ) as isize);
-        Resolution {
-            stages,
-            res: address.into(),
-        }
+        address.into()
     }
 }
 
 #[allow(non_snake_case)]
 mod StaticConstructObjectInternalID {
     use super::*;
-    pub fn resolve_a_v4_20(ctx: ResolveContext) -> Resolution {
-        let stages = vec![ctx.match_address];
+    pub fn resolve_a_v4_20(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
         let n = ctx.match_address - 0x0e;
         let address = n.checked_add_signed(i32::from_le_bytes(
             ctx.memory[n - 4..n].try_into().unwrap(),
         ) as isize);
-        Resolution {
-            stages,
-            res: address.into(),
-        }
+        address.into()
     }
-    pub fn resolve_v4_16_4_19_v5_0(ctx: ResolveContext) -> Resolution {
-        let stages = vec![ctx.match_address];
+    pub fn resolve_v4_16_4_19_v5_0(
+        ctx: ResolveContext,
+        stages: &mut ResolveStages,
+    ) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
         let n = ctx.match_address + 5;
         let address = n.checked_add_signed(i32::from_le_bytes(
             ctx.memory[n - 4..n].try_into().unwrap(),
         ) as isize);
-        Resolution {
-            stages,
-            res: address.into(),
-        }
+        address.into()
     }
 }
 
 #[allow(non_snake_case)]
 mod GUObjectArrayID {
     use super::*;
-    pub fn resolve_v_20(ctx: ResolveContext) -> Resolution {
-        let stages = vec![ctx.match_address];
+    pub fn resolve_v_20(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
         let n = ctx.match_address + 3;
         let address = n
             .checked_add_signed(
                 i32::from_le_bytes(ctx.memory[n..n + 4].try_into().unwrap()) as isize
             )
             .map(|a| a - 0xc);
-        Resolution {
-            stages,
-            res: address.into(),
-        }
+        address.into()
     }
-    pub fn resolve_b_ext(ctx: ResolveContext) -> Resolution {
-        let stages = vec![ctx.match_address];
+    pub fn resolve_b_ext(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
         let n = ctx.match_address + 6;
         let address = n
             .checked_add_signed(
                 i32::from_le_bytes(ctx.memory[n..n + 4].try_into().unwrap()) as isize
             )
             .map(|a| a - 0xc);
-        Resolution {
-            stages,
-            res: address.into(),
-        }
+        address.into()
     }
 }
 
 #[allow(non_snake_case)]
 mod GNatives {
     use super::*;
-    pub fn resolve(ctx: ResolveContext) -> Resolution {
-        let mut stages = vec![ctx.match_address - 1];
+    pub fn resolve(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address - 1);
         for i in ctx.match_address..ctx.match_address + 400 {
             if ctx.memory[i] == 0x4c
                 && ctx.memory[i + 1] == 0x8d
                 && (ctx.memory[i + 2] & 0xc7 == 5 && ctx.memory[i + 2] > 0x20)
             {
-                stages.push(i);
+                stages.0.push(i);
                 let address = (i + 7).checked_add_signed(i32::from_le_bytes(
                     ctx.memory[i + 3..i + 3 + 4].try_into().unwrap(),
                 ) as isize);
-                return Resolution {
-                    stages,
-                    res: address.into(),
-                };
+                return address.into();
             }
         }
-        Resolution {
-            stages,
-            res: ResolutionType::Failed,
-        }
+        ResolutionType::Failed.into()
     }
 }
 #[allow(non_snake_case)]
 mod FPakPlatformFile {
     use super::*;
-    pub fn resolve_initialize(ctx: ResolveContext) -> Resolution {
-        let mut stages = vec![ctx.match_address];
+    pub fn resolve_initialize(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
 
         let patterns = [
             Pattern::new("48 8d 15 | ?? ?? ?? ?? 48 8b cf ff 50 40 eb 3e 39 1d ?? ?? ?? ?? 74 36 48 8b 0d ?? ?? ?? ??").unwrap(),
@@ -1487,7 +1453,7 @@ mod FPakPlatformFile {
                     .map(|(_, address)| {
                         // TODO allow passing sub-patterns to stages?
                         // TODO rename 'stages' to 'addresses_of_interest' or similar and give them names
-                        stages.push(section.address + address);
+                        stages.0.push(section.address + address);
                         section.address
                             + (address + 4)
                                 .checked_add_signed(i32::from_le_bytes(
@@ -1501,13 +1467,10 @@ mod FPakPlatformFile {
                 format!("{:x?}", addresses)
             });
 
-        Resolution {
-            stages,
-            res: addresses.into(),
-        }
+        addresses.into()
     }
-    pub fn resolve_dtor(ctx: ResolveContext) -> Resolution {
-        let mut stages = vec![ctx.match_address];
+    pub fn resolve_dtor(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
 
         let patterns = [Pattern::new("48 8b 0d | ").unwrap()];
 
@@ -1524,7 +1487,7 @@ mod FPakPlatformFile {
                 let mut addresses = res
                     .into_iter()
                     .map(|(_, address)| {
-                        stages.push(section.address + address);
+                        stages.0.push(section.address + address);
                         section.address
                             + (address + 4)
                                 .checked_add_signed(i32::from_le_bytes(
@@ -1537,39 +1500,21 @@ mod FPakPlatformFile {
                 format!("{:x?}", addresses)
             });
 
-        Resolution {
-            stages,
-            res: addresses.into(),
-        }
+        addresses.into()
     }
 }
 
 mod strings {
+    use crate::Scan;
+
     use super::*;
 
-    pub fn resolve(ctx: ResolveContext) -> Resolution {
-        let stages = vec![ctx.match_address];
-        if let Some(xref) = ctx
-            .memory
-            .find(object::SectionKind::Text, |address, slice| {
-                ctx.match_address
-                    == (4 + address)
-                        .checked_add_signed(
-                            i32::from_le_bytes(slice.try_into().unwrap())
-                                .try_into()
-                                .unwrap(),
-                        )
-                        .unwrap()
-            })
-        {
-            return Resolution {
-                stages,
-                res: xref.into(),
-            };
-        }
-        Resolution {
-            stages,
-            res: ResolutionType::Failed,
-        }
+    pub fn resolve(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
+        ResolutionAction::Continue(Scan {
+            section: Some(object::SectionKind::Text),
+            scan_type: Xref(ctx.match_address).into(),
+            resolve: resolve_self,
+        })
     }
 }

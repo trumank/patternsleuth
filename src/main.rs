@@ -11,7 +11,8 @@ use strum::IntoEnumIterator;
 
 use patternsleuth::{
     patterns::{get_patterns, Sig},
-    MountedPE, PatternConfig, Resolution, ResolutionType, ResolveContext,
+    MountedPE, PatternConfig, Resolution, ResolutionAction, ResolutionType, ResolveContext,
+    ResolveStages, Scan,
 };
 
 #[derive(Parser)]
@@ -173,7 +174,7 @@ fn find_ext<P: AsRef<Path>>(dir: P, ext: &str) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-struct Scan<'a> {
+struct ScanResult<'a> {
     results: Vec<(&'a PatternConfig, Resolution)>,
 }
 
@@ -181,84 +182,103 @@ fn scan_game<'bin, 'patterns>(
     obj: &'bin object::File,
     mount: &'bin MountedPE,
     pattern_configs: &'patterns [PatternConfig],
-) -> Result<Scan<'patterns>> {
-    //patterns: &Vec<(&'patterns PatternConfig, &'patterns Pattern)>,
+) -> Result<ScanResult<'patterns>> {
     let mut results = vec![];
-    for section in obj.sections() {
-        let base_address = section.address() as usize;
-        let section_name = section.name()?;
-        let data = section.data()?;
 
-        let patterns = pattern_configs
-            .iter()
-            .filter_map(|config| {
-                config
-                    .scan
-                    .section
-                    .map(|s| s == section.kind())
-                    .unwrap_or(true)
-                    .then(|| {
-                        config
-                            .scan
-                            .scan_type
-                            .get_pattern()
-                            .map(|pattern| (config, pattern))
-                    })
-                    .flatten()
-            })
-            .collect::<Vec<_>>();
-
-        results.extend(
-            patternsleuth::scanner::scan_memchr_lookup(&patterns, base_address, data)
-                .into_iter()
-                .map(|(config, m)| {
-                    (
-                        config,
-                        (config.scan.resolve)(ResolveContext {
-                            memory: mount,
-                            section: section_name.to_owned(),
-                            match_address: m,
-                        }),
-                    )
-                }),
-        );
-
-        let xrefs = pattern_configs
-            .iter()
-            .filter_map(|config| {
-                config
-                    .scan
-                    .section
-                    .map(|s| s == section.kind())
-                    .unwrap_or(true)
-                    .then(|| {
-                        config
-                            .scan
-                            .scan_type
-                            .get_xref()
-                            .map(|pattern| (config, pattern))
-                    })
-                    .flatten()
-            })
-            .collect::<Vec<_>>();
-
-        results.extend(
-            patternsleuth::scanner::scan_xref_binary(&xrefs, base_address, data)
-                .into_iter()
-                .map(|(config, m)| {
-                    (
-                        config,
-                        (config.scan.resolve)(ResolveContext {
-                            memory: mount,
-                            section: section_name.to_owned(),
-                            match_address: m,
-                        }),
-                    )
-                }),
-        );
+    struct PendingScan {
+        index: usize,
+        stages: ResolveStages,
+        scan: Scan,
     }
 
-    Ok(Scan { results })
+    let mut scan_queue = pattern_configs
+        .iter()
+        .enumerate()
+        .map(|(index, config)| PendingScan {
+            index,
+            stages: ResolveStages(vec![]),
+            scan: config.scan.clone(), // TODO clone isn't ideal but makes handling multi-stage scans a lot easier
+        })
+        .collect::<Vec<_>>();
+
+    while !scan_queue.is_empty() {
+        let mut new_queue = vec![];
+        for section in obj.sections() {
+            let base_address = section.address() as usize;
+            let section_name = section.name()?;
+            let data = section.data()?;
+
+            let pattern_scans = scan_queue
+                .iter()
+                .filter_map(|scan| {
+                    scan.scan
+                        .section
+                        .map(|s| s == section.kind())
+                        .unwrap_or(true)
+                        .then(|| {
+                            scan.scan
+                                .scan_type
+                                .get_pattern()
+                                .map(|pattern| (scan, pattern))
+                        })
+                        .flatten()
+                })
+                .collect::<Vec<_>>();
+
+            let xref_scans = scan_queue
+                .iter()
+                .filter_map(|scan| {
+                    scan.scan
+                        .section
+                        .map(|s| s == section.kind())
+                        .unwrap_or(true)
+                        .then(|| scan.scan.scan_type.get_xref().map(|xref| (scan, xref)))
+                        .flatten()
+                })
+                .collect::<Vec<_>>();
+
+            let scan_results =
+                patternsleuth::scanner::scan_memchr_lookup(&pattern_scans, base_address, data)
+                    .into_iter()
+                    .chain(
+                        patternsleuth::scanner::scan_xref_binary(&xref_scans, base_address, data)
+                            .into_iter(),
+                    );
+
+            for (scan, address) in scan_results {
+                let mut stages = scan.stages.clone();
+                let action = (scan.scan.resolve)(
+                    ResolveContext {
+                        memory: mount,
+                        section: section_name.to_owned(),
+                        match_address: address,
+                    },
+                    &mut stages,
+                );
+                match action {
+                    ResolutionAction::Continue(new_scan) => {
+                        new_queue.push(PendingScan {
+                            index: scan.index,
+                            stages,
+                            scan: new_scan,
+                        });
+                    }
+                    ResolutionAction::Finish(res) => {
+                        results.push((
+                            &pattern_configs[scan.index],
+                            Resolution {
+                                stages: stages.0,
+                                res,
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+        scan_queue = new_queue;
+    }
+
+    Ok(ScanResult { results })
 }
 
 fn main() -> Result<(), Box<dyn Error>> {

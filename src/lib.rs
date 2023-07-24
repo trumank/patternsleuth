@@ -89,6 +89,47 @@ pub struct Resolution {
     pub res: ResolutionType,
 }
 
+#[derive(Debug)]
+pub enum ResolutionAction {
+    /// Performing another scan
+    Continue(Scan),
+    /// Finish scan
+    Finish(ResolutionType),
+}
+impl From<ResolutionType> for ResolutionAction {
+    fn from(val: ResolutionType) -> Self {
+        ResolutionAction::Finish(val)
+    }
+}
+impl From<Option<usize>> for ResolutionAction {
+    fn from(opt_address: Option<usize>) -> Self {
+        match opt_address {
+            Some(addr) => ResolutionType::Address(addr),
+            None => ResolutionType::Failed,
+        }
+        .into()
+    }
+}
+impl From<usize> for ResolutionAction {
+    fn from(address: usize) -> Self {
+        ResolutionType::Address(address).into()
+    }
+}
+impl From<Option<String>> for ResolutionAction {
+    fn from(opt_string: Option<String>) -> Self {
+        match opt_string {
+            Some(string) => ResolutionType::String(string),
+            None => ResolutionType::Failed,
+        }
+        .into()
+    }
+}
+impl From<String> for ResolutionAction {
+    fn from(string: String) -> Self {
+        ResolutionType::String(string).into()
+    }
+}
+
 #[derive(Debug, Hash, Ord, PartialOrd, Eq, PartialEq)]
 pub enum ResolutionType {
     /// address of resolved match
@@ -128,11 +169,24 @@ impl From<String> for ResolutionType {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Scan {
     pub section: Option<object::SectionKind>,
     pub scan_type: ScanType,
     pub resolve: Resolve,
 }
+/*
+impl Scan {
+    pub fn resolve(&self, ctx: ResolveContext) -> Resolution {
+        let mut stages = ResolveStages(vec![]);
+        Resolution {
+            res: (self.resolve)(ctx, &mut stages),
+            stages: stages.0,
+        }
+    }
+}
+*/
+#[derive(Debug, Clone)]
 pub enum ScanType {
     Pattern(Pattern),
     Xref(Xref),
@@ -162,7 +216,10 @@ impl From<Xref> for ScanType {
     }
 }
 
-type Resolve = fn(ctx: ResolveContext) -> Resolution;
+#[derive(Debug, Clone)]
+pub struct ResolveStages(pub Vec<usize>);
+
+type Resolve = fn(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction;
 pub struct PatternConfig {
     pub sig: Sig,
     pub name: String,
