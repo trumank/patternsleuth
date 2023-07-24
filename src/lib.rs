@@ -5,7 +5,7 @@ pub mod scanner;
 
 use std::ops::{Index, Range};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Error, Result};
 use object::{File, Object, ObjectSection};
 
 use patterns::Sig;
@@ -15,6 +15,19 @@ pub struct Pattern {
     pub sig: Vec<u8>,
     pub mask: Vec<u8>,
     pub custom_offset: usize,
+}
+
+impl TryFrom<String> for Pattern {
+    type Error = Error;
+    fn try_from(string: String) -> Result<Self, <Self as TryFrom<String>>::Error> {
+        Self::new(&string)
+    }
+}
+impl TryFrom<&str> for Pattern {
+    type Error = Error;
+    fn try_from(string: &str) -> Result<Self, <Self as TryFrom<&str>>::Error> {
+        Self::new(string)
+    }
 }
 
 impl Pattern {
@@ -226,7 +239,7 @@ pub struct PatternConfig {
     pub scan: Scan,
 }
 impl PatternConfig {
-    fn new(
+    pub fn new(
         sig: Sig,
         name: String,
         section: Option<object::SectionKind>,
@@ -243,7 +256,7 @@ impl PatternConfig {
             },
         }
     }
-    fn xref(
+    pub fn xref(
         sig: Sig,
         name: String,
         section: Option<object::SectionKind>,

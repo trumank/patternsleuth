@@ -17,6 +17,7 @@ use super::{
     strum::EnumIter,
 )]
 pub enum Sig {
+    Custom(String),
     AllowCheats,
     CameraWriteTransform,     // Only in older engines (4.19 and earlier)
     CameraWriteTransformMenu, // Only in older engines (4.17 and earlier)

@@ -7,12 +7,12 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use itertools::Itertools;
 use object::{Object, ObjectSection};
-use strum::IntoEnumIterator;
+use patternsleuth::patterns::resolve_self;
 
 use patternsleuth::{
     patterns::{get_patterns, Sig},
-    MountedPE, PatternConfig, Resolution, ResolutionAction, ResolutionType, ResolveContext,
-    ResolveStages, Scan,
+    MountedPE, Pattern, PatternConfig, Resolution, ResolutionAction, ResolutionType,
+    ResolveContext, ResolveStages, Scan,
 };
 
 #[derive(Parser)]
@@ -23,13 +23,17 @@ struct CommandScan {
     game: Vec<String>,
 
     /// A signature to scan for (can be specified multiple times). Scans for all signatures if omitted
-    #[arg(short, long)]
+    #[arg(short, long, group = "scan")]
     signature: Vec<Sig>,
 
     /// Show disassembly context for each stage of every match (I recommend only using with
     /// aggressive filters)
     #[arg(short, long)]
     disassemble: bool,
+
+    /// A signature to scan for (can be specified multiple times). Scans for all signatures if omitted
+    #[arg(short, long, group = "scan", value_parser(|s: &_| Pattern::new(s)))]
+    patterns: Vec<Pattern>,
 
     /// Show scan summary
     #[arg(long)]
@@ -284,7 +288,6 @@ fn scan_game<'bin, 'patterns>(
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = CommandScan::parse();
 
-    let sig_filter = cli.signature.into_iter().collect::<HashSet<_>>();
     let games_filter = cli
         .game
         .into_iter()
@@ -296,15 +299,36 @@ fn main() -> Result<(), Box<dyn Error>> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let patterns = get_patterns()?
-        .into_iter()
-        .filter(|p| {
-            sig_filter
-                .is_empty()
-                .then_some(true)
-                .unwrap_or_else(|| sig_filter.contains(&p.sig))
-        })
-        .collect_vec();
+    let patterns = if cli.patterns.is_empty() {
+        let sig_filter = cli.signature.into_iter().collect::<HashSet<_>>();
+        get_patterns()?
+            .into_iter()
+            .filter(|p| {
+                sig_filter
+                    .is_empty()
+                    .then_some(true)
+                    .unwrap_or_else(|| sig_filter.contains(&p.sig))
+            })
+            .collect_vec()
+    } else {
+        cli.patterns
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| {
+                PatternConfig::new(
+                    Sig::Custom("arg".to_string()),
+                    format!("arg {i}"),
+                    None,
+                    p,
+                    resolve_self,
+                )
+            })
+            .collect_vec()
+    };
+    let sigs = patterns
+        .iter()
+        .map(|p| p.sig.clone())
+        .collect::<HashSet<_>>();
 
     let mut games: HashSet<String> = Default::default();
 
@@ -358,12 +382,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut table = Table::new();
         table.set_titles(row!["sig", "offline scan"]);
 
-        for sig in Sig::iter().filter(|sig| {
-            sig_filter
-                .is_empty()
-                .then_some(true)
-                .unwrap_or_else(|| sig_filter.contains(sig))
-        }) {
+        for sig in &sigs {
             let mut cells = vec![];
             cells.push(Cell::new(&sig.to_string()));
 
