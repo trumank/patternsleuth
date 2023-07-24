@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::{
     MountedPE, Pattern, PatternConfig, ResolutionAction, ResolutionType, ResolveContext,
-    ResolveStages, Xref,
+    ResolveStages, Scan, Xref,
 };
 
 #[derive(
@@ -66,6 +66,7 @@ pub enum Sig {
     FCustomVersionContainer,
 
     StringFTagMetaData,
+    SigningKey,
 }
 
 pub fn get_patterns() -> Result<Vec<PatternConfig>> {
@@ -1223,30 +1224,42 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
         ),
 
 
-        //===============================[Strings]=============================================================================================
+        //===============================[Xrefs]=============================================================================================
         PatternConfig::new(
             Sig::StringFTagMetaData,
             "FTagMetaData".to_string(),
             Some(object::SectionKind::ReadOnlyData),
             Pattern::from_bytes("FTagMetaData".encode_utf16().flat_map(u16::to_le_bytes).collect())?,
-            strings::resolve,
+            xref::resolve,
         ),
-        /*
-        PatternConfig::xref(
-            Sig::StringFTagMetaData,
-            "xref".to_string(),
+        PatternConfig::new(
+            Sig::SigningKey,
+            "delegate".to_string(),
             Some(object::SectionKind::Text),
-            Xref(0x1450BB398),
+            Pattern::new("40 53 48 83 EC 50 E8 | ?? ?? ?? ?? 48 8B")?,
             resolve_self,
         ),
-        PatternConfig::xref(
-            Sig::StringFTagMetaData,
-            "fn".to_string(),
+        PatternConfig::new(
+            Sig::SigningKey,
+            "delegate + call".to_string(),
             Some(object::SectionKind::Text),
-            Xref(0x1450B11B0),
+            Pattern::new("40 53 48 83 EC 50 E8 | ?? ?? ?? ?? 48 8B")?,
+            signing_key::resolve_follow_delegate,
+        ),
+        PatternConfig::new(
+            Sig::SigningKey,
+            "delegate + call + xref".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("40 53 48 83 EC 50 E8 | ?? ?? ?? ?? 48 8B")?,
+            signing_key::resolve_follow_delegate_xref,
+        ),
+        PatternConfig::new(
+            Sig::SigningKey,
+            "direct".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 89 5C 24 08 57 48 83 EC 20 65 48 8B 04 25 58 00 00 00 48 8B F9 8B ?? ?? ?? ?? ?? B9 BC 04 00 00 48 8B 14 D0 8B 04 11 39 ?? ?? ?? ?? ?? 0F 8F ?? ?? ?? ?? 8B")?,
             resolve_self,
         ),
-        */
     ])
 }
 
@@ -1280,6 +1293,14 @@ pub fn resolve_engine_version(ctx: ResolveContext, stages: &mut ResolveStages) -
 #[allow(non_snake_case)]
 mod RIPRelativeResolvers {
     use super::*;
+
+    pub fn calc_rip(ctx: &ResolveContext, address: usize) -> Option<usize> {
+        address
+            .checked_add_signed(i32::from_le_bytes(
+                ctx.memory[address..address + 4].try_into().unwrap(),
+            ) as isize)
+            .map(|a| a + 4)
+    }
 
     fn resolve_RIP(
         memory: &MountedPE,
@@ -1505,9 +1526,7 @@ mod FPakPlatformFile {
     }
 }
 
-mod strings {
-    use crate::Scan;
-
+mod xref {
     use super::*;
 
     pub fn resolve(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
@@ -1517,5 +1536,61 @@ mod strings {
             scan_type: Xref(ctx.match_address).into(),
             resolve: resolve_self,
         })
+    }
+}
+
+mod signing_key {
+    use super::*;
+
+    pub fn resolve_follow_delegate_xref(
+        ctx: ResolveContext,
+        stages: &mut ResolveStages,
+    ) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
+
+        if let Some(addr) = ctx.match_address.checked_add_signed(i32::from_le_bytes(
+            ctx.memory[ctx.match_address..ctx.match_address + 4]
+                .try_into()
+                .unwrap(),
+        ) as isize)
+        {
+            let addr = addr + 4 + 39 + 3;
+            stages.0.push(addr);
+            if let Some(rip) = RIPRelativeResolvers::calc_rip(&ctx, addr) {
+                ResolutionAction::Continue(Scan {
+                    section: Some(object::SectionKind::Text),
+                    scan_type: Xref(rip + 0x10).into(),
+                    resolve: resolve_self,
+                })
+            } else {
+                ResolutionType::Failed.into()
+            }
+        } else {
+            ResolutionType::Failed.into()
+        }
+    }
+
+    pub fn resolve_follow_delegate(
+        ctx: ResolveContext,
+        stages: &mut ResolveStages,
+    ) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
+
+        if let Some(addr) = ctx.match_address.checked_add_signed(i32::from_le_bytes(
+            ctx.memory[ctx.match_address..ctx.match_address + 4]
+                .try_into()
+                .unwrap(),
+        ) as isize)
+        {
+            let addr = addr + 4 + 39 + 3;
+            stages.0.push(addr);
+            if let Some(rip) = RIPRelativeResolvers::calc_rip(&ctx, addr) {
+                rip.into()
+            } else {
+                ResolutionType::Failed.into()
+            }
+        } else {
+            ResolutionType::Failed.into()
+        }
     }
 }
