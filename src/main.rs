@@ -117,9 +117,8 @@ mod disassemble {
                 for (i, b) in data[index..index + instruction.len()].iter().enumerate() {
                     let highlight = pattern
                         .and_then(|p| -> Option<bool> {
-                            let offset = (instruction.ip() as usize)
-                                .checked_sub(address)?
-                                .checked_add(i)?;
+                            let offset =
+                                (instruction.ip() as usize) - address + i + p.custom_offset;
                             Some(*p.mask.get(offset)? != 0)
                         })
                         .unwrap_or_default();
