@@ -278,8 +278,31 @@ pub fn scan_xref_binary<'id, ID: Sync>(
                             .try_into()
                             .unwrap(),
                     ) {
-                        if let Ok(i) = patterns.binary_search_by_key(&address, |p| p.1 .0) {
-                            matches.push((patterns[i].0, base_address + j));
+                        if let Ok(i) = patterns.binary_search_by_key(&address, |p| p.1.0) {
+                            // match found
+                            let addr = base_address + j;
+                            {
+                                // walk backwards until unequal
+                                let mut i = i - 1;
+                                while let Some(prev) = patterns.get(i) {
+                                    if prev.1.0 != address {
+                                        break
+                                    }
+                                    matches.push((prev.0, addr));
+                                    i -= 1;
+                                }
+                            }
+                            {
+                                // walk forwards until unequal
+                                let mut i = i;
+                                while let Some(next) = patterns.get(i) {
+                                    if next.1.0 != address {
+                                        break
+                                    }
+                                    matches.push((next.0, addr));
+                                    i += 1;
+                                }
+                            }
                         }
                     }
                 }
@@ -347,11 +370,17 @@ pub fn scan_xref_hash<'id, ID: Sync>(
 mod test {
     use super::*;
 
-    type ScanFn<'id> = fn(
+    type PatternScanFn<'id> = fn(
         patterns: &[(&'id (), &Pattern)],
         base_address: usize,
         data: &[u8],
     ) -> Vec<(&'id (), usize)>;
+
+    type XrefScanFn<'id, ID> = fn(
+        patterns: &[(&'id ID, &Xref)],
+        base_address: usize,
+        data: &[u8],
+    ) -> Vec<(&'id ID, usize)>;
 
     #[test]
     fn test_scan() {
@@ -363,7 +392,7 @@ mod test {
         test_scan_algo(scan_memchr);
     }
 
-    fn test_scan_algo(scan: ScanFn) {
+    fn test_scan_algo(scan: PatternScanFn) {
         let patterns = [(&(), &Pattern::new("01").unwrap())];
 
         let len = 64;
@@ -403,7 +432,19 @@ mod test {
 
     #[test]
     fn test_scan_xref() {
-        let patterns = [(&(), &Xref(10))];
-        dbg!(scan_xref(&patterns, 0, &[0; 100]));
+        test_scan_xref_algo(scan_xref_binary);
+    }
+
+    fn test_scan_xref_algo(scan: XrefScanFn<char>) {
+        let scans = [
+            (&'a', &Xref(0x504030a)),
+            (&'b', &Xref(0x504030a)),
+            (&'c', &Xref(0x504030a)),
+            (&'d', &Xref(0x504030a)),
+        ];
+
+        let mut res = scan(&scans, 3, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        res.sort();
+        assert_eq!(&[(&'a', 4), (&'b', 4), (&'c', 4), (&'d', 4)], res.as_slice());
     }
 }
