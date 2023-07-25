@@ -278,15 +278,15 @@ pub fn scan_xref_binary<'id, ID: Sync>(
                             .try_into()
                             .unwrap(),
                     ) {
-                        if let Ok(i) = patterns.binary_search_by_key(&address, |p| p.1.0) {
+                        if let Ok(i) = patterns.binary_search_by_key(&address, |p| p.1 .0) {
                             // match found
                             let addr = base_address + j;
                             {
                                 // walk backwards until unequal
                                 let mut i = i - 1;
                                 while let Some(prev) = patterns.get(i) {
-                                    if prev.1.0 != address {
-                                        break
+                                    if prev.1 .0 != address {
+                                        break;
                                     }
                                     matches.push((prev.0, addr));
                                     i -= 1;
@@ -296,8 +296,8 @@ pub fn scan_xref_binary<'id, ID: Sync>(
                                 // walk forwards until unequal
                                 let mut i = i;
                                 while let Some(next) = patterns.get(i) {
-                                    if next.1.0 != address {
-                                        break
+                                    if next.1 .0 != address {
+                                        break;
                                     }
                                     matches.push((next.0, addr));
                                     i += 1;
@@ -445,6 +445,9 @@ mod test {
 
         let mut res = scan(&scans, 3, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         res.sort();
-        assert_eq!(&[(&'a', 4), (&'b', 4), (&'c', 4), (&'d', 4)], res.as_slice());
+        assert_eq!(
+            &[(&'a', 4), (&'b', 4), (&'c', 4), (&'d', 4)],
+            res.as_slice()
+        );
     }
 }

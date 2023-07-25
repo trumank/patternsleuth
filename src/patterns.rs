@@ -1255,6 +1255,13 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
         ),
         PatternConfig::new(
             Sig::SigningKey,
+            "delegate + call + xref + func".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("40 53 48 83 EC 50 E8 | ?? ?? ?? ?? 48 8B")?,
+            signing_key::resolve_follow_delegate_xref_func,
+        ),
+        PatternConfig::new(
+            Sig::SigningKey,
             "direct".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 89 5C 24 08 57 48 83 EC 20 65 48 8B 04 25 58 00 00 00 48 8B F9 8B ?? ?? ?? ?? ?? B9 BC 04 00 00 48 8B 14 D0 8B 04 11 39 ?? ?? ?? ?? ?? 0F 8F ?? ?? ?? ?? 8B")?,
@@ -1266,6 +1273,15 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
 /// do nothing, return address of pattern
 pub fn resolve_self(ctx: ResolveContext, _stages: &mut ResolveStages) -> ResolutionAction {
     ResolutionType::Address(ctx.match_address).into()
+}
+
+/// return containing function via exception table lookup
+pub fn resolve_function(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+    stages.0.push(ctx.match_address);
+    ctx.exe
+        .get_function(ctx.match_address)
+        .map(|f| f.range.start)
+        .into()
 }
 
 /// do nothing, but return a constant so it's squashing all multiple matches to 1 value: 0x12345678
@@ -1542,6 +1558,30 @@ mod xref {
 mod signing_key {
     use super::*;
 
+    pub fn resolve_follow_delegate(
+        ctx: ResolveContext,
+        stages: &mut ResolveStages,
+    ) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
+
+        if let Some(addr) = ctx.match_address.checked_add_signed(i32::from_le_bytes(
+            ctx.memory[ctx.match_address..ctx.match_address + 4]
+                .try_into()
+                .unwrap(),
+        ) as isize)
+        {
+            let addr = addr + 4 + 39 + 3;
+            stages.0.push(addr);
+            if let Some(rip) = RIPRelativeResolvers::calc_rip(&ctx, addr) {
+                rip.into()
+            } else {
+                ResolutionType::Failed.into()
+            }
+        } else {
+            ResolutionType::Failed.into()
+        }
+    }
+
     pub fn resolve_follow_delegate_xref(
         ctx: ResolveContext,
         stages: &mut ResolveStages,
@@ -1570,7 +1610,7 @@ mod signing_key {
         }
     }
 
-    pub fn resolve_follow_delegate(
+    pub fn resolve_follow_delegate_xref_func(
         ctx: ResolveContext,
         stages: &mut ResolveStages,
     ) -> ResolutionAction {
@@ -1585,7 +1625,11 @@ mod signing_key {
             let addr = addr + 4 + 39 + 3;
             stages.0.push(addr);
             if let Some(rip) = RIPRelativeResolvers::calc_rip(&ctx, addr) {
-                rip.into()
+                ResolutionAction::Continue(Scan {
+                    section: Some(object::SectionKind::Text),
+                    scan_type: Xref(rip + 0x10).into(),
+                    resolve: resolve_function,
+                })
             } else {
                 ResolutionType::Failed.into()
             }

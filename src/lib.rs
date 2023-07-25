@@ -3,9 +3,13 @@
 pub mod patterns;
 pub mod scanner;
 
-use std::ops::{Index, Range};
+use std::{
+    io::Read,
+    ops::{Index, Range},
+};
 
-use anyhow::{bail, Error, Result};
+use anyhow::{bail, Context, Error, Result};
+use byteorder::{ReadBytesExt, LE};
 use object::{File, Object, ObjectSection};
 
 use patterns::Sig;
@@ -87,8 +91,9 @@ impl Pattern {
 #[derive(Debug, Clone, Copy, Hash, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Xref(pub usize);
 
-pub struct ResolveContext<'memory> {
-    pub memory: &'memory MountedPE<'memory>,
+pub struct ResolveContext<'data> {
+    pub exe: &'data Executable<'data>,
+    pub memory: &'data MountedPE<'data>,
     pub section: String,
     pub match_address: usize,
 }
@@ -275,6 +280,92 @@ impl PatternConfig {
     }
 }
 
+pub struct Executable<'data> {
+    data: &'data [u8],
+    pub object: object::File<'data>,
+    pub memory: MountedPE<'data>,
+    functions: Vec<ExceptionEntry>,
+}
+impl<'data> Executable<'data> {
+    pub fn read(data: &'data [u8]) -> Result<Executable<'data>> {
+        let object = object::File::parse(data)?;
+        let memory = MountedPE::new(&object)?;
+        let functions = Self::read_exception_table(data, &object)?;
+
+        /*
+        for (i, window) in functions.windows(2).enumerate() {
+            match window {
+                [a, b] => {
+                    if a.range.end > b.range.start {
+                        println!("overlapping exception table @ {} len = {}: {a:x?} {b:x?}", i, functions.len());
+                    }
+                    if a.range.start >= b.range.start {
+                        println!("out of order exception table @ {} len = {}: {a:x?} {b:x?}", i, functions.len());
+                    }
+                }
+                _ => unreachable!()
+            }
+        }
+        */
+
+        Ok(Executable {
+            data,
+            object,
+            memory,
+            functions,
+        })
+    }
+    fn read_exception_table(data: &[u8], obj_file: &object::File) -> Result<Vec<ExceptionEntry>> {
+        use std::io::Cursor;
+
+        let exe_base = obj_file.relative_address_base() as usize;
+
+        Ok(match obj_file.inner() {
+            object::FileInternal::Pe64(inner) => {
+                // TODO entries are sorted so it should be possible to binary search entries
+                // directly from the directory rather than read them all up front
+                let exception_directory = inner
+                    .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
+                    .context("no exception directory")?;
+                let mut cur = Cursor::new(exception_directory.data(data, &inner.section_table())?);
+                std::iter::from_fn(|| ExceptionEntry::read(exe_base, &mut cur).ok()).collect()
+            }
+            object::FileInternal::Pe32(_) => {
+                vec![]
+            }
+            _ => todo!("{:?}", object::FileKind::parse(data)?),
+        })
+    }
+    pub fn get_function(&self, address: usize) -> Option<&ExceptionEntry> {
+        // TODO figure out what to do in the rare case of overlapping entries
+        match self
+            .functions
+            .binary_search_by_key(&address, |f| f.range.start)
+        {
+            Ok(i) => Some(&self.functions[i]),
+            Err(i) => {
+                let f = &self.functions.get(i - 1);
+                f.filter(|f| f.range.contains(&address))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExceptionEntry {
+    pub range: Range<usize>,
+    pub unwind: usize,
+}
+impl ExceptionEntry {
+    fn read(base_address: usize, data: &mut impl Read) -> Result<Self> {
+        Ok(Self {
+            range: base_address + data.read_u32::<LE>()? as usize
+                ..base_address + data.read_u32::<LE>()? as usize,
+            unwind: base_address + data.read_u32::<LE>()? as usize,
+        })
+    }
+}
+
 pub struct PESection<'data> {
     pub name: String,
     pub address: usize,
@@ -298,7 +389,7 @@ pub struct MountedPE<'data> {
 }
 
 impl<'data> MountedPE<'data> {
-    pub fn new(object: &'data File) -> Result<Self> {
+    pub fn new(object: &File<'data>) -> Result<Self> {
         Ok(Self {
             sections: object
                 .sections()

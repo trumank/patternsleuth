@@ -3,16 +3,17 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use itertools::Itertools;
 use object::{Object, ObjectSection};
 use patternsleuth::patterns::resolve_self;
+use patternsleuth::Executable;
 
 use patternsleuth::{
     patterns::{get_patterns, Sig},
-    MountedPE, Pattern, PatternConfig, Resolution, ResolutionAction, ResolutionType,
-    ResolveContext, ResolveStages, Scan,
+    Pattern, PatternConfig, Resolution, ResolutionAction, ResolutionType, ResolveContext,
+    ResolveStages, Scan,
 };
 
 #[derive(Parser)]
@@ -41,11 +42,11 @@ struct CommandScan {
 }
 
 mod disassemble {
+    use super::*;
     use colored::{ColoredString, Colorize};
     use iced_x86::{
         Decoder, DecoderOptions, Formatter, FormatterOutput, FormatterTextKind, IntelFormatter,
     };
-    use patternsleuth::{MountedPE, Pattern};
 
     #[derive(Default)]
     struct Output {
@@ -60,7 +61,7 @@ mod disassemble {
     }
 
     pub(crate) fn disassemble(
-        memory: &MountedPE,
+        exe: &Executable,
         address: usize,
         pattern: Option<&Pattern>,
     ) -> String {
@@ -69,17 +70,28 @@ mod disassemble {
 
         let mut output = Output::default();
 
-        if let Some(section) = memory.get_section_containing(address) {
+        if let Some(section) = exe.memory.get_section_containing(address) {
             let data = &section.data[(address - context * max_inst).saturating_sub(section.address)
                 ..(address + context * max_inst).saturating_sub(section.address)];
 
             output.buffer.push_str(&format!(
-                "{:016x}\n{}\n{:016x} - {:016x}\n\n",
+                "{:016x}\n{:016x} - {:016x} = {}\n",
                 address,
-                section.name,
                 section.address,
-                section.address + section.data.len()
+                section.address + section.data.len(),
+                section.name,
             ));
+
+            if let Some(f) = exe.get_function(address) {
+                output.buffer.push_str(&format!(
+                    "{:016x} - {:016x} = function\n",
+                    f.range.start, f.range.end
+                ));
+            } else {
+                output.buffer.push_str("no function");
+            }
+
+            output.buffer.push('\n');
 
             let start_address = (address - context * max_inst) as u64;
             let mut decoder = Decoder::with_ip(64, data, start_address, DecoderOptions::NONE);
@@ -181,9 +193,8 @@ struct ScanResult<'a> {
     results: Vec<(&'a PatternConfig, Resolution)>,
 }
 
-fn scan_game<'bin, 'patterns>(
-    obj: &'bin object::File,
-    mount: &'bin MountedPE,
+fn scan_game<'patterns>(
+    exe: &Executable,
     pattern_configs: &'patterns [PatternConfig],
 ) -> Result<ScanResult<'patterns>> {
     let mut results = vec![];
@@ -206,7 +217,7 @@ fn scan_game<'bin, 'patterns>(
 
     while !scan_queue.is_empty() {
         let mut new_queue = vec![];
-        for section in obj.sections() {
+        for section in exe.object.sections() {
             let base_address = section.address() as usize;
             let section_name = section.name()?;
             let data = section.data()?;
@@ -252,7 +263,8 @@ fn scan_game<'bin, 'patterns>(
                 let mut stages = scan.stages.clone();
                 let action = (scan.scan.resolve)(
                     ResolveContext {
-                        memory: mount,
+                        exe,
+                        memory: &exe.memory,
                         section: section_name.to_owned(),
                         match_address: address,
                     },
@@ -356,17 +368,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             continue
         };
 
-        let bin_data = fs::read(&exe_path)
-            .with_context(|| format!("reading game exe {}", exe_path.display()))?;
-
-        let obj_file = object::File::parse(&*bin_data)?;
-        let mount = MountedPE::new(&obj_file)?;
+        println!("{:?} {:?}", game, exe_path.display());
+        let bin_data = fs::read(&exe_path)?;
+        let exe = match Executable::read(&bin_data) {
+            Ok(exe) => exe,
+            Err(err) => {
+                println!("err reading {}: {}", exe_path.display(), err);
+                continue;
+            }
+        };
 
         games.insert(game.to_string());
 
-        println!("{:?} {:?}", game, exe_path.display());
-
-        let scan = scan_game(&obj_file, &mount, &patterns)?;
+        let scan = scan_game(&exe, &patterns)?;
 
         // group results by Sig
         let folded_scans = scan
@@ -397,7 +411,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                     "{}\n{}",
                                     m.0.name,
                                     disassemble::disassemble(
-                                        &mount,
+                                        &exe,
                                         *address,
                                         m.1.stages
                                             .is_empty()
@@ -423,7 +437,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 "stage[{}]\n{}",
                                 i,
                                 disassemble::disassemble(
-                                    &mount,
+                                    &exe,
                                     *stage,
                                     (i == 0)
                                         .then_some(m.0.scan.scan_type.get_pattern())

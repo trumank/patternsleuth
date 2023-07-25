@@ -604,8 +604,7 @@ dependencies = [
 [[package]]
 name = "object"
 version = "0.31.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bda667d9f2b5051b8833f59f3bf748b28ef54f850f4fcb389a252aa383866d1"
+source = "git+https://github.com/trumank/object.git?branch=expose-inner#b4fb2192b79508982ce36a4cbb4a3cc2b8f9eb6a"
 dependencies = [
  "flate2",
  "memchr",
@@ -629,6 +628,7 @@ name = "patternsleuth"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "byteorder",
  "clap",
  "colored",
  "criterion",

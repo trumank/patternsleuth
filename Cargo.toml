@@ -12,6 +12,7 @@ debug = true
 
 [dependencies]
 anyhow = "1.0.71"
+byteorder = "1.4.3"
 clap = { version = "4.3.1", features = ["derive"] }
 colored = "2.0.0"
 globset = "0.4.10"
@@ -27,3 +28,6 @@ strum = {version = "0.24.1", features = ["strum_macros", "derive"]}
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 rand = "0.8.5"
+
+[patch.crates-io]
+object = { git = "https://github.com/trumank/object.git", branch = "expose-inner" }
