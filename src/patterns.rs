@@ -23,6 +23,7 @@ pub enum Sig {
     CameraWriteTransformMenu, // Only in older engines (4.17 and earlier)
     CameraARCorrectionFMinimalViewInfo,
     CameraARCorrectionCameraComponent,
+    CameraARCorrectionPlayerCameraManager,
     EngineVersion,
     #[strum(serialize = "FMinimalViewInfo::FMinimalViewInfo")]
     FMinimalViewInfoCTor, // FMinimalViewInfo::FMinimalViewInfo and operator= are equal in code but called at different locations. One of the matches is the ctor the other is the = operator.
@@ -64,6 +65,8 @@ pub enum Sig {
     #[strum(serialize = "FPakPlatformFile::~FPakPlatformFile")]
     FPakPlatformFileDtor,
     FCustomVersionContainer,
+    #[strum(serialize = "SViewport::OnPaint call of SCompoundWidget::onPaint")]
+    SViewportOnPaintCallToSCompoundWidgetOnPaint,
 
     StringFTagMetaData,
     SigningKey,
@@ -135,6 +138,13 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             "UUU4_Alternative7_411".to_string(),
             None,
             Pattern::new("F3 41 0F 10 86 ?? 04 00 00 F3 41 0F 59 86 ?? 04 00 00 F3 41 0F 59 86 ?? 04 00 00 F3 0F 59 F0")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::GetEffectiveTimeDilation,
+            "UUU5_Alternative0".to_string(),
+            None,
+            Pattern::new("F3 0F 10 81 ?? ?? 00 00 F3 0F 59 81 ?? ?? 00 00 F3 0F 59 81 ?? ?? 00 00 C3")?,
             resolve_self,
         ),
 
@@ -214,6 +224,13 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             "UUU4_Alternative10".to_string(),
             None,
             Pattern::new("F6 83 25 01 00 00 40 74 08 B0 01 48 83 C4 20 5B C3 ?? C0 48 83 C4 20 5B C3")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::UWorldIsPaused,
+            "UUU5_Alternative0".to_string(),
+            None,
+            Pattern::new("80 BB ?? ?? ?? ?? 00 7C 08 | ?? C0 48 83 C4 20 5B C3 B0 01")?,
             resolve_self,
         ),
 
@@ -406,6 +423,20 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::new("C7 03 | 04 00 ?? 00 66 89 6B 04 89 7B 08 48 83 C3 10")?,
             resolve_engine_version,
         ),
+        PatternConfig::new(
+            Sig::EngineVersion,
+            "UUU5_Alternative0".to_string(),
+            None,
+            Pattern::new("41 C7 06 | 05 00 ?? ?? 48 8B 5C 24 ?? 49 8D 76 ?? 33 ED 41 89 46")?,
+            resolve_engine_version,
+        ),
+        PatternConfig::new(
+            Sig::EngineVersion,
+            "UUU5_Alternative1".to_string(),
+            None,
+            Pattern::new("C7 06 | 05 00 ?? ?? 48 8B 5C 24 20 4C 8D 76 10 33 ED")?,
+            resolve_engine_version,
+        ),
 
         //===============================[UWorldSpawnActor]=============================================================================================
         PatternConfig::new(
@@ -436,6 +467,13 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::new("40 53 56 57 48 83 EC 70 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 44 24 60 48 8B B4 24 B0 00 00 00")?,
             resolve_self,
         ),
+        PatternConfig::new(
+            Sig::UWorldSpawnActor,
+            "UUU5_Alternative5".to_string(),
+            None,
+            Pattern::new("40 53 56 57 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 0F 28 0D")?,
+            resolve_self,
+        ),
 
         //===============================[UWorldSpawnActorFromCall]=============================================================================================
         PatternConfig::new(
@@ -459,6 +497,20 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::new("4C 8D 44 24 ?? ?? 8B ?? E8 | ?? ?? ?? ?? 48 85 C0 0F 85 ?? ?? 00 00 48 8D 05")?,
             RIPRelativeResolvers::resolve_RIP_offset::<4>,
         ),
+        PatternConfig::new(
+            Sig::UWorldSpawnActorFromCall,
+            "UUU5_Alternative0".to_string(),
+            None,
+            Pattern::new("48 8B C8 4C 8D 45 80 E8 | ?? ?? ?? ?? 48 85 C0 74 ?? B3 01")?,
+            RIPRelativeResolvers::resolve_RIP_offset::<4>,
+        ),
+        PatternConfig::new(
+            Sig::UWorldSpawnActorFromCall,
+            "UUU5_Alternative1".to_string(),
+            None,
+            Pattern::new("48 8B C8 4C 8D 44 24 50 E8 | ?? ?? ?? ?? 48 85 C0 75")?,
+            RIPRelativeResolvers::resolve_RIP_offset::<4>,
+        ),
 
         //===============================[WidgetPaintOpacityRead]=============================================================================================
         PatternConfig::new(
@@ -473,6 +525,20 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             "UUU4_Alternative1".to_string(),
             None,
             Pattern::new("F3 0F 59 83 ?? ?? ?? ?? 0F 11 7D ?? 0F C6 C9 93 F3 0F 10 C8")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::WidgetOpacityBlendMultiply,
+            "UUU5_Alternative2".to_string(),
+            None,
+            Pattern::new("F3 0F 59 C3 F3 0F 11 44 24 ?? 40 84 F6 74 0C 48 8D 55 ?? FF 90")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::WidgetOpacityBlendMultiply,
+            "UUU5_Alternative3".to_string(),
+            None,
+            Pattern::new("0F 10 83 ?? ?? 00 00 0F 11 4D 8C 0F 59 F0 0F 11 45 ?? 0F 11")?,
             resolve_self,
         ),
 
@@ -541,6 +607,22 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             resolve_self,
         ),
 
+        //===============================[SViewportOnPaintCallToSCompoundWidgetOnPaint]=============================================================================================
+        PatternConfig::new(
+            Sig::SViewportOnPaintCallToSCompoundWidgetOnPaint,
+            "UUU5_Alternative0".to_string(),
+            None,
+            Pattern::new("E8 ?? ?? ?? ?? 89 44 24 54 8B D8 BF FF FF FF FF")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::SViewportOnPaintCallToSCompoundWidgetOnPaint,
+            "UUU5_Alternative1".to_string(),
+            None,
+            Pattern::new("E8 ?? ?? ?? ?? 89 44 24 5C 8B F0 BF FF FF FF FF 4D 85 E4")?,
+            resolve_self,
+        ),
+
         //===============================[FMinimalViewInfoCTor]=============================================================================================
         PatternConfig::new(
             Sig::FMinimalViewInfoCTor,
@@ -561,6 +643,13 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             "UUU4_Alternative0_411".to_string(),
             None,
             Pattern::new("F2 0F 10 02 48 8B D9 F2 0F 11 01 4C 8B C2 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::FMinimalViewInfoCTor,
+            "UUU5_Alternative0".to_string(),
+            None,
+            Pattern::new("0F 10 02 ?? ?? ?? ?? ?? ?? | 0F 11 01 F2 0F 10 4A ?? F2 0F 11 49 ?? 0F 10 42 ?? 0F 11 41 ?? F2 0F 10 4A ?? F2 0F 11 49 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41")?,
             resolve_self,
         ),
 
@@ -613,6 +702,29 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             "UUU4_Alternative0".to_string(),
             None,
             Pattern::new("33 47 ?? 83 E0 01 31 47 ?? 0F B6 8B ?? ?? ?? ?? 33 4F ?? 83 E1 02 31 4F")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::CameraARCorrectionCameraComponent,
+            "UUU5_Alternative1".to_string(),
+            None,
+            Pattern::new("33 4F 4C 83 E1 01 33 4F 4C 89 4F 4C 0F B6 83 ?? ?? 00 00 33 C1")?,
+            resolve_self,
+        ),
+
+        //===============================[CameraARCorrectionPlayerCameraManager]=============================================================================================
+        PatternConfig::new(
+            Sig::CameraARCorrectionPlayerCameraManager,
+            "UUU5_Alternative0".to_string(),
+            None,
+            Pattern::new("0F B6 81 BC 02 00 00 41 33 45 5C 83 E0 01 | 41 31 45 5C")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::CameraARCorrectionPlayerCameraManager,
+            "UUU5_Alternative1".to_string(),
+            None,
+            Pattern::new("41 33 40 5C 83 E0 01 48 89 7C 24 60 | 41 31 40 5C 8B")?,
             resolve_self,
         ),
 
@@ -713,6 +825,13 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             "LinkerManagerExec".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 8d 0c c1 e8 | ?? ?? ?? ?? 83 78 08 00")?,
+            RIPRelativeResolvers::resolve_RIP_offset::<4>,
+        ),
+        PatternConfig::new(
+            Sig::StaticConstructObjectInternal,
+            "UUU5_Alternative0".to_string(),
+            None,
+            Pattern::new("E8 | ?? ?? ?? ?? 48 83 7C 24 60 00 48 8B D8 74 ?? 48 8B 54 24")?,
             RIPRelativeResolvers::resolve_RIP_offset::<4>,
         ),
 
@@ -1073,6 +1192,34 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::new("89 05 | ?? ?? ?? ?? 85 DB 7F 24 4C 8D 05 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 81 F2")?,
             RIPRelativeResolvers::resolve_RIP_offset::<4>,
         ),
+        PatternConfig::new(
+            Sig::GUObjectArray,
+            "UUU5_Alternative0".to_string(),
+            None,
+            Pattern::new("89 ?? | ?? ?? ?? ?? 85 FF 7F ?? 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? 48")?,
+            RIPRelativeResolvers::resolve_RIP_offset::<4>,
+        ),
+        PatternConfig::new(
+            Sig::GUObjectArray,
+            "UUU5_Alternative1".to_string(),
+            None,
+            Pattern::new("89 ?? | ?? ?? ?? ?? 85 FF 7F ?? 48 8D 15 ?? ?? ?? ?? 48 8D 8C 24 ?? ?? ?? ?? E8")?,
+            RIPRelativeResolvers::resolve_RIP_offset::<4>,
+        ),
+        PatternConfig::new(
+            Sig::GUObjectArray,
+            "UUU5_Alternative2".to_string(),
+            None,
+            Pattern::new("89 ?? | ?? ?? ?? ?? 85 FF 7F ?? 48 8D 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8")?,
+            RIPRelativeResolvers::resolve_RIP_offset::<4>,
+        ),
+        PatternConfig::new(
+            Sig::GUObjectArray,
+            "UUU5_Alternative3".to_string(),
+            None,
+            Pattern::new("89 15 | ?? ?? ?? ?? 85 FF 7F ?? 48 8D 8C 24 88 00 00 00 E8")?,
+            RIPRelativeResolvers::resolve_RIP_offset::<4>,
+        ),
 
         //===============================[GNatives]=============================================================================================
         PatternConfig::new(
@@ -1126,6 +1273,41 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
         PatternConfig::new(
             Sig::IConsoleManagerSingleton,
             "D".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 89 3D | ?? ?? ?? ?? 48 85 FF 75 ?? E8 ?? ?? ?? ?? 48 8B 3D ?? ?? ?? ?? 48 8B 07")?,
+            RIPRelativeResolvers::resolve_RIP_offset::<4>,
+        ),
+        PatternConfig::new(
+            Sig::IConsoleManagerSingleton,
+            "UUU5_Alternative0".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 8B 0D | ?? ?? ?? ?? 48 0F 45 1D ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D")?,
+            RIPRelativeResolvers::resolve_RIP_offset::<4>,
+        ),
+        PatternConfig::new(
+            Sig::IConsoleManagerSingleton,
+            "UUU5_Alternative1".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01")?,
+            RIPRelativeResolvers::resolve_RIP_offset::<4>,
+        ),
+        PatternConfig::new(
+            Sig::IConsoleManagerSingleton,
+            "UUU5_Alternative2".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 0D")?,
+            RIPRelativeResolvers::resolve_RIP_offset::<4>,
+        ),
+        PatternConfig::new(
+            Sig::IConsoleManagerSingleton,
+            "UUU5_Alternative3".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 4C 24")?,
+            RIPRelativeResolvers::resolve_RIP_offset::<4>,
+        ),
+        PatternConfig::new(
+            Sig::IConsoleManagerSingleton,
+            "UUU5_Alternative4".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 89 3D | ?? ?? ?? ?? 48 85 FF 75 ?? E8 ?? ?? ?? ?? 48 8B 3D ?? ?? ?? ?? 48 8B 07")?,
             RIPRelativeResolvers::resolve_RIP_offset::<4>,
