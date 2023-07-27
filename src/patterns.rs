@@ -70,6 +70,8 @@ pub enum Sig {
 
     StringFTagMetaData,
     SigningKey,
+
+    AES,
 }
 
 pub fn get_patterns() -> Result<Vec<PatternConfig>> {
@@ -1449,6 +1451,14 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::new("48 89 5C 24 08 57 48 83 EC 20 65 48 8B 04 25 58 00 00 00 48 8B F9 8B ?? ?? ?? ?? ?? B9 BC 04 00 00 48 8B 14 D0 8B 04 11 39 ?? ?? ?? ?? ?? 0F 8F ?? ?? ?? ?? 8B")?,
             resolve_self,
         ),
+
+        PatternConfig::new(
+            Sig::AES,
+            "AES".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("c7 45 d0 ?? ?? ?? ?? c7 45 d4 ?? ?? ?? ?? ?? ?? ?? ?? c7 45 d8 ?? ?? ?? ?? c7 45 dc ?? ?? ?? ?? c7 45 e0 ?? ?? ?? ?? c7 45 e4 ?? ?? ?? ?? c7 45 e8 ?? ?? ?? ?? c7 45 ec ?? ?? ?? ??")?,
+            aes::resolve,
+        ),
     ])
 }
 
@@ -1734,6 +1744,33 @@ mod xref {
             scan_type: Xref(ctx.match_address).into(),
             resolve: resolve_self,
         })
+    }
+}
+
+mod aes {
+    use super::*;
+
+    pub fn resolve(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
+        let mut key = vec![0; 32];
+        let data = &ctx.memory[ctx.match_address..ctx.match_address + 60];
+        (&mut key[0..4]).copy_from_slice(&data[3..7]);
+        (&mut key[4..8]).copy_from_slice(&data[10..14]);
+        (&mut key[8..12]).copy_from_slice(&data[21..25]);
+        (&mut key[12..16]).copy_from_slice(&data[28..32]);
+        (&mut key[16..20]).copy_from_slice(&data[35..39]);
+        (&mut key[20..24]).copy_from_slice(&data[42..46]);
+        (&mut key[24..28]).copy_from_slice(&data[49..53]);
+        (&mut key[28..32]).copy_from_slice(&data[56..60]);
+
+        use std::fmt::Write;
+        let mut hex = String::with_capacity(2 + 2 * data.len());
+        hex.push_str("0x");
+        for b in key {
+            write!(&mut hex, "{:02x}", b).unwrap();
+        }
+
+        ResolutionType::String(hex).into()
     }
 }
 
