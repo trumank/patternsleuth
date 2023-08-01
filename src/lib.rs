@@ -2,10 +2,12 @@
 
 pub mod patterns;
 pub mod scanner;
+pub mod symbols;
 
 use std::{
-    io::Read,
+    collections::{BTreeMap, HashMap},
     ops::{Index, Range},
+    path::Path,
 };
 
 use anyhow::{bail, Context, Error, Result};
@@ -284,14 +286,86 @@ pub struct Executable<'data> {
     data: &'data [u8],
     pub object: object::File<'data>,
     pub memory: MountedPE<'data>,
-    functions: Vec<ExceptionEntry>,
+    functions: Vec<RuntimeFunction>,
+    pub symbols: Option<HashMap<usize, String>>,
 }
 impl<'data> Executable<'data> {
-    pub fn read(data: &'data [u8]) -> Result<Executable<'data>> {
+    pub fn read<P: AsRef<Path>>(
+        data: &'data [u8],
+        exe_path: P,
+        load_symbols: bool,
+    ) -> Result<Executable<'data>> {
         let object = object::File::parse(data)?;
         let memory = MountedPE::new(&object)?;
-        let functions = Self::read_exception_table(data, &object)?;
 
+        use std::io::Cursor;
+
+        let base_address = object.relative_address_base() as usize;
+
+        let pdb_path = exe_path.as_ref().with_extension("pdb");
+        let symbols = (load_symbols && pdb_path.exists())
+            .then(|| symbols::dump_pdb_symbols(pdb_path, base_address))
+            .transpose()?;
+
+        let functions = match object.inner() {
+            object::FileInternal::Pe64(inner) => {
+                // TODO entries are sorted so it should be possible to binary search entries
+                // directly from the directory rather than read them all up front
+                let exception_directory = inner
+                    .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
+                    .context("no exception directory")?;
+
+                let data = exception_directory.data(data, &inner.section_table())?;
+                let count = data.len() / 12;
+                let mut cur = Cursor::new(data);
+
+                let mut functions: BTreeMap<usize, RuntimeFunction> = Default::default();
+                let mut children = vec![];
+                for _ in 0..count {
+                    let range = base_address + cur.read_u32::<LE>()? as usize
+                        ..base_address + cur.read_u32::<LE>()? as usize;
+                    let unwind = base_address + cur.read_u32::<LE>()? as usize;
+
+                    let function = RuntimeFunction {
+                        range,
+                        unwind,
+                        children: vec![],
+                    };
+
+                    // TODO this is totally gross. need to implement a nice way to stream sparse sections
+                    let section = memory
+                        .get_section_containing(unwind)
+                        .context("out of bounds reading unwind info")?;
+                    let mut offset = unwind - section.address;
+
+                    let has_chain_info = section.data[offset] >> 3 == 0x4;
+                    if has_chain_info {
+                        let unwind_code_count = section.data[offset + 2];
+
+                        offset += 4 + 2 * unwind_code_count as usize;
+                        if offset % 4 != 0 {
+                            // align
+                            offset += 2;
+                        }
+
+                        let mut tmp = [0; 4];
+                        tmp.copy_from_slice(&section.data[offset..offset + 4]);
+                        let parent = base_address + u32::from_le_bytes(tmp) as usize;
+                        children.push((parent, function.clone()));
+                    }
+                    functions.insert(function.range.start, function);
+                }
+                for (parent, child) in children {
+                    functions.get_mut(&parent).unwrap().children.push(child);
+                }
+
+                functions.into_values().collect()
+            }
+            object::FileInternal::Pe32(_) => {
+                vec![]
+            }
+            _ => todo!("{:?}", object::FileKind::parse(data)?),
+        };
         /*
         for (i, window) in functions.windows(2).enumerate() {
             match window {
@@ -313,30 +387,10 @@ impl<'data> Executable<'data> {
             object,
             memory,
             functions,
+            symbols,
         })
     }
-    fn read_exception_table(data: &[u8], obj_file: &object::File) -> Result<Vec<ExceptionEntry>> {
-        use std::io::Cursor;
-
-        let exe_base = obj_file.relative_address_base() as usize;
-
-        Ok(match obj_file.inner() {
-            object::FileInternal::Pe64(inner) => {
-                // TODO entries are sorted so it should be possible to binary search entries
-                // directly from the directory rather than read them all up front
-                let exception_directory = inner
-                    .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
-                    .context("no exception directory")?;
-                let mut cur = Cursor::new(exception_directory.data(data, &inner.section_table())?);
-                std::iter::from_fn(|| ExceptionEntry::read(exe_base, &mut cur).ok()).collect()
-            }
-            object::FileInternal::Pe32(_) => {
-                vec![]
-            }
-            _ => todo!("{:?}", object::FileKind::parse(data)?),
-        })
-    }
-    pub fn get_function(&self, address: usize) -> Option<&ExceptionEntry> {
+    pub fn get_function(&self, address: usize) -> Option<&RuntimeFunction> {
         // TODO figure out what to do in the rare case of overlapping entries
         match self
             .functions
@@ -352,17 +406,26 @@ impl<'data> Executable<'data> {
 }
 
 #[derive(Debug, Clone)]
-pub struct ExceptionEntry {
+pub struct RuntimeFunction {
     pub range: Range<usize>,
     pub unwind: usize,
+    pub children: Vec<RuntimeFunction>,
 }
-impl ExceptionEntry {
-    fn read(base_address: usize, data: &mut impl Read) -> Result<Self> {
-        Ok(Self {
-            range: base_address + data.read_u32::<LE>()? as usize
-                ..base_address + data.read_u32::<LE>()? as usize,
-            unwind: base_address + data.read_u32::<LE>()? as usize,
-        })
+impl RuntimeFunction {
+    /// Return range accounting for chained entries
+    /// This may include gaps not belonging to the function if chains are sparse
+    pub fn full_range(&self) -> Range<usize> {
+        let start = std::iter::once(self)
+            .chain(self.children.iter())
+            .map(|f| f.range.start)
+            .min()
+            .unwrap();
+        let end = std::iter::once(self)
+            .chain(self.children.iter())
+            .map(|f| f.range.end)
+            .max()
+            .unwrap();
+        start..end
     }
 }
 

@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -15,6 +14,12 @@ use patternsleuth::{
     Pattern, PatternConfig, Resolution, ResolutionAction, ResolutionType, ResolveContext,
     ResolveStages, Scan,
 };
+
+#[derive(Parser)]
+enum Commands {
+    Scan(CommandScan),
+    Symbols(CommandSymbols),
+}
 
 #[derive(Parser)]
 struct CommandScan {
@@ -36,12 +41,29 @@ struct CommandScan {
     #[arg(short, long, group = "scan", value_parser(|s: &_| Pattern::new(s)))]
     patterns: Vec<Pattern>,
 
+    /// Load and display symbols from PDBs when available (can be slow)
+    #[arg(long)]
+    symbols: bool,
+
     /// Show scan summary
     #[arg(long)]
     summary: bool,
 }
 
+#[derive(Parser)]
+struct CommandSymbols {
+    /// A game to scan (can be specified multiple times). Scans everything if omitted. Supports
+    /// globs
+    #[arg(short, long)]
+    game: Vec<String>,
+
+    #[arg(short, long)]
+    symbol: Vec<regex::Regex>,
+}
+
 mod disassemble {
+    use std::ops::Range;
+
     use super::*;
     use colored::{ColoredString, Colorize};
     use iced_x86::{
@@ -87,6 +109,14 @@ mod disassemble {
                     "{:016x} - {:016x} = function\n",
                     f.range.start, f.range.end
                 ));
+                if let Some(symbols) = &exe.symbols {
+                    if let Some(symbol) = symbols.get(&f.range.start) {
+                        #[allow(clippy::unnecessary_to_owned)]
+                        output
+                            .buffer
+                            .push_str(&format!("{}\n", symbol).bright_yellow().to_string());
+                    }
+                }
             } else {
                 output.buffer.push_str("no function");
             }
@@ -150,6 +180,74 @@ mod disassemble {
                     }
                     #[allow(clippy::unnecessary_to_owned)]
                     output.buffer.push_str(&colored.to_string());
+                    output.buffer.push(' ');
+                }
+
+                for _ in 0..8usize.saturating_sub(instruction.len()) {
+                    output.buffer.push_str("   ");
+                }
+
+                formatter.format(&instruction, &mut output);
+                output.buffer.push('\n');
+            }
+        } else {
+            output
+                .buffer
+                .push_str(&format!("{:016x}\nno section", address));
+        }
+        output.buffer
+    }
+
+    pub(crate) fn disassemble_range(exe: &Executable, range: Range<usize>) -> String {
+        let address = range.start;
+        let mut output = Output::default();
+
+        if let Some(section) = exe.memory.get_section_containing(address) {
+            let data = &section.data[range.start - section.address..range.end - section.address];
+
+            output.buffer.push_str(&format!(
+                "{:016x}\n{:016x} - {:016x} = {}\n",
+                address,
+                section.address,
+                section.address + section.data.len(),
+                section.name,
+            ));
+
+            if let Some(f) = exe.get_function(address) {
+                output.buffer.push_str(&format!(
+                    "{:016x} - {:016x} = function\n",
+                    f.range.start, f.range.end
+                ));
+                if let Some(symbols) = &exe.symbols {
+                    if let Some(symbol) = symbols.get(&f.range.start) {
+                        #[allow(clippy::unnecessary_to_owned)]
+                        output
+                            .buffer
+                            .push_str(&format!("{}\n", symbol).bright_yellow().to_string());
+                    }
+                }
+            } else {
+                output.buffer.push_str("no function");
+            }
+
+            output.buffer.push('\n');
+
+            let mut decoder = Decoder::with_ip(64, data, address as u64, DecoderOptions::NONE);
+
+            let instructions = decoder.iter().collect::<Vec<_>>();
+
+            let mut formatter = IntelFormatter::new();
+            formatter.options_mut().set_first_operand_char_index(8);
+            for instruction in instructions {
+                let ip = format!("{:016x}", instruction.ip());
+                output.buffer.push_str(&ip);
+                output.buffer.push_str(":  ");
+
+                let index = instruction.ip() as usize - address;
+                for b in data[index..index + instruction.len()].iter() {
+                    let s = format!("{:02x}", b);
+                    #[allow(clippy::unnecessary_to_owned)]
+                    output.buffer.push_str(&s.bright_white().to_string());
                     output.buffer.push(' ');
                 }
 
@@ -296,10 +394,15 @@ fn scan_game<'patterns>(
     Ok(ScanResult { results })
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let cli = CommandScan::parse();
+fn main() -> Result<()> {
+    match Commands::parse() {
+        Commands::Scan(command) => scan(command),
+        Commands::Symbols(command) => symbols(command),
+    }
+}
 
-    let games_filter = cli
+fn scan(command: CommandScan) -> Result<()> {
+    let games_filter = command
         .game
         .into_iter()
         .map(|g| {
@@ -310,8 +413,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let patterns = if cli.patterns.is_empty() {
-        let sig_filter = cli.signature.into_iter().collect::<HashSet<_>>();
+    let patterns = if command.patterns.is_empty() {
+        let sig_filter = command.signature.into_iter().collect::<HashSet<_>>();
         get_patterns()?
             .into_iter()
             .filter(|p| {
@@ -322,7 +425,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             })
             .collect_vec()
     } else {
-        cli.patterns
+        command
+            .patterns
             .into_iter()
             .enumerate()
             .map(|(i, p)| {
@@ -370,7 +474,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         println!("{:?} {:?}", game, exe_path.display());
         let bin_data = fs::read(&exe_path)?;
-        let exe = match Executable::read(&bin_data) {
+        let exe = match Executable::read(&bin_data, &exe_path, command.symbols) {
             Ok(exe) => exe,
             Err(err) => {
                 println!("err reading {}: {}", exe_path.display(), err);
@@ -400,7 +504,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             cells.push(Cell::new(&sig.to_string()));
 
             if let Some(sig_scans) = folded_scans.get(&sig) {
-                if cli.disassemble {
+                if command.disassemble {
                     let mut table = Table::new();
                     table.set_format(*format::consts::FORMAT_NO_BORDER);
                     for m in sig_scans.iter() {
@@ -449,49 +553,67 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     cells.push(Cell::new(&table.to_string()));
                 } else {
-                    cells.push(Cell::new(
-                        &join(
-                            sig_scans
-                                .iter()
-                                // group and count matches by (pattern name, address)
-                                .fold(
-                                    HashMap::<(&String, &ResolutionType), usize>::new(),
-                                    |mut map, m| {
-                                        *map.entry((&m.0.name, &m.1.res)).or_default() += 1;
-                                        map
-                                    },
-                                )
-                                .iter()
-                                // sort by pattern name, then match address
-                                .sorted_by_key(|&data| data.0)
-                                .map(|(m, count)| {
-                                    // add count indicator if more than 1
-                                    let count = if *count > 1 {
-                                        format!(" (x{count})")
-                                    } else {
-                                        "".to_string()
-                                    };
+                    cells.push(Cell::new({
+                        let mut lines = sig_scans
+                            .iter()
+                            // group and count matches by (pattern name, address)
+                            .fold(
+                                HashMap::<(&String, &ResolutionType), usize>::new(),
+                                |mut map, m| {
+                                    *map.entry((&m.0.name, &m.1.res)).or_default() += 1;
+                                    map
+                                },
+                            )
+                            .iter()
+                            // sort by pattern name, then match address
+                            .sorted_by_key(|&data| data.0)
+                            .map(|(m, count)| {
+                                // add count indicator if more than 1
+                                let count = if *count > 1 {
+                                    format!(" (x{count})")
+                                } else {
+                                    "".to_string()
+                                };
 
-                                    match &m.1 {
-                                        ResolutionType::Address(address) => {
-                                            format!("{:016x} {:?}{}", address, m.0, count).normal()
-                                        }
-                                        ResolutionType::String(string) => {
-                                            format!("{:?} {:?}{}", string, m.0, count).normal()
-                                        }
+                                match &m.1 {
+                                    ResolutionType::Address(address) => (
+                                        format!("{:016x} {:?}{}", address, m.0, count)
+                                            .normal()
+                                            .to_string(),
+                                        exe.symbols
+                                            .as_ref()
+                                            .and_then(|symbols| symbols.get(address)),
+                                    ),
+                                    ResolutionType::String(string) => (
+                                        format!("{:?} {:?}{}", string, m.0, count)
+                                            .normal()
+                                            .to_string(),
+                                        None,
+                                    ),
 
-                                        ResolutionType::Count => {
-                                            format!("count {:?}{}", m.0, count).normal()
-                                        }
-                                        ResolutionType::Failed => {
-                                            format!("failed {:?}{}", m.0, count).red()
-                                        }
-                                    }
-                                }),
-                            "\n",
-                        )
-                        .to_string(),
-                    ));
+                                    ResolutionType::Count => (
+                                        format!("count {:?}{}", m.0, count).normal().to_string(),
+                                        None,
+                                    ),
+                                    ResolutionType::Failed => (
+                                        format!("failed {:?}{}", m.0, count).red().to_string(),
+                                        None,
+                                    ),
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        let max_len = lines.iter().map(|(line, _)| line.len()).max();
+                        for (line, symbol) in &mut lines {
+                            if let Some(symbol) = symbol {
+                                line.push_str(&format!(
+                                    "{}{}",
+                                    " ".repeat(1 + max_len.unwrap() - line.len()),
+                                    symbol.bright_yellow()
+                                ));
+                            }
+                        }
+                        &join(lines.iter().map(|(line, _)| line), "\n").to_string()
+                    }));
                 }
             } else {
                 #[allow(clippy::unnecessary_to_owned)]
@@ -513,7 +635,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!();
     }
 
-    if cli.summary {
+    if command.summary {
         #[derive(Debug, Default)]
         struct Summary {
             matches: usize,
@@ -601,6 +723,97 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         summary.printstd();
     }
+
+    Ok(())
+}
+
+fn symbols(command: CommandSymbols) -> Result<()> {
+    let games_filter = command
+        .game
+        .into_iter()
+        .map(|g| {
+            Ok(globset::GlobBuilder::new(&g)
+                .case_insensitive(true)
+                .build()?
+                .compile_matcher())
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let re = &command.symbol;
+    let filter = |name: &_| re.iter().any(|re| re.is_match(name));
+
+    let mut games: HashSet<String> = Default::default();
+
+    use prettytable::{Cell, Row, Table};
+
+    let mut cells = vec![];
+
+    for entry in fs::read_dir("games")?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .sorted_by_key(|e| e.file_name())
+    {
+        let dir_name = entry.file_name();
+        let game = dir_name.to_string_lossy().to_string();
+        if !games_filter
+            .is_empty()
+            .then_some(true)
+            .unwrap_or_else(|| games_filter.iter().any(|g| g.is_match(&game)))
+        {
+            continue;
+        }
+
+        let Some(exe_path) = find_ext(entry.path(), "exe")? else {
+            continue
+        };
+        if !exe_path.with_extension("pdb").exists() {
+            continue;
+        }
+
+        println!("{:?} {:?}", game, exe_path.display());
+        let bin_data = fs::read(&exe_path)?;
+        let exe = match Executable::read(&bin_data, &exe_path, true) {
+            Ok(exe) => exe,
+            Err(err) => {
+                println!("err reading {}: {}", exe_path.display(), err);
+                continue;
+            }
+        };
+
+        for (address, name) in exe.symbols.as_ref().unwrap() {
+            if filter(name) {
+                if let Some(exception) = exe.get_function(*address) {
+                    let full_range = exception.full_range();
+                    println!(
+                        "{:016x} {:016x} {:08x} {}",
+                        address,
+                        full_range.end,
+                        full_range.len(),
+                        name
+                    );
+                    if exception.range.start != *address {
+                        println!("MISALIGNED EXCEPTION ENTRY FOR {}", name);
+                    } else {
+                        cells.push((
+                            game.clone(),
+                            disassemble::disassemble_range(&exe, full_range),
+                        ));
+                    }
+                } else {
+                    println!("{:016x} [NO EXCEPT] {}", address, name);
+                }
+            }
+        }
+
+        games.insert(game.to_string());
+    }
+
+    let mut table = Table::new();
+    table.set_titles(cells.iter().map(|c| c.0.clone()).collect());
+    table.add_row(Row::new(
+        cells.into_iter().map(|c| Cell::new(&c.1)).collect(),
+    ));
+    table.printstd();
 
     Ok(())
 }

@@ -1754,14 +1754,14 @@ mod aes {
         stages.0.push(ctx.match_address);
         let mut key = vec![0; 32];
         let data = &ctx.memory[ctx.match_address..ctx.match_address + 60];
-        (&mut key[0..4]).copy_from_slice(&data[3..7]);
-        (&mut key[4..8]).copy_from_slice(&data[10..14]);
-        (&mut key[8..12]).copy_from_slice(&data[21..25]);
-        (&mut key[12..16]).copy_from_slice(&data[28..32]);
-        (&mut key[16..20]).copy_from_slice(&data[35..39]);
-        (&mut key[20..24]).copy_from_slice(&data[42..46]);
-        (&mut key[24..28]).copy_from_slice(&data[49..53]);
-        (&mut key[28..32]).copy_from_slice(&data[56..60]);
+        (key[0..4]).copy_from_slice(&data[3..7]);
+        (key[4..8]).copy_from_slice(&data[10..14]);
+        (key[8..12]).copy_from_slice(&data[21..25]);
+        (key[12..16]).copy_from_slice(&data[28..32]);
+        (key[16..20]).copy_from_slice(&data[35..39]);
+        (key[20..24]).copy_from_slice(&data[42..46]);
+        (key[24..28]).copy_from_slice(&data[49..53]);
+        (key[28..32]).copy_from_slice(&data[56..60]);
 
         use std::fmt::Write;
         let mut hex = String::with_capacity(2 + 2 * data.len());
