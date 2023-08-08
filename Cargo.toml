@@ -12,12 +12,12 @@ incremental = true
 debug = true
 
 [dependencies]
-anyhow = "1.0.71"
+anyhow = "1.0.72"
 byteorder = "1.4.3"
-clap = { version = "4.3.1", features = ["derive"] }
-colored = "2.0.0"
-globset = "0.4.10"
-iced-x86 = "1.18.0"
+clap = { version = "4.3.21", features = ["derive"] }
+colored = "2.0.4"
+globset = "0.4.13"
+iced-x86 = "1.20.0"
 itertools = "0.10.5"
 memchr = "2.5.0"
 msvc-demangler = "0.9.0"
@@ -25,7 +25,7 @@ object = "0.31.1"
 pdb = "0.8.0"
 prettytable-rs = "0.10.0"
 rayon = "1.7.0"
-regex = "1.8.1"
+regex = "1.9.3"
 strum = {version = "0.24.1", features = ["strum_macros", "derive"]}
 
 [dev-dependencies]
