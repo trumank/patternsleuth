@@ -307,8 +307,8 @@ impl<'data> Executable<'data> {
             .then(|| symbols::dump_pdb_symbols(pdb_path, base_address))
             .transpose()?;
 
-        let functions = match object.inner() {
-            object::FileInternal::Pe64(inner) => {
+        let functions = match object {
+            object::File::Pe64(ref inner) => {
                 // TODO entries are sorted so it should be possible to binary search entries
                 // directly from the directory rather than read them all up front
                 let exception_directory = inner
@@ -361,7 +361,7 @@ impl<'data> Executable<'data> {
 
                 functions.into_values().collect()
             }
-            object::FileInternal::Pe32(_) => {
+            object::File::Pe32(_) => {
                 vec![]
             }
             _ => todo!("{:?}", object::FileKind::parse(data)?),
