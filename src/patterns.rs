@@ -72,6 +72,7 @@ pub enum Sig {
     SigningKey,
 
     AES,
+    Lock,
 }
 
 pub fn get_patterns() -> Result<Vec<PatternConfig>> {
@@ -1454,10 +1455,24 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
 
         PatternConfig::new(
             Sig::AES,
-            "AES".to_string(),
+            "AES 1".to_string(),
             Some(object::SectionKind::Text),
-            Pattern::new("c7 45 d0 ?? ?? ?? ?? c7 45 d4 ?? ?? ?? ?? ?? ?? ?? ?? c7 45 d8 ?? ?? ?? ?? c7 45 dc ?? ?? ?? ?? c7 45 e0 ?? ?? ?? ?? c7 45 e4 ?? ?? ?? ?? c7 45 e8 ?? ?? ?? ?? c7 45 ec ?? ?? ?? ??")?,
-            aes::resolve,
+            Pattern::new("C7 45 D0 ?? ?? ?? ?? C7 45 D4 ?? ?? ?? ?? ?? ?? ?? ?? C7 45 D8 ?? ?? ?? ?? C7 45 DC ?? ?? ?? ?? C7 45 E0 ?? ?? ?? ?? C7 45 E4 ?? ?? ?? ?? C7 45 E8 ?? ?? ?? ?? C7 45 EC ?? ?? ?? ??")?,
+            aes::resolve_1,
+        ),
+        PatternConfig::new(
+            Sig::AES,
+            "AES 2".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("C7 01 ?? ?? ?? ?? C7 41 04 ?? ?? ?? ?? C7 41 08 ?? ?? ?? ?? C7 41 0C ?? ?? ?? ?? C7 41 10 ?? ?? ?? ?? C7 41 14 ?? ?? ?? ?? C7 41 18 ?? ?? ?? ?? C7 41 1C ?? ?? ?? ?? C3")?,
+            aes::resolve_2,
+        ),
+        PatternConfig::new(
+            Sig::Lock,
+            "Lock".to_string(),
+            None,
+            Pattern::from_bytes("Illegal call to StaticFindObjectFast".encode_utf16().flat_map(u16::to_le_bytes).collect())?,
+            xref::resolve,
         ),
     ])
 }
@@ -1750,7 +1765,7 @@ mod xref {
 mod aes {
     use super::*;
 
-    pub fn resolve(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+    pub fn resolve_1(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
         stages.0.push(ctx.match_address);
         let mut key = vec![0; 32];
         let data = &ctx.memory[ctx.match_address..ctx.match_address + 60];
@@ -1762,6 +1777,33 @@ mod aes {
         (key[20..24]).copy_from_slice(&data[42..46]);
         (key[24..28]).copy_from_slice(&data[49..53]);
         (key[28..32]).copy_from_slice(&data[56..60]);
+
+        use std::fmt::Write;
+        let mut hex = String::with_capacity(2 + 2 * data.len());
+        hex.push_str("0x");
+        for b in key {
+            write!(&mut hex, "{:02x}", b).unwrap();
+        }
+
+        ResolutionType::String(hex).into()
+    }
+
+    pub fn resolve_2(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
+        let mut key = vec![0; 32];
+        let data = &ctx.memory[ctx.match_address..ctx.match_address + 55];
+        (key[0..4]).copy_from_slice(&data[2..6]);
+        (key[4..8]).copy_from_slice(&data[9..13]);
+        (key[8..12]).copy_from_slice(&data[16..20]);
+        (key[12..16]).copy_from_slice(&data[23..27]);
+        (key[16..20]).copy_from_slice(&data[30..34]);
+        (key[20..24]).copy_from_slice(&data[37..41]);
+        (key[24..28]).copy_from_slice(&data[44..48]);
+        (key[28..32]).copy_from_slice(&data[51..55]);
+
+        if key == b"\x6f\x16\x80\x73\xb9\xb2\x14\x49\xd7\x42\x24\x17\x00\x06\x8a\xda\xbc\x30\x6f\xa9\xaa\x38\x31\x16\x4d\xee\x8d\xe3\x4e\x0e\xfb\xb0" {
+            return ResolutionType::Failed.into()
+        }
 
         use std::fmt::Write;
         let mut hex = String::with_capacity(2 + 2 * data.len());
