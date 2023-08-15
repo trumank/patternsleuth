@@ -1,17 +1,23 @@
-[package]
-name = "patternsleuth"
+[workspace]
+resolver = "2"
+members = [
+    "patternsleuth",
+    "patternsleuth_cli",
+    "patternsleuth_scanner"
+]
+
+[workspace.package]
+repository = "https://github.com/trumank/patternsleuth"
+authors = [ "trumank" ]
+license = "MIT OR Apache-2.0"
 version = "0.1.0"
 edition = "2021"
-
-[[bench]]
-name = "scan"
-harness = false
 
 [profile.release]
 incremental = true
 debug = true
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0.72"
 byteorder = "1.4.3"
 clap = { version = "4.3.21", features = ["derive"] }
@@ -21,16 +27,9 @@ iced-x86 = "1.20.0"
 itertools = "0.11.0"
 memchr = "2.5.0"
 msvc-demangler = "0.9.0"
-object = "0.31.1"
+object = "0.32.0"
 pdb = "0.8.0"
 prettytable-rs = "0.10.0"
 rayon = "1.7.0"
 regex = "1.9.3"
 strum = {version = "0.25.0", features = ["strum_macros", "derive"]}
-
-[dev-dependencies]
-criterion = { version = "0.5.1", features = ["html_reports"] }
-rand = "0.8.5"
-
-[patch.crates-io]
-object = { git = "https://github.com/gimli-rs/object" }

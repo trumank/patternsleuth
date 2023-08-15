@@ -1,0 +1,29 @@
+[package]
+name = "patternsleuth_cli"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "patternsleuth"
+path = "src/main.rs"
+
+[dependencies]
+patternsleuth = { path = "../patternsleuth" }
+anyhow = { workspace = true }
+byteorder = { workspace = true }
+clap = { workspace = true }
+colored = { workspace = true }
+globset = { workspace = true }
+iced-x86 = { workspace = true }
+itertools = { workspace = true }
+memchr = { workspace = true }
+msvc-demangler = { workspace = true }
+object = { workspace = true }
+pdb = { workspace = true }
+prettytable-rs = { workspace = true }
+rayon = { workspace = true }
+regex = { workspace = true }
+strum = { workspace = true }

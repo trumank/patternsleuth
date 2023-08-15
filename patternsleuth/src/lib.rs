@@ -1,8 +1,11 @@
 #![feature(portable_simd)]
 
 pub mod patterns;
-pub mod scanner;
 pub mod symbols;
+
+pub mod scanner {
+    pub use patternsleuth_scanner::*;
+}
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -10,88 +13,13 @@ use std::{
     path::Path,
 };
 
-use anyhow::{bail, Context, Error, Result};
+use scanner::{Pattern, Xref};
+
+use anyhow::{Context, Result};
 use byteorder::{ReadBytesExt, LE};
 use object::{File, Object, ObjectSection};
 
 use patterns::Sig;
-
-#[derive(Debug, Clone)]
-pub struct Pattern {
-    pub sig: Vec<u8>,
-    pub mask: Vec<u8>,
-    pub custom_offset: usize,
-}
-
-impl TryFrom<String> for Pattern {
-    type Error = Error;
-    fn try_from(string: String) -> Result<Self, <Self as TryFrom<String>>::Error> {
-        Self::new(&string)
-    }
-}
-impl TryFrom<&str> for Pattern {
-    type Error = Error;
-    fn try_from(string: &str) -> Result<Self, <Self as TryFrom<&str>>::Error> {
-        Self::new(string)
-    }
-}
-
-impl Pattern {
-    pub fn new(s: &str) -> Result<Self> {
-        let mut sig = vec![];
-        let mut mask = vec![];
-        let mut custom_offset = 0;
-        for (i, w) in s.split_whitespace().enumerate() {
-            if let Ok(b) = u8::from_str_radix(w, 16) {
-                sig.push(b);
-                mask.push(0xff);
-                continue;
-            } else if w == "??" {
-                if sig.is_empty() {
-                    bail!("first byte cannot be \"??\"");
-                }
-                sig.push(0);
-                mask.push(0);
-                continue;
-            } else if w == "|" {
-                custom_offset = i;
-                continue;
-            }
-            bail!("bad pattern word \"{}\"", w);
-        }
-
-        Ok(Self {
-            sig,
-            mask,
-            custom_offset,
-        })
-    }
-    /// Create a pattern from a literal Vec<u8> with `mask` filled with 0xff and `custom_offset = 0`.
-    pub fn from_bytes(sig: Vec<u8>) -> Result<Self> {
-        Ok(Self {
-            mask: vec![0xff; sig.len()],
-            sig,
-            custom_offset: 0,
-        })
-    }
-    #[inline]
-    pub fn is_match(&self, data: &[u8], index: usize) -> bool {
-        for i in 0..self.mask.len() {
-            if data[index + i] & self.mask[i] != self.sig[i] {
-                return false;
-            }
-        }
-        true
-    }
-    /// compute virtual address from address relative to section as well as account for
-    /// custom_offset
-    pub fn compute_result(&self, _data: &[u8], base_address: usize, index: usize) -> usize {
-        base_address + index + self.custom_offset
-    }
-}
-
-#[derive(Debug, Clone, Copy, Hash, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Xref(pub usize);
 
 pub struct ResolveContext<'data> {
     pub exe: &'data Executable<'data>,

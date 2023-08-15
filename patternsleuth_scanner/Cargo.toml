@@ -1,0 +1,22 @@
+[package]
+name = "patternsleuth_scanner"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[[bench]]
+name = "scan"
+harness = false
+
+[dependencies]
+rayon = { workspace = true }
+memchr = { workspace = true }
+itertools = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+rand = "0.8.5"
+object = { workspace = true }

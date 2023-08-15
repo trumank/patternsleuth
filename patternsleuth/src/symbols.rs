@@ -78,7 +78,7 @@ pub fn dump_pdb_symbols<P: AsRef<Path>>(
     let mut modules = dbi.modules()?;
     while let Some(module) = modules.next()? {
         let Some(info) = pdb.module_info(&module)? else {
-            continue
+            continue;
         };
         walk_symbols(&mut symbols, &address_map, base_address, info.symbols()?)?;
     }

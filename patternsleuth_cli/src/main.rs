@@ -11,8 +11,9 @@ use patternsleuth::Executable;
 
 use patternsleuth::{
     patterns::{get_patterns, Sig},
-    Pattern, PatternConfig, Resolution, ResolutionAction, ResolutionType, ResolveContext,
-    ResolveStages, Scan,
+    scanner::Pattern,
+    PatternConfig, Resolution, ResolutionAction, ResolutionType, ResolveContext, ResolveStages,
+    Scan,
 };
 
 #[derive(Parser)]
@@ -352,10 +353,11 @@ fn scan_game<'patterns>(
             let scan_results =
                 patternsleuth::scanner::scan_memchr_lookup(&pattern_scans, base_address, data)
                     .into_iter()
-                    .chain(
-                        patternsleuth::scanner::scan_xref_binary(&xref_scans, base_address, data)
-                            .into_iter(),
-                    );
+                    .chain(patternsleuth::scanner::scan_xref_binary(
+                        &xref_scans,
+                        base_address,
+                        data,
+                    ));
 
             for (scan, address) in scan_results {
                 let mut stages = scan.stages.clone();
@@ -469,7 +471,7 @@ fn scan(command: CommandScan) -> Result<()> {
         }
 
         let Some(exe_path) = find_ext(entry.path(), "exe")? else {
-            continue
+            continue;
         };
 
         println!("{:?} {:?}", game, exe_path.display());
@@ -491,8 +493,8 @@ fn scan(command: CommandScan) -> Result<()> {
             .results
             .iter()
             .map(|(config, m)| (&config.sig, (config, m)))
-            .fold(HashMap::new(), |mut map, (k, v)| {
-                map.entry(k).or_insert_with(Vec::new).push(v);
+            .fold(HashMap::new(), |mut map: HashMap<_, Vec<_>>, (k, v)| {
+                map.entry(k).or_default().push(v);
                 map
             });
 
@@ -764,7 +766,7 @@ fn symbols(command: CommandSymbols) -> Result<()> {
         }
 
         let Some(exe_path) = find_ext(entry.path(), "exe")? else {
-            continue
+            continue;
         };
         if !exe_path.with_extension("pdb").exists() {
             continue;

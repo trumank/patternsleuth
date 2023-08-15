@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use patternsleuth::Xref;
+use patternsleuth_scanner::*;
 
 fn gig(c: &mut Criterion) {
     use rand::prelude::*;
@@ -12,19 +12,19 @@ fn gig(c: &mut Criterion) {
     data.extend((0..size - needle.len()).map(|_| rng.gen::<u8>()));
     data.extend(needle);
 
-    let pattern = patternsleuth::Pattern::new("f9 82 db db 2d ?? 6f 15 ?? 44 54 f4 c8 aa d1 72 53 ?? a5 7b 22 24 94 7f ec 28 ?? e0 5e d4 ae 39").unwrap();
+    let pattern = Pattern::new("f9 82 db db 2d ?? 6f 15 ?? 44 54 f4 c8 aa d1 72 53 ?? a5 7b 22 24 94 7f ec 28 ?? e0 5e d4 ae 39").unwrap();
 
-    let result = patternsleuth::scanner::scan(&[(&(), &pattern)], 0, &data);
+    let result = scan(&[(&(), &pattern)], 0, &data);
     assert_eq!(result, [(&(), size - needle.len())]);
 
-    let result = patternsleuth::scanner::scan_memchr(&[(&(), &pattern)], 0, &data);
+    let result = scan_memchr(&[(&(), &pattern)], 0, &data);
     assert_eq!(result, [(&(), size - needle.len())]);
 
     c.bench_function("gig scan", |b| {
-        b.iter(|| patternsleuth::scanner::scan(&[(&(), &pattern)], 0, &data))
+        b.iter(|| scan(&[(&(), &pattern)], 0, &data))
     });
     c.bench_function("gig scan_memchr", |b| {
-        b.iter(|| patternsleuth::scanner::scan_memchr(&[(&(), &pattern)], 0, &data))
+        b.iter(|| scan_memchr(&[(&(), &pattern)], 0, &data))
     });
 }
 
@@ -177,13 +177,13 @@ fn xref(c: &mut Criterion) {
         let size = (raw_patterns.len() as f64 * f as f64 / t as f64).round() as usize;
         let p = &id_patterns[0..size];
         group.bench_with_input(BenchmarkId::new("xref_linear", size), &size, |b, _size| {
-            b.iter(|| patternsleuth::scanner::scan_xref(&p, base_address, &data))
+            b.iter(|| scan_xref(p, base_address, data))
         });
         group.bench_with_input(BenchmarkId::new("xref_binary", size), &size, |b, _size| {
-            b.iter(|| patternsleuth::scanner::scan_xref_binary(&p, base_address, &data))
+            b.iter(|| scan_xref_binary(p, base_address, data))
         });
         group.bench_with_input(BenchmarkId::new("xref_hash", size), &size, |b, _size| {
-            b.iter(|| patternsleuth::scanner::scan_xref_hash(&p, base_address, &data))
+            b.iter(|| scan_xref_hash(p, base_address, data))
         });
     }
 
