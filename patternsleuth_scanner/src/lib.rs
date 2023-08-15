@@ -84,8 +84,6 @@ use std::{
     simd::{SimdPartialEq, ToBitMask},
 };
 
-use itertools::Itertools;
-
 pub fn scan<'id, ID: Sync>(
     patterns: &[(&'id ID, &Pattern)],
     base_address: usize,
@@ -332,7 +330,8 @@ pub fn scan_xref_binary<'id, ID: Sync>(
         return vec![];
     }
 
-    let patterns = patterns.iter().sorted_by_key(|p| p.1).collect::<Vec<_>>();
+    let mut patterns = patterns.to_vec();
+    patterns.sort_by_key(|p| p.1);
 
     let mut matches = vec![];
 
