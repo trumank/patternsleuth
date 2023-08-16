@@ -46,6 +46,10 @@ struct CommandScan {
     #[arg(long)]
     symbols: bool,
 
+    /// Skip parsing of exception table
+    #[arg(long)]
+    skip_exceptions: bool,
+
     /// Show scan summary
     #[arg(long)]
     summary: bool,
@@ -476,7 +480,12 @@ fn scan(command: CommandScan) -> Result<()> {
 
         println!("{:?} {:?}", game, exe_path.display());
         let bin_data = fs::read(&exe_path)?;
-        let exe = match Executable::read(&bin_data, &exe_path, command.symbols) {
+        let exe = match Executable::read(
+            &bin_data,
+            &exe_path,
+            command.symbols,
+            !command.skip_exceptions,
+        ) {
             Ok(exe) => exe,
             Err(err) => {
                 println!("err reading {}: {}", exe_path.display(), err);
@@ -774,7 +783,7 @@ fn symbols(command: CommandSymbols) -> Result<()> {
 
         println!("{:?} {:?}", game, exe_path.display());
         let bin_data = fs::read(&exe_path)?;
-        let exe = match Executable::read(&bin_data, &exe_path, true) {
+        let exe = match Executable::read(&bin_data, &exe_path, true, false) {
             Ok(exe) => exe,
             Err(err) => {
                 println!("err reading {}: {}", exe_path.display(), err);

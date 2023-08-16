@@ -211,10 +211,10 @@ impl PatternConfig {
 }
 
 pub struct Executable<'data> {
-    data: &'data [u8],
+    pub data: &'data [u8],
     pub object: object::File<'data>,
     pub memory: MountedPE<'data>,
-    functions: Vec<RuntimeFunction>,
+    functions: Option<Vec<RuntimeFunction>>,
     pub symbols: Option<HashMap<usize, String>>,
 }
 impl<'data> Executable<'data> {
@@ -222,6 +222,7 @@ impl<'data> Executable<'data> {
         data: &'data [u8],
         exe_path: P,
         load_symbols: bool,
+        load_functions: bool,
     ) -> Result<Executable<'data>> {
         let object = object::File::parse(data)?;
         let memory = MountedPE::new(&object)?;
@@ -235,65 +236,69 @@ impl<'data> Executable<'data> {
             .then(|| symbols::dump_pdb_symbols(pdb_path, base_address))
             .transpose()?;
 
-        let functions = match object {
-            object::File::Pe64(ref inner) => {
-                // TODO entries are sorted so it should be possible to binary search entries
-                // directly from the directory rather than read them all up front
-                let exception_directory = inner
-                    .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
-                    .context("no exception directory")?;
+        let functions = load_functions
+            .then(|| -> Result<_> {
+                Ok(match object {
+                    object::File::Pe64(ref inner) => {
+                        // TODO entries are sorted so it should be possible to binary search entries
+                        // directly from the directory rather than read them all up front
+                        let exception_directory = inner
+                            .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
+                            .context("no exception directory")?;
 
-                let data = exception_directory.data(data, &inner.section_table())?;
-                let count = data.len() / 12;
-                let mut cur = Cursor::new(data);
+                        let data = exception_directory.data(data, &inner.section_table())?;
+                        let count = data.len() / 12;
+                        let mut cur = Cursor::new(data);
 
-                let mut functions: BTreeMap<usize, RuntimeFunction> = Default::default();
-                let mut children = vec![];
-                for _ in 0..count {
-                    let range = base_address + cur.read_u32::<LE>()? as usize
-                        ..base_address + cur.read_u32::<LE>()? as usize;
-                    let unwind = base_address + cur.read_u32::<LE>()? as usize;
+                        let mut functions: BTreeMap<usize, RuntimeFunction> = Default::default();
+                        let mut children = vec![];
+                        for _ in 0..count {
+                            let range = base_address + cur.read_u32::<LE>()? as usize
+                                ..base_address + cur.read_u32::<LE>()? as usize;
+                            let unwind = base_address + cur.read_u32::<LE>()? as usize;
 
-                    let function = RuntimeFunction {
-                        range,
-                        unwind,
-                        children: vec![],
-                    };
+                            let function = RuntimeFunction {
+                                range,
+                                unwind,
+                                children: vec![],
+                            };
 
-                    // TODO this is totally gross. need to implement a nice way to stream sparse sections
-                    let section = memory
-                        .get_section_containing(unwind)
-                        .context("out of bounds reading unwind info")?;
-                    let mut offset = unwind - section.address;
+                            // TODO this is totally gross. need to implement a nice way to stream sparse sections
+                            let section = memory
+                                .get_section_containing(unwind)
+                                .context("out of bounds reading unwind info")?;
+                            let mut offset = unwind - section.address;
 
-                    let has_chain_info = section.data[offset] >> 3 == 0x4;
-                    if has_chain_info {
-                        let unwind_code_count = section.data[offset + 2];
+                            let has_chain_info = section.data[offset] >> 3 == 0x4;
+                            if has_chain_info {
+                                let unwind_code_count = section.data[offset + 2];
 
-                        offset += 4 + 2 * unwind_code_count as usize;
-                        if offset % 4 != 0 {
-                            // align
-                            offset += 2;
+                                offset += 4 + 2 * unwind_code_count as usize;
+                                if offset % 4 != 0 {
+                                    // align
+                                    offset += 2;
+                                }
+
+                                let mut tmp = [0; 4];
+                                tmp.copy_from_slice(&section.data[offset..offset + 4]);
+                                let parent = base_address + u32::from_le_bytes(tmp) as usize;
+                                children.push((parent, function.clone()));
+                            }
+                            functions.insert(function.range.start, function);
+                        }
+                        for (parent, child) in children {
+                            functions.get_mut(&parent).unwrap().children.push(child);
                         }
 
-                        let mut tmp = [0; 4];
-                        tmp.copy_from_slice(&section.data[offset..offset + 4]);
-                        let parent = base_address + u32::from_le_bytes(tmp) as usize;
-                        children.push((parent, function.clone()));
+                        functions.into_values().collect()
                     }
-                    functions.insert(function.range.start, function);
-                }
-                for (parent, child) in children {
-                    functions.get_mut(&parent).unwrap().children.push(child);
-                }
-
-                functions.into_values().collect()
-            }
-            object::File::Pe32(_) => {
-                vec![]
-            }
-            _ => todo!("{:?}", object::FileKind::parse(data)?),
-        };
+                    object::File::Pe32(_) => {
+                        vec![]
+                    }
+                    _ => todo!("{:?}", object::FileKind::parse(data)?),
+                })
+            })
+            .transpose()?;
         /*
         for (i, window) in functions.windows(2).enumerate() {
             match window {
@@ -319,16 +324,17 @@ impl<'data> Executable<'data> {
         })
     }
     pub fn get_function(&self, address: usize) -> Option<&RuntimeFunction> {
-        // TODO figure out what to do in the rare case of overlapping entries
-        match self
-            .functions
-            .binary_search_by_key(&address, |f| f.range.start)
-        {
-            Ok(i) => Some(&self.functions[i]),
-            Err(i) => {
-                let f = &self.functions.get(i - 1);
-                f.filter(|f| f.range.contains(&address))
+        if let Some(functions) = &self.functions {
+            // TODO figure out what to do in the rare case of overlapping entries
+            match functions.binary_search_by_key(&address, |f| f.range.start) {
+                Ok(i) => Some(&functions[i]),
+                Err(i) => {
+                    let f = &functions.get(i - 1);
+                    f.filter(|f| f.range.contains(&address))
+                }
             }
+        } else {
+            None
         }
     }
 }
