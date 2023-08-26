@@ -783,7 +783,7 @@ fn symbols(command: CommandSymbols) -> Result<()> {
 
         println!("{:?} {:?}", game, exe_path.display());
         let bin_data = fs::read(&exe_path)?;
-        let exe = match Executable::read(&bin_data, &exe_path, true, false) {
+        let exe = match Executable::read(&bin_data, &exe_path, true, true) {
             Ok(exe) => exe,
             Err(err) => {
                 println!("err reading {}: {}", exe_path.display(), err);
