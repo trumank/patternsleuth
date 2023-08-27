@@ -474,7 +474,11 @@ fn scan(command: CommandScan) -> Result<()> {
             continue;
         }
 
-        let Some(exe_path) = find_ext(entry.path(), "exe")? else {
+        let Some(exe_path) = find_ext(entry.path(), "exe")
+            .transpose()
+            .or_else(|| find_ext(entry.path(), "elf").transpose())
+            .transpose()?
+        else {
             continue;
         };
 
