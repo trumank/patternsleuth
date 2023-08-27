@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Error, Result};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Pattern {
     pub sig: Vec<u8>,
     pub mask: Vec<u8>,
@@ -23,27 +23,67 @@ impl TryFrom<&str> for Pattern {
 }
 
 impl Pattern {
+    fn parse_bits(s: &str) -> Option<(u8, u8)> {
+        if s.len() == 8 {
+            let mut sig = 0;
+            let mut mask = 0;
+            for (i, b) in s.chars().enumerate() {
+                let i = 7 - i;
+                match b {
+                    '0' => {
+                        mask |= 1 << i;
+                    }
+                    '1' => {
+                        sig |= 1 << i;
+                        mask |= 1 << i;
+                    }
+                    '?' => {}
+                    _ => return None,
+                }
+            }
+            Some((sig, mask))
+        } else {
+            None
+        }
+    }
+
+    fn parse_hex(s: &str) -> Option<(u8, u8)> {
+        if s.len() == 2 {
+            let mut sig = 0;
+            let mut mask = 0;
+            for (i, b) in s.chars().enumerate() {
+                let i = (1 - i) * 4;
+                if let Some(digit) = b.to_digit(16) {
+                    sig |= (digit as u8) << i;
+                    mask |= 0xf << i;
+                } else if b != '?' {
+                    return None;
+                }
+            }
+            Some((sig, mask))
+        } else {
+            None
+        }
+    }
+
     pub fn new(s: &str) -> Result<Self> {
         let mut sig = vec![];
         let mut mask = vec![];
         let mut custom_offset = 0;
+
         for (i, w) in s.split_whitespace().enumerate() {
-            if let Ok(b) = u8::from_str_radix(w, 16) {
-                sig.push(b);
-                mask.push(0xff);
-                continue;
-            } else if w == "??" {
-                if sig.is_empty() {
+            if let Some((s, m)) = Self::parse_hex(w).or_else(|| Self::parse_bits(w)) {
+                if m != 0xff && sig.is_empty() {
                     bail!("first byte cannot be \"??\"");
+                } else {
+                    sig.push(s);
+                    mask.push(m);
                 }
-                sig.push(0);
-                mask.push(0);
-                continue;
             } else if w == "|" {
                 custom_offset = i;
-                continue;
+            } else {
+                bail!("bad pattern word \"{}\"", w);
             }
-            bail!("bad pattern word \"{}\"", w);
         }
 
         Ok(Self {
@@ -447,6 +487,62 @@ pub fn scan_xref_hash<'id, ID: Sync>(
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_parse_bits() {
+        assert_eq!(None, Pattern::parse_bits("0000000"));
+        assert_eq!(None, Pattern::parse_bits("000000000"));
+        assert_eq!(Some((0, 0xff)), Pattern::parse_bits("00000000"));
+        assert_eq!(
+            Some((0b0000_0000, 0b0111_1111)),
+            Pattern::parse_bits("?0000000")
+        );
+        assert_eq!(
+            Some((0b0100_0000, 0b0111_1111)),
+            Pattern::parse_bits("?1000000")
+        );
+    }
+
+    #[test]
+    fn test_parse_hex() {
+        assert_eq!(Some((0xff, 0xff)), Pattern::parse_hex("ff"));
+        assert_eq!(Some((0x00, 0xff)), Pattern::parse_hex("00"));
+        assert_eq!(Some((0x0f, 0x0f)), Pattern::parse_hex("?f"));
+        assert_eq!(Some((0x00, 0x0f)), Pattern::parse_hex("?0"));
+        assert_eq!(Some((0x00, 0xf0)), Pattern::parse_hex("0?"));
+        assert_eq!(None, Pattern::parse_hex("z0"));
+        assert_eq!(None, Pattern::parse_hex("0"));
+        assert_eq!(None, Pattern::parse_hex("000"));
+    }
+
+    #[test]
+    fn test_build_pattern() {
+        assert!(Pattern::new("?? ??").is_err());
+        assert_eq!(
+            Pattern {
+                sig: vec![0, 0],
+                mask: vec![0xff, 0],
+                custom_offset: 0
+            },
+            Pattern::new("00 ??").unwrap()
+        );
+        assert_eq!(
+            Pattern {
+                sig: vec![0x10, 0],
+                mask: vec![0xff, 0],
+                custom_offset: 0
+            },
+            Pattern::new("10 ??").unwrap()
+        );
+        assert_eq!(
+            Pattern {
+                sig: vec![0x10, 0, 0b01010011],
+                mask: vec![0xff, 0, 0b11011011],
+                custom_offset: 0
+            },
+            Pattern::new("10 ?? 01?10?11").unwrap()
+        );
+    }
 
     type PatternScanFn<'id> = fn(
         patterns: &[(&'id (), &Pattern)],
