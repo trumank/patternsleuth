@@ -84,12 +84,8 @@ impl Pattern {
         let mut i = 0;
         for w in s.split_whitespace() {
             if let Some((s, m)) = Self::parse_hex(w).or_else(|| Self::parse_bits(w)) {
-                if m != 0xff && sig.is_empty() {
-                    bail!("first byte cannot be \"??\"");
-                } else {
-                    sig.push(s);
-                    mask.push(m);
-                }
+                sig.push(s);
+                mask.push(m);
                 i += 1;
             } else {
                 match w {
