@@ -94,12 +94,8 @@ impl Pattern {
             if let Some((s, m)) =
                 Self::parse_hex_pattern(w).or_else(|| Self::parse_binary_patern(w))
             {
-                if m != 0xff && sig.is_empty() {
-                    bail!("first byte cannot be \"??\"");
-                } else {
-                    sig.push(s);
-                    mask.push(m);
-                }
+                sig.push(s);
+                mask.push(m);
                 i += 1;
             } else {
                 match w {

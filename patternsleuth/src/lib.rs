@@ -520,6 +520,30 @@ pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
             .checked_add_signed(self.i32_le(address) as isize)
             .unwrap()
     }
+
+    /// Read null terminated string from `address`
+    fn read_string(&self, address: usize) -> String {
+        let data = &self
+            .range_from(address..)
+            .iter()
+            .cloned()
+            .take_while(|n| *n != 0)
+            .collect::<Vec<u8>>();
+
+        std::str::from_utf8(data).unwrap().to_string()
+    }
+
+    /// Read null terminated wide string from `address`
+    fn read_wstring(&self, address: usize) -> String {
+        let data = &self
+            .range_from(address..)
+            .chunks(2)
+            .map(|chunk| ((chunk[1] as u16) << 8) + chunk[0] as u16)
+            .take_while(|n| *n != 0)
+            .collect::<Vec<u16>>();
+
+        String::from_utf16(data).unwrap()
+    }
 }
 
 impl<'data, T: MemoryTrait<'data>> MemoryAccessorTrait<'data> for T {}
