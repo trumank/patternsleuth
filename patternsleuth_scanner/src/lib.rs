@@ -7,6 +7,13 @@ pub struct Pattern {
     pub sig: Vec<u8>,
     pub mask: Vec<u8>,
     pub custom_offset: usize,
+    pub captures: Vec<std::ops::Range<usize>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct Capture<'data> {
+    pub address: usize,
+    pub data: &'data [u8],
 }
 
 impl TryFrom<String> for Pattern {
@@ -71,7 +78,11 @@ impl Pattern {
         let mut mask = vec![];
         let mut custom_offset = 0;
 
-        for (i, w) in s.split_whitespace().enumerate() {
+        let mut capture_stack = vec![];
+        let mut captures = vec![];
+
+        let mut i = 0;
+        for w in s.split_whitespace() {
             if let Some((s, m)) = Self::parse_hex(w).or_else(|| Self::parse_bits(w)) {
                 if m != 0xff && sig.is_empty() {
                     bail!("first byte cannot be \"??\"");
@@ -79,17 +90,35 @@ impl Pattern {
                     sig.push(s);
                     mask.push(m);
                 }
-            } else if w == "|" {
-                custom_offset = i;
+                i += 1;
             } else {
-                bail!("bad pattern word \"{}\"", w);
+                match w {
+                    "|" => {
+                        custom_offset = i;
+                    }
+                    "[" => {
+                        capture_stack.push(i);
+                    }
+                    "]" => {
+                        if let Some(start) = capture_stack.pop() {
+                            captures.push(start..i);
+                        } else {
+                            bail!("unexpected closing capture at word {i}");
+                        }
+                    }
+                    _ => bail!("bad pattern word \"{}\"", w),
+                }
             }
+        }
+        if let Some(start) = capture_stack.pop() {
+            bail!("unclosed capture at word {start}");
         }
 
         Ok(Self {
             sig,
             mask,
             custom_offset,
+            captures,
         })
     }
     /// Create a pattern from a literal Vec<u8> with `mask` filled with 0xff and `custom_offset = 0`.
@@ -98,6 +127,7 @@ impl Pattern {
             mask: vec![0xff; sig.len()],
             sig,
             custom_offset: 0,
+            captures: vec![],
         })
     }
     #[inline]
@@ -108,6 +138,22 @@ impl Pattern {
             }
         }
         true
+    }
+    pub fn captures<'data>(
+        &self,
+        data: &'data [u8],
+        base_address: usize,
+        index: usize,
+    ) -> Option<Vec<Capture<'data>>> {
+        self.is_match(data, index).then(|| {
+            self.captures
+                .iter()
+                .map(|c| Capture {
+                    address: base_address + index + c.start,
+                    data: &data[c.start + index..c.end + index],
+                })
+                .collect()
+        })
     }
     /// compute virtual address from address relative to section as well as account for
     /// custom_offset
@@ -522,7 +568,8 @@ mod test {
             Pattern {
                 sig: vec![0, 0],
                 mask: vec![0xff, 0],
-                custom_offset: 0
+                custom_offset: 0,
+                captures: vec![],
             },
             Pattern::new("00 ??").unwrap()
         );
@@ -530,7 +577,8 @@ mod test {
             Pattern {
                 sig: vec![0x10, 0],
                 mask: vec![0xff, 0],
-                custom_offset: 0
+                custom_offset: 0,
+                captures: vec![],
             },
             Pattern::new("10 ??").unwrap()
         );
@@ -538,9 +586,46 @@ mod test {
             Pattern {
                 sig: vec![0x10, 0, 0b01010011],
                 mask: vec![0xff, 0, 0b11011011],
-                custom_offset: 0
+                custom_offset: 0,
+                captures: vec![],
             },
             Pattern::new("10 ?? 01?10?11").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_captures() {
+        assert!(Pattern::new("?? [ ??").is_err());
+        assert!(Pattern::new("?? ] ??").is_err());
+        assert!(Pattern::new("[ ] ?? ] ??").is_err());
+        assert_eq!(
+            Pattern {
+                sig: vec![0, 0, 0x10, 0x20],
+                mask: vec![0xff, 0, 0xff, 0xff],
+                custom_offset: 0,
+                captures: vec![2..2, 1..2, 2..4],
+            },
+            Pattern::new("00 [ ?? [ ] ] [ 10 20 ]").unwrap()
+        );
+
+        assert_eq!(
+            Some(vec![Capture {
+                address: 100 + 3,
+                data: &[0x99]
+            }]),
+            Pattern::new("10 20 30 [ ?? ]")
+                .unwrap()
+                .captures(b"\x10\x20\x30\x99", 100, 0)
+        );
+
+        assert_eq!(
+            Some(vec![Capture {
+                address: 100 + 2,
+                data: &[0x30]
+            }]),
+            Pattern::new("20 [ ?? ]")
+                .unwrap()
+                .captures(b"\x10\x20\x30\x99\x24", 100, 1)
         );
     }
 
