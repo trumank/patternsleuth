@@ -2163,6 +2163,18 @@ C3
         )
         .unwrap();
 
+        let register_natives = Pattern::new(
+            r"
+48 83 EC 28
+E8 ?? ?? ?? ??
+41 B8 [ ?? ?? ?? ?? ]
+48 8D ?? [ ?? ?? ?? ?? ]
+48 8B C8
+48 83 C4 28
+E9"
+        )
+        .unwrap();
+
         let constructor_addr =
             RIPRelativeResolvers::calc_rip(&ctx, ctx.match_address + 40).unwrap();
         let constructor_section = ctx.memory.get_section_containing(constructor_addr).unwrap();
@@ -2239,9 +2251,23 @@ C3
 
             if let Some((i, m)) = m {
                 println!("{i} {:10X}", class_no_register_func_address);
+                let init_address = m[0].rip();
                 let name = read_wstring(&ctx, m[1].rip());
                 let package_name = read_wstring(&ctx, m[2].rip());
-                println!("{package_name:?} {name:?} {:10X}", m[0].rip());
+                println!("{package_name:?} {name:?} {:10X}", init_address);
+
+                let section = ctx
+                    .memory
+                    .get_section_containing(init_address)
+                    .unwrap();
+                let captures = register_natives.captures(
+                    section.data,
+                    section.address,
+                    init_address - section.address,
+                );
+                if let Some([count, native_functions]) = captures.as_deref() {
+                    println!("native functions = {:10X?} ({})", native_functions.rip(), count.u32());
+                }
                 //let package_name = read_wstring(&ctx, static_class[1].rip());
                 //println!("{} {}", package_name, name);
             } else {
@@ -2253,9 +2279,8 @@ C3
 
             let function_link_array = FunctionLinkArray.ptr();
             let property_array = PropertyArray.ptr();
-            let num_functions = u32::from_le_bytes(NumFunctions.data.try_into().unwrap()) as usize;
-            let num_properties =
-                u32::from_le_bytes(NumProperties.data.try_into().unwrap()) as usize;
+            let num_functions = NumFunctions.u32() as usize;
+            let num_properties = NumProperties.u32() as usize;
             let functions = if function_link_array != 0 {
                 ctx.memory[function_link_array..function_link_array + 0x10 * num_functions]
                     .chunks(0x10)
@@ -2308,6 +2333,7 @@ C3
         }
         */
 
+        /*
         format!(
             "{} {:x} {:x?} {} {}",
             is_constructor.is_some(),
@@ -2316,7 +2342,8 @@ C3
             package,
             name
         )
-        .into()
+        .into();*/
+        ResolutionAction::Finish(ResolutionType::Count)
         /*
         format!(
             "{:x?}",
@@ -2332,6 +2359,7 @@ C3
     trait Addressable {
         fn rip(&self) -> usize;
         fn ptr(&self) -> usize;
+        fn u32(&self) -> u32;
     }
     impl Addressable for patternsleuth_scanner::Capture<'_> {
         fn rip(&self) -> usize {
@@ -2341,6 +2369,9 @@ C3
         }
         fn ptr(&self) -> usize {
             usize::from_le_bytes(self.data.try_into().unwrap())
+        }
+        fn u32(&self) -> u32 {
+            u32::from_le_bytes(self.data.try_into().unwrap())
         }
     }
 
