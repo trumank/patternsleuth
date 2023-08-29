@@ -1481,7 +1481,7 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Sig::ClassInitializers,
             "ClassInitializers".to_string(),
             None,
-            Pattern::new("48 83 EC 48 33 C0 4C 8D ?? ?? ?? ?? ?? 48 89 44 24 30 4C 8D ?? ?? ?? ?? ?? 48 89 44 24 28 48 8D ?? ?? ?? ?? ?? 48 8D ?? ?? ?? ?? ?? 88 44 24 20 E8 ?? ?? ?? ?? 48 83 C4 48 C3")?,
+            class_initializers::pattern_class_initializer().clone(),
             class_initializers::resolve,
         ),
         PatternConfig::new(
@@ -1918,11 +1918,31 @@ mod signing_key {
 }
 
 mod class_initializers {
-    use std::{io::BufRead, sync::OnceLock};
+    use std::sync::OnceLock;
 
     use super::*;
 
-    use byteorder::{ReadBytesExt, LE};
+    pub fn pattern_class_initializer() -> &'static Pattern {
+        static PATTERN: OnceLock<Pattern> = OnceLock::new();
+        PATTERN.get_or_init(|| {
+            Pattern::new(
+                r#"
+48 83 EC 48
+33 C0
+4C 8D ?? [ ?? ?? ?? ?? ]
+48 89 44 24 30
+4C 8D ?? [ ?? ?? ?? ?? ]
+48 89 44 24 28
+48 8D ?? ?? ?? ?? ??
+48 8D ?? [ ?? ?? ?? ?? ]
+88 44 24 20
+E8 ?? ?? ?? ??
+48 83 C4 48
+C3"#,
+            )
+            .unwrap()
+        })
+    }
 
     pub fn pattern_static_class() -> &'static Pattern {
         static PATTERN: OnceLock<Pattern> = OnceLock::new();
@@ -2099,7 +2119,7 @@ C3
             .take_while(|n| *n != 0)
             .collect::<Vec<u8>>();
 
-        std::str::from_utf8(&data).unwrap().to_string()
+        std::str::from_utf8(data).unwrap().to_string()
     }
 
     fn read_wstring(ctx: &ResolveContext, address: usize) -> String {
@@ -2111,7 +2131,7 @@ C3
             .take_while(|n| *n != 0)
             .collect::<Vec<u16>>();
 
-        String::from_utf16(&data).unwrap()
+        String::from_utf16(data).unwrap()
     }
 
     #[derive(Debug)]
@@ -2127,15 +2147,9 @@ C3
     }
 
     pub fn resolve(ctx: ResolveContext, _stages: &mut ResolveStages) -> ResolutionAction {
-        let package_name_address =
-            RIPRelativeResolvers::calc_rip(&ctx, ctx.match_address + 9).unwrap();
-        let package = read_wstring(&ctx, package_name_address);
-        let name_address =
-            RIPRelativeResolvers::calc_rip(&ctx, ctx.match_address + 9 + 4 + 8).unwrap();
-        let name = read_wstring(&ctx, name_address);
-
-        let constructor = Pattern::new(
-            r"48 83 ec 28
+        let pattern_constructor = Pattern::new(
+            r"
+            48 83 ec 28
             48 8b ?? [ ?? ?? ?? ?? ]
             48 85 c0
             75 1a
@@ -2148,7 +2162,8 @@ C3
         .unwrap();
 
         let struct_fclass_params = Pattern::new(
-            r"[ ?? ?? ?? ?? ?? ?? ?? ?? ]
+            r"
+            [ ?? ?? ?? ?? ?? ?? ?? ?? ]
             [ ?? ?? ?? ?? ?? ?? ?? ?? ]
             [ ?? ?? ?? ?? ?? ?? ?? ?? ]
             [ ?? ?? ?? ?? ?? ?? ?? ?? ]
@@ -2165,45 +2180,39 @@ C3
 
         let register_natives = Pattern::new(
             r"
-48 83 EC 28
-E8 ?? ?? ?? ??
-41 B8 [ ?? ?? ?? ?? ]
-48 8D ?? [ ?? ?? ?? ?? ]
-48 8B C8
-48 83 C4 28
-E9"
+            48 83 EC 28
+            E8 ?? ?? ?? ??
+            41 B8 [ ?? ?? ?? ?? ]
+            48 8D ?? [ ?? ?? ?? ?? ]
+            48 8B C8
+            48 83 C4 28
+            E9",
         )
         .unwrap();
 
-        let constructor_addr =
-            RIPRelativeResolvers::calc_rip(&ctx, ctx.match_address + 40).unwrap();
-        let constructor_section = ctx.memory.get_section_containing(constructor_addr).unwrap();
-        let is_constructor = constructor.captures(
-            constructor_section.data,
-            constructor_section.address,
-            constructor_addr - constructor_section.address,
-        );
+        let [package_name, name, constructor] = &ctx
+            .memory
+            .captures(pattern_class_initializer(), ctx.match_address)
+            .unwrap()
+            .try_into()
+            .unwrap();
 
-        let data = if let Some([a, fclass_params, c, d, e]) = is_constructor.as_deref() {
+        let package = read_wstring(&ctx, package_name.rip());
+        let name = read_wstring(&ctx, name.rip());
+
+        let is_constructor = ctx.memory.captures(&pattern_constructor, constructor.rip());
+
+        let data = if let Some([_a, fclass_params, _c, _d, _e]) = is_constructor.as_deref() {
             let fclass_params = fclass_params.rip();
-            let section = ctx.memory.get_section_containing(fclass_params).unwrap();
-            let captures = struct_fclass_params.captures(
-                section.data,
-                section.address,
-                fclass_params - section.address,
-            );
+            let captures = ctx.memory.captures(&struct_fclass_params, fclass_params);
             let Some(
-                [ClassNoRegisterFunc, ClassConfigNameUTF8, CppClassInfo, DependencySingletonFuncArray, FunctionLinkArray, PropertyArray, ImplementedInterfaceArray, NumDependencySingletons, NumFunctions, NumProperties, NumImplementedInterfaces, ClassFlags],
+                [class_no_register_func, _class_config_name_utf8, _cpp_class_info, _dependency_singleton_func_array, function_link_array, property_array, _implemented_interface_array, _num_dependency_singletons, num_functions, num_properties, _num_implemented_interfaces, _class_flags],
             ) = captures.as_deref()
             else {
                 unreachable!()
             };
 
-            let mut class_no_register_func_address = ClassNoRegisterFunc.ptr();
-            let section = ctx
-                .memory
-                .get_section_containing(class_no_register_func_address)
-                .unwrap();
+            let mut class_no_register_func_address = class_no_register_func.ptr();
 
             use std::fmt::Write;
             let mut hist = String::new();
@@ -2212,13 +2221,9 @@ E9"
                 Pattern::new("48 83 EC 28 E8 [ ?? ?? ?? ?? ] 48 83 C4 28 C3").unwrap(),
             ];
 
-            let jmp = jmps.iter().find_map(|p| {
-                p.captures(
-                    section.data,
-                    section.address,
-                    class_no_register_func_address - section.address,
-                )
-            });
+            let jmp = jmps
+                .iter()
+                .find_map(|p| ctx.memory.captures(p, class_no_register_func_address));
             if let Some([address]) = jmp.as_deref() {
                 writeln!(
                     hist,
@@ -2230,10 +2235,6 @@ E9"
                 class_no_register_func_address = address.rip();
             }
 
-            let section = ctx
-                .memory
-                .get_section_containing(class_no_register_func_address)
-                .unwrap();
             let patterns = [
                 pattern_static_class(),
                 pattern_static_class2(),
@@ -2241,12 +2242,9 @@ E9"
                 pattern_static_class4(),
             ];
             let m = patterns.iter().enumerate().find_map(|(i, p)| {
-                p.captures(
-                    section.data,
-                    section.address,
-                    class_no_register_func_address - section.address,
-                )
-                .and_then(|m| Some((i, m)))
+                ctx.memory
+                    .captures(p, class_no_register_func_address)
+                    .map(|m| (i, m))
             });
 
             if let Some((i, m)) = m {
@@ -2256,17 +2254,13 @@ E9"
                 let package_name = read_wstring(&ctx, m[2].rip());
                 println!("{package_name:?} {name:?} {:10X}", init_address);
 
-                let section = ctx
-                    .memory
-                    .get_section_containing(init_address)
-                    .unwrap();
-                let captures = register_natives.captures(
-                    section.data,
-                    section.address,
-                    init_address - section.address,
-                );
+                let captures = ctx.memory.captures(&register_natives, init_address);
                 if let Some([count, native_functions]) = captures.as_deref() {
-                    println!("native functions = {:10X?} ({})", native_functions.rip(), count.u32());
+                    println!(
+                        "native functions = {:10X?} ({})",
+                        native_functions.rip(),
+                        count.u32()
+                    );
                 }
                 //let package_name = read_wstring(&ctx, static_class[1].rip());
                 //println!("{} {}", package_name, name);
@@ -2277,10 +2271,10 @@ E9"
                 );
             }
 
-            let function_link_array = FunctionLinkArray.ptr();
-            let property_array = PropertyArray.ptr();
-            let num_functions = NumFunctions.u32() as usize;
-            let num_properties = NumProperties.u32() as usize;
+            let function_link_array = function_link_array.ptr();
+            let property_array = property_array.ptr();
+            let num_functions = num_functions.u32() as usize;
+            let num_properties = num_properties.u32() as usize;
             let functions = if function_link_array != 0 {
                 ctx.memory[function_link_array..function_link_array + 0x10 * num_functions]
                     .chunks(0x10)
@@ -2333,7 +2327,6 @@ E9"
         }
         */
 
-        /*
         format!(
             "{} {:x} {:x?} {} {}",
             is_constructor.is_some(),
@@ -2342,8 +2335,8 @@ E9"
             package,
             name
         )
-        .into();*/
-        ResolutionAction::Finish(ResolutionType::Count)
+        .into()
+        //ResolutionAction::Finish(ResolutionType::Count)
         /*
         format!(
             "{:x?}",
@@ -2372,6 +2365,25 @@ E9"
         }
         fn u32(&self) -> u32 {
             u32::from_le_bytes(self.data.try_into().unwrap())
+        }
+    }
+
+    trait Matchable<'data> {
+        fn captures(
+            &'data self,
+            pattern: &Pattern,
+            address: usize,
+        ) -> Option<Vec<patternsleuth_scanner::Capture<'data>>>;
+    }
+
+    impl<'data> Matchable<'data> for MountedPE<'data> {
+        fn captures(
+            &'data self,
+            pattern: &Pattern,
+            address: usize,
+        ) -> Option<Vec<patternsleuth_scanner::Capture<'data>>> {
+            self.get_section_containing(address)
+                .and_then(move |s| pattern.captures(s.data, s.address, address - s.address))
         }
     }
 
