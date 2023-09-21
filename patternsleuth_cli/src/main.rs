@@ -1001,6 +1001,7 @@ mod index {
             let value: SymbolValue = bincode::borrow_decode_from_slice(&symbol_value, config)?.0;
 
             let mut cells = vec![];
+            let mut function_bodies = vec![];
 
             for f in value.functions {
                 let fn_key_enc = bincode::encode_to_vec(&f, config)?;
@@ -1012,7 +1013,41 @@ mod index {
                         f.executable,
                         disassemble::disassemble_bytes(f.address, &function_value.bytes),
                     ));
+
+                    function_bodies.push(function_value.bytes.to_vec());
                 }
+            }
+
+            if let Some(len) = function_bodies.iter().map(|b| b.len()).min() {
+                let mut sig = vec![];
+                let mut mask = vec![];
+
+                let mut last_eq = 0;
+
+                for i in 0..len {
+                    if function_bodies.iter().map(|b| b[i]).all_equal() {
+                        sig.push(function_bodies[0][i]);
+                        mask.push(0xff);
+                        last_eq = i + 1;
+                    } else {
+                        sig.push(0);
+                        mask.push(0);
+                    }
+                }
+                sig.truncate(last_eq);
+                mask.truncate(last_eq);
+
+                let pattern = sig
+                    .iter()
+                    .zip(mask)
+                    .map(|(sig, mask)| match mask {
+                        0xff => Cow::Owned(format!("{sig:02X?}")),
+                        0 => "??".into(),
+                        _ => unreachable!(),
+                    })
+                    .join(" ");
+
+                println!("{pattern}");
             }
 
             let mut table = Table::new();
