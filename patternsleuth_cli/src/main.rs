@@ -892,19 +892,24 @@ fn symbols(command: CommandSymbols) -> Result<()> {
 }
 
 mod index {
-    use std::{borrow::Cow, collections::BTreeSet};
+    use std::{
+        borrow::Cow,
+        collections::BTreeSet,
+        sync::{Arc, Mutex},
+    };
 
     use super::*;
 
     use bincode::{Decode, Encode};
     use prettytable::{Cell, Row, Table};
+    use rayon::prelude::*;
 
-    #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord)]
-    struct SymbolKey<'n> {
-        name: Cow<'n, str>,
+    #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord, Hash)]
+    struct SymbolKey {
+        name: String,
     }
 
-    #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord)]
+    #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord, Default)]
     struct SymbolValue {
         functions: BTreeSet<FunctionKey>,
     }
@@ -1046,6 +1051,7 @@ mod index {
             games_with_symbols.push((game, exe_path));
         }
 
+        use indicatif::ParallelProgressIterator;
         use indicatif::ProgressIterator;
 
         let m = indicatif::MultiProgress::new();
@@ -1058,80 +1064,96 @@ mod index {
         let pb = m.add(indicatif::ProgressBar::new(games_with_symbols.len() as u64));
         pb.set_style(sty.clone());
 
-        let mut iter = games_with_symbols.iter().progress_with(pb.clone());
+        let symbols_map = Arc::new(Mutex::new(HashMap::new()));
 
-        iter.try_for_each(move |(game, exe_path)| -> Result<()> {
-            pb.set_message(game.clone());
+        games_with_symbols
+            .par_iter()
+            .progress_with(pb.clone())
+            .try_for_each(|(game, exe_path)| -> Result<()> {
+                pb.set_message("total");
 
-            let bin_data = fs::read(exe_path)?;
-            let exe = match Executable::read(
-                &bin_data, exe_path, true, // symbols
-                true, // exceptions
-            ) {
-                Ok(exe) => exe,
-                Err(err) => {
-                    println!("err reading {}: {}", exe_path.display(), err);
-                    return Ok(());
-                }
-            };
+                let bin_data = fs::read(exe_path)?;
+                let exe = match Executable::read(
+                    &bin_data, exe_path, true, // symbols
+                    true, // exceptions
+                ) {
+                    Ok(exe) => exe,
+                    Err(err) => {
+                        println!("err reading {}: {}", exe_path.display(), err);
+                        return Ok(());
+                    }
+                };
 
-            let symbols = exe.symbols.as_ref().unwrap();
+                let symbols = exe.symbols.as_ref().unwrap();
 
-            let pb = m.add(indicatif::ProgressBar::new(symbols.len() as u64));
-            pb.set_style(sty.clone());
-            pb.set_message("symbols");
-
-            symbols
-                .iter()
-                .progress_with(pb)
-                .try_for_each(|(address, name)| -> Result<()> {
-                    let key = SymbolKey { name: name.into() };
-                    let value = SymbolValue {
-                        functions: [FunctionKey {
-                            address: *address,
-                            executable: exe_path.to_string_lossy().to_string(),
-                        }]
-                        .into(),
-                    };
-
-                    symbols_tree.merge(
-                        bincode::encode_to_vec(key, config)?,
-                        bincode::encode_to_vec(value, config)?,
-                    )?;
-
-                    Ok(())
-                })?;
-
-            if let Some(functions) = exe.functions {
-                let pb = m.add(indicatif::ProgressBar::new(functions.len() as u64));
+                let pb = m.add(indicatif::ProgressBar::new(symbols.len() as u64));
                 pb.set_style(sty.clone());
-                pb.set_message("functions");
+                pb.set_message(format!("collecting symbols for {}", game));
 
-                functions
+                let mut symbols_map = symbols_map.lock().unwrap();
+                symbols
                     .iter()
                     .progress_with(pb)
-                    .try_for_each(|function| -> Result<()> {
-                        let range = function.full_range();
-                        let bytes = &exe.memory[range.clone()];
+                    .try_for_each(|(address, name)| -> Result<()> {
+                        let key = SymbolKey { name: name.into() };
 
-                        let key = FunctionKey {
-                            address: range.start,
+                        let value: &mut SymbolValue = symbols_map.entry(key).or_default();
+                        value.functions.insert(FunctionKey {
+                            address: *address,
                             executable: exe_path.to_string_lossy().to_string(),
-                        };
+                        });
 
-                        let value = FunctionValue {
-                            bytes: bytes.into(),
-                        };
-
-                        functions_tree.insert(
-                            bincode::encode_to_vec(key, config)?,
-                            bincode::encode_to_vec(value, config)?,
-                        )?;
                         Ok(())
                     })?;
-            }
-            Ok(())
-        })?;
+                drop(symbols_map);
+
+                if let Some(functions) = exe.functions {
+                    let pb = m.add(indicatif::ProgressBar::new(functions.len() as u64));
+                    pb.set_style(sty.clone());
+                    pb.set_message(format!("insertingi functions for {}", game));
+
+                    functions
+                        .iter()
+                        .progress_with(pb)
+                        .try_for_each(|function| -> Result<()> {
+                            let range = function.full_range();
+                            let bytes = &exe.memory[range.clone()];
+
+                            let key = FunctionKey {
+                                address: range.start,
+                                executable: exe_path.to_string_lossy().to_string(),
+                            };
+
+                            let value = FunctionValue {
+                                bytes: bytes.into(),
+                            };
+
+                            functions_tree.insert(
+                                bincode::encode_to_vec(key, config)?,
+                                bincode::encode_to_vec(value, config)?,
+                            )?;
+                            Ok(())
+                        })?;
+                }
+                Ok(())
+            })?;
+
+        let symbols_map = symbols_map.lock().unwrap();
+
+        let pb = m.add(indicatif::ProgressBar::new(symbols_map.len() as u64));
+        pb.set_style(sty.clone());
+        pb.set_message("inserting symbols");
+
+        symbols_map
+            .iter()
+            .progress_with(pb)
+            .try_for_each(|(key, value)| -> Result<()> {
+                symbols_tree.merge(
+                    bincode::encode_to_vec(key, config)?,
+                    bincode::encode_to_vec(value, config)?,
+                )?;
+                Ok(())
+            })?;
 
         Ok(())
     }
