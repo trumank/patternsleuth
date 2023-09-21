@@ -29,3 +29,4 @@ regex = { workspace = true }
 strum = { workspace = true }
 sled = { version = "0.34.7", features = ["compression"] }
 bincode = { version = "2.0.0-rc.3" }
+indicatif = "0.17.6"

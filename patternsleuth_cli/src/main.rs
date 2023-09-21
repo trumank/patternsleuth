@@ -897,7 +897,7 @@ mod index {
     use super::*;
 
     use bincode::{Decode, Encode};
-    use prettytable::{Table, Row, Cell};
+    use prettytable::{Cell, Row, Table};
 
     #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord)]
     struct SymbolKey<'n> {
@@ -923,7 +923,7 @@ mod index {
     pub(crate) fn search(command: CommandSearchIndex) -> Result<()> {
         let config = bincode::config::standard().with_big_endian();
 
-        let db: sled::Db = sled::open("my_db")?;
+        let db: sled::Db = sled::open("symbol_db")?;
 
         let functions_tree: sled::Tree = db.open_tree(b"functions")?;
         let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
@@ -936,11 +936,13 @@ mod index {
 
                 let mut cells = vec![];
                 if let Some(value_enc) = symbols_tree.get(key_enc)? {
-                    let value: SymbolValue = bincode::borrow_decode_from_slice(&value_enc, config)?.0;
+                    let value: SymbolValue =
+                        bincode::borrow_decode_from_slice(&value_enc, config)?.0;
                     for f in value.functions {
                         let fn_key_enc = bincode::encode_to_vec(&f, config)?;
                         if let Some(function_value) = functions_tree.get(fn_key_enc)? {
-                            let function_value: FunctionValue = bincode::borrow_decode_from_slice(&function_value, config)?.0;
+                            let function_value: FunctionValue =
+                                bincode::borrow_decode_from_slice(&function_value, config)?.0;
 
                             cells.push((
                                 f.executable,
@@ -965,7 +967,7 @@ mod index {
     pub(crate) fn read(_command: CommandReadIndex) -> Result<()> {
         let config = bincode::config::standard().with_big_endian();
 
-        let db: sled::Db = sled::open("my_db")?;
+        let db: sled::Db = sled::open("symbol_db")?;
 
         let functions_tree: sled::Tree = db.open_tree(b"functions")?;
         let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
@@ -1020,17 +1022,16 @@ mod index {
 
         let config = bincode::config::standard().with_big_endian();
 
-        let db: sled::Db = sled::open("my_db")?;
+        let db: sled::Db = sled::open("symbol_db")?;
 
         let functions_tree: sled::Tree = db.open_tree(b"functions")?;
         let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
         symbols_tree.set_merge_operator(union_merge);
 
-        for entry in fs::read_dir("games")?
-            .collect::<Result<Vec<_>, _>>()?
-            .iter()
-            .sorted_by_key(|e| e.file_name())
-        {
+        let mut games_with_symbols = vec![];
+        for entry in fs::read_dir("games")? {
+            let entry = entry?;
+
             let dir_name = entry.file_name();
             let game = dir_name.to_string_lossy().to_string();
 
@@ -1042,58 +1043,95 @@ mod index {
                 continue;
             }
 
-            println!("{:?} {:?}", game, exe_path.display());
-            let bin_data = fs::read(&exe_path)?;
+            games_with_symbols.push((game, exe_path));
+        }
+
+        use indicatif::ProgressIterator;
+
+        let m = indicatif::MultiProgress::new();
+        let sty = indicatif::ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
+        )
+        .unwrap()
+        .progress_chars("##-");
+
+        let pb = m.add(indicatif::ProgressBar::new(games_with_symbols.len() as u64));
+        pb.set_style(sty.clone());
+
+        let mut iter = games_with_symbols.iter().progress_with(pb.clone());
+
+        iter.try_for_each(move |(game, exe_path)| -> Result<()> {
+            pb.set_message(game.clone());
+
+            let bin_data = fs::read(exe_path)?;
             let exe = match Executable::read(
-                &bin_data, &exe_path, true, // symbols
+                &bin_data, exe_path, true, // symbols
                 true, // exceptions
             ) {
                 Ok(exe) => exe,
                 Err(err) => {
                     println!("err reading {}: {}", exe_path.display(), err);
-                    continue;
+                    return Ok(());
                 }
             };
 
-            for (address, name) in exe.symbols.as_ref().unwrap() {
-                let key = SymbolKey {
-                    name: name.into(),
-                };
-                let value = SymbolValue {
-                    functions: [FunctionKey {
-                        address: *address,
-                        executable: exe_path.to_string_lossy().to_string(),
-                    }]
-                    .into(),
-                };
+            let symbols = exe.symbols.as_ref().unwrap();
 
-                symbols_tree.merge(
-                    bincode::encode_to_vec(key, config)?,
-                    bincode::encode_to_vec(value, config)?,
-                )?;
-            }
+            let pb = m.add(indicatif::ProgressBar::new(symbols.len() as u64));
+            pb.set_style(sty.clone());
+            pb.set_message("symbols");
 
-            if let Some(functions) = exe.functions {
-                for function in &functions {
-                    let range = function.full_range();
-                    let bytes = &exe.memory[range.clone()];
-
-                    let key = FunctionKey {
-                        address: range.start,
-                        executable: exe_path.to_string_lossy().to_string(),
+            symbols
+                .iter()
+                .progress_with(pb)
+                .try_for_each(|(address, name)| -> Result<()> {
+                    let key = SymbolKey { name: name.into() };
+                    let value = SymbolValue {
+                        functions: [FunctionKey {
+                            address: *address,
+                            executable: exe_path.to_string_lossy().to_string(),
+                        }]
+                        .into(),
                     };
 
-                    let value = FunctionValue {
-                        bytes: bytes.into(),
-                    };
-
-                    functions_tree.insert(
+                    symbols_tree.merge(
                         bincode::encode_to_vec(key, config)?,
                         bincode::encode_to_vec(value, config)?,
                     )?;
-                }
+
+                    Ok(())
+                })?;
+
+            if let Some(functions) = exe.functions {
+                let pb = m.add(indicatif::ProgressBar::new(functions.len() as u64));
+                pb.set_style(sty.clone());
+                pb.set_message("functions");
+
+                functions
+                    .iter()
+                    .progress_with(pb)
+                    .try_for_each(|function| -> Result<()> {
+                        let range = function.full_range();
+                        let bytes = &exe.memory[range.clone()];
+
+                        let key = FunctionKey {
+                            address: range.start,
+                            executable: exe_path.to_string_lossy().to_string(),
+                        };
+
+                        let value = FunctionValue {
+                            bytes: bytes.into(),
+                        };
+
+                        functions_tree.insert(
+                            bincode::encode_to_vec(key, config)?,
+                            bincode::encode_to_vec(value, config)?,
+                        )?;
+                        Ok(())
+                    })?;
             }
-        }
+            Ok(())
+        })?;
 
         Ok(())
     }
