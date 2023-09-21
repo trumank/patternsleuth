@@ -23,6 +23,8 @@ enum Commands {
     BuildIndex(CommandBuildIndex),
     ReadIndex(CommandReadIndex),
     SearchIndex(CommandSearchIndex),
+    ListIndex(CommandListIndex),
+    ViewSymbol(CommandViewSymbol),
 }
 
 #[derive(Parser)]
@@ -80,6 +82,15 @@ struct CommandSearchIndex {
     #[arg()]
     symbol: String,
 }
+
+#[derive(Parser)]
+struct CommandViewSymbol {
+    #[arg()]
+    symbol: String,
+}
+
+#[derive(Parser)]
+struct CommandListIndex {}
 
 mod disassemble {
     use std::ops::Range;
@@ -462,6 +473,8 @@ fn main() -> Result<()> {
         Commands::BuildIndex(command) => index::build(command),
         Commands::ReadIndex(command) => index::read(command),
         Commands::SearchIndex(command) => index::search(command),
+        Commands::ListIndex(command) => index::list(command),
+        Commands::ViewSymbol(command) => index::view(command),
     }
 }
 
@@ -964,6 +977,68 @@ mod index {
                 ));
                 table.printstd();
             }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
+        let config = bincode::config::standard().with_big_endian();
+
+        let db: sled::Db = sled::open("symbol_db")?;
+
+        let functions_tree: sled::Tree = db.open_tree(b"functions")?;
+        let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
+
+        let symbol_enc = bincode::encode_to_vec(
+            SymbolKey {
+                name: command.symbol,
+            },
+            config,
+        )?;
+
+        if let Some(symbol_value) = symbols_tree.get(symbol_enc)? {
+            let value: SymbolValue = bincode::borrow_decode_from_slice(&symbol_value, config)?.0;
+
+            let mut cells = vec![];
+
+            for f in value.functions {
+                let fn_key_enc = bincode::encode_to_vec(&f, config)?;
+                if let Some(function_value) = functions_tree.get(fn_key_enc)? {
+                    let function_value: FunctionValue =
+                        bincode::borrow_decode_from_slice(&function_value, config)?.0;
+
+                    cells.push((
+                        f.executable,
+                        disassemble::disassemble_bytes(f.address, &function_value.bytes),
+                    ));
+                }
+            }
+
+            let mut table = Table::new();
+            table.set_titles(cells.iter().map(|c| c.0.clone()).collect());
+            table.add_row(Row::new(
+                cells.into_iter().map(|c| Cell::new(&c.1)).collect(),
+            ));
+            table.printstd();
+        } else {
+            println!("not found");
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn list(command: CommandListIndex) -> Result<()> {
+        let config = bincode::config::standard().with_big_endian();
+
+        let db: sled::Db = sled::open("symbol_db")?;
+
+        let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
+
+        for key in symbols_tree.iter().keys() {
+            let key_enc = key?;
+            let key: SymbolKey = bincode::borrow_decode_from_slice(&key_enc, config)?.0;
+            println!("{}", key.name);
         }
 
         Ok(())
