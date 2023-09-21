@@ -20,6 +20,9 @@ use patternsleuth::{
 enum Commands {
     Scan(CommandScan),
     Symbols(CommandSymbols),
+    BuildIndex(CommandBuildIndex),
+    ReadIndex(CommandReadIndex),
+    SearchIndex(CommandSearchIndex),
 }
 
 #[derive(Parser)]
@@ -64,6 +67,18 @@ struct CommandSymbols {
 
     #[arg(short, long)]
     symbol: Vec<regex::Regex>,
+}
+
+#[derive(Parser)]
+struct CommandBuildIndex {}
+
+#[derive(Parser)]
+struct CommandReadIndex {}
+
+#[derive(Parser)]
+struct CommandSearchIndex {
+    #[arg()]
+    symbol: String,
 }
 
 mod disassemble {
@@ -271,6 +286,46 @@ mod disassemble {
         output.buffer
     }
 
+    pub(crate) fn disassemble_bytes(address: usize, data: &[u8]) -> String {
+        let mut output = Output::default();
+
+        output.buffer.push_str(&format!(
+            "{:016x} - {:016x}\n",
+            address,
+            address + data.len()
+        ));
+
+        output.buffer.push('\n');
+
+        let mut decoder = Decoder::with_ip(64, data, address as u64, DecoderOptions::NONE);
+
+        let instructions = decoder.iter().collect::<Vec<_>>();
+
+        let mut formatter = IntelFormatter::new();
+        formatter.options_mut().set_first_operand_char_index(8);
+        for instruction in instructions {
+            let ip = format!("{:016x}", instruction.ip());
+            output.buffer.push_str(&ip);
+            output.buffer.push_str(":  ");
+
+            let index = instruction.ip() as usize - address;
+            for b in data[index..index + instruction.len()].iter() {
+                let s = format!("{:02x}", b);
+                #[allow(clippy::unnecessary_to_owned)]
+                output.buffer.push_str(&s.bright_white().to_string());
+                output.buffer.push(' ');
+            }
+
+            for _ in 0..8usize.saturating_sub(instruction.len()) {
+                output.buffer.push_str("   ");
+            }
+
+            formatter.format(&instruction, &mut output);
+            output.buffer.push('\n');
+        }
+        output.buffer
+    }
+
     fn get_color(s: &str, kind: FormatterTextKind) -> ColoredString {
         match kind {
             FormatterTextKind::Directive | FormatterTextKind::Keyword => s.bright_yellow(),
@@ -404,6 +459,9 @@ fn main() -> Result<()> {
     match Commands::parse() {
         Commands::Scan(command) => scan(command),
         Commands::Symbols(command) => symbols(command),
+        Commands::BuildIndex(command) => index::build(command),
+        Commands::ReadIndex(command) => index::read(command),
+        Commands::SearchIndex(command) => index::search(command),
     }
 }
 
@@ -831,4 +889,212 @@ fn symbols(command: CommandSymbols) -> Result<()> {
     table.printstd();
 
     Ok(())
+}
+
+mod index {
+    use std::{borrow::Cow, collections::BTreeSet};
+
+    use super::*;
+
+    use bincode::{Decode, Encode};
+    use prettytable::{Table, Row, Cell};
+
+    #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord)]
+    struct SymbolKey<'n> {
+        name: Cow<'n, str>,
+    }
+
+    #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord)]
+    struct SymbolValue {
+        functions: BTreeSet<FunctionKey>,
+    }
+
+    #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord)]
+    struct FunctionKey {
+        address: usize,
+        executable: String,
+    }
+
+    #[derive(Debug, Encode, Decode)]
+    struct FunctionValue<'b> {
+        bytes: Cow<'b, [u8]>,
+    }
+
+    pub(crate) fn search(command: CommandSearchIndex) -> Result<()> {
+        let config = bincode::config::standard().with_big_endian();
+
+        let db: sled::Db = sled::open("my_db")?;
+
+        let functions_tree: sled::Tree = db.open_tree(b"functions")?;
+        let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
+
+        for key in symbols_tree.iter().keys() {
+            let key_enc = key?;
+            let key: SymbolKey = bincode::borrow_decode_from_slice(&key_enc, config)?.0;
+            if key.name.contains(&command.symbol) {
+                println!("{:X?}", key.name);
+
+                let mut cells = vec![];
+                if let Some(value_enc) = symbols_tree.get(key_enc)? {
+                    let value: SymbolValue = bincode::borrow_decode_from_slice(&value_enc, config)?.0;
+                    for f in value.functions {
+                        let fn_key_enc = bincode::encode_to_vec(&f, config)?;
+                        if let Some(function_value) = functions_tree.get(fn_key_enc)? {
+                            let function_value: FunctionValue = bincode::borrow_decode_from_slice(&function_value, config)?.0;
+
+                            cells.push((
+                                f.executable,
+                                disassemble::disassemble_bytes(f.address, &function_value.bytes),
+                            ));
+                        }
+                    }
+                }
+
+                let mut table = Table::new();
+                table.set_titles(cells.iter().map(|c| c.0.clone()).collect());
+                table.add_row(Row::new(
+                    cells.into_iter().map(|c| Cell::new(&c.1)).collect(),
+                ));
+                table.printstd();
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn read(_command: CommandReadIndex) -> Result<()> {
+        let config = bincode::config::standard().with_big_endian();
+
+        let db: sled::Db = sled::open("my_db")?;
+
+        let functions_tree: sled::Tree = db.open_tree(b"functions")?;
+        let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
+
+        for entry in symbols_tree.iter() {
+            let (key, value) = entry?;
+            let (key, value) = (
+                bincode::borrow_decode_from_slice::<SymbolKey, _>(&key, config)?,
+                bincode::borrow_decode_from_slice::<SymbolValue, _>(&value, config)?,
+            );
+            //dbg!(key, value);
+            println!("{:X?} {:X?}", key, value);
+        }
+
+        for entry in functions_tree.iter() {
+            let (key, value) = entry?;
+            let (key, value) = (
+                bincode::borrow_decode_from_slice::<FunctionKey, _>(&key, config)?,
+                bincode::borrow_decode_from_slice::<FunctionValue, _>(&value, config)?,
+            );
+            //dbg!(key, value);
+            println!("{:X?}", key);
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn build(_command: CommandBuildIndex) -> Result<()> {
+        fn union_merge(
+            _key: &[u8],
+            old_value: Option<&[u8]>,
+            merged_bytes: &[u8],
+        ) -> Option<Vec<u8>> {
+            if let Some(old_value) = old_value {
+                let config = bincode::config::standard().with_big_endian();
+                let mut old_value: SymbolValue =
+                    bincode::borrow_decode_from_slice(old_value, config)
+                        .unwrap()
+                        .0;
+                let merged_value: SymbolValue =
+                    bincode::borrow_decode_from_slice(merged_bytes, config)
+                        .unwrap()
+                        .0;
+
+                old_value.functions.extend(merged_value.functions);
+
+                Some(bincode::encode_to_vec(old_value, config).unwrap())
+            } else {
+                Some(merged_bytes.to_vec())
+            }
+        }
+
+        let config = bincode::config::standard().with_big_endian();
+
+        let db: sled::Db = sled::open("my_db")?;
+
+        let functions_tree: sled::Tree = db.open_tree(b"functions")?;
+        let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
+        symbols_tree.set_merge_operator(union_merge);
+
+        for entry in fs::read_dir("games")?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .sorted_by_key(|e| e.file_name())
+        {
+            let dir_name = entry.file_name();
+            let game = dir_name.to_string_lossy().to_string();
+
+            let Some(exe_path) = find_ext(entry.path(), "exe")? else {
+                continue;
+            };
+
+            if !exe_path.with_extension("pdb").exists() {
+                continue;
+            }
+
+            println!("{:?} {:?}", game, exe_path.display());
+            let bin_data = fs::read(&exe_path)?;
+            let exe = match Executable::read(
+                &bin_data, &exe_path, true, // symbols
+                true, // exceptions
+            ) {
+                Ok(exe) => exe,
+                Err(err) => {
+                    println!("err reading {}: {}", exe_path.display(), err);
+                    continue;
+                }
+            };
+
+            for (address, name) in exe.symbols.as_ref().unwrap() {
+                let key = SymbolKey {
+                    name: name.into(),
+                };
+                let value = SymbolValue {
+                    functions: [FunctionKey {
+                        address: *address,
+                        executable: exe_path.to_string_lossy().to_string(),
+                    }]
+                    .into(),
+                };
+
+                symbols_tree.merge(
+                    bincode::encode_to_vec(key, config)?,
+                    bincode::encode_to_vec(value, config)?,
+                )?;
+            }
+
+            if let Some(functions) = exe.functions {
+                for function in &functions {
+                    let range = function.full_range();
+                    let bytes = &exe.memory[range.clone()];
+
+                    let key = FunctionKey {
+                        address: range.start,
+                        executable: exe_path.to_string_lossy().to_string(),
+                    };
+
+                    let value = FunctionValue {
+                        bytes: bytes.into(),
+                    };
+
+                    functions_tree.insert(
+                        bincode::encode_to_vec(key, config)?,
+                        bincode::encode_to_vec(value, config)?,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
 }

@@ -214,7 +214,7 @@ pub struct Executable<'data> {
     pub data: &'data [u8],
     pub object: object::File<'data>,
     pub memory: MountedPE<'data>,
-    functions: Option<Vec<RuntimeFunction>>,
+    pub functions: Option<Vec<RuntimeFunction>>,
     pub symbols: Option<HashMap<usize, String>>,
 }
 impl<'data> Executable<'data> {
