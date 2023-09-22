@@ -124,9 +124,6 @@ mod disassemble {
         let mut output = Output::default();
 
         if let Some(section) = exe.memory.get_section_containing(address) {
-            let data = &section.data[(address - context * max_inst).saturating_sub(section.address)
-                ..(address + context * max_inst).saturating_sub(section.address)];
-
             output.buffer.push_str(&format!(
                 "{:016x}\n{:016x} - {:016x} = {}\n",
                 address,
@@ -135,7 +132,7 @@ mod disassemble {
                 section.name,
             ));
 
-            if let Some(f) = exe.get_function(address) {
+            let (is_fn, data, start_address) = if let Some(f) = exe.get_function(address) {
                 output.buffer.push_str(&format!(
                     "{:016x} - {:016x} = function\n",
                     f.range.start, f.range.end
@@ -148,20 +145,33 @@ mod disassemble {
                             .push_str(&format!("{}\n", symbol).bright_yellow().to_string());
                     }
                 }
+                let data =
+                    &section.data[f.range.start - section.address..f.range.end - section.address];
+                let start_address = f.range.start as u64;
+                (true, data, start_address)
             } else {
                 output.buffer.push_str("no function");
-            }
+
+                let data = &section.data[(address - context * max_inst)
+                    .saturating_sub(section.address)
+                    ..(address + context * max_inst).saturating_sub(section.address)];
+                let start_address = (address - context * max_inst) as u64;
+                (false, data, start_address)
+            };
 
             output.buffer.push('\n');
 
-            let start_address = (address - context * max_inst) as u64;
             let mut decoder = Decoder::with_ip(64, data, start_address, DecoderOptions::NONE);
 
             let instructions = decoder.iter().collect::<Vec<_>>();
-            let instructions = if let Some((middle, _)) = instructions
-                .iter()
-                .enumerate()
-                .find(|(_, inst)| inst.ip() >= address as u64)
+            let instructions = if let Some((middle, _)) = (!is_fn)
+                .then(|| {
+                    instructions
+                        .iter()
+                        .enumerate()
+                        .find(|(_, inst)| inst.ip() >= address as u64)
+                })
+                .flatten()
             {
                 instructions
                     .into_iter()
