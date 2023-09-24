@@ -73,6 +73,8 @@ pub enum Sig {
 
     AES,
     Lock,
+    FParseParam,
+    FParseParamCalls,
 }
 
 pub fn get_patterns() -> Result<Vec<PatternConfig>> {
@@ -1482,7 +1484,72 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             Pattern::from_bytes("Illegal call to StaticFindObjectFast".encode_utf16().flat_map(u16::to_le_bytes).collect())?,
             xref::resolve,
         ),
+
+        PatternConfig::new(
+            Sig::FParseParam,
+            "FParse::Param".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 54 41 55 41 56 41 57 48 83 EC 20 66 83 39 00 4C 8B ?? 4C")?,
+            resolve_self,
+        ),
+        PatternConfig::new(
+            Sig::FParseParamCalls,
+            "FParse::Param calls".to_string(),
+            Some(object::SectionKind::Text),
+            Pattern::new("48 8d 15 [ ?? ?? ?? ?? ] e8 X0x141aac5a0")?, // TODO get this xref address from pattern dependency
+            fparseparam::resolve,
+        ),
     ])
+}
+
+fn read_wstring(ctx: &ResolveContext, address: usize) -> String {
+    let section = ctx.memory.get_section_containing(address).unwrap();
+    let section_address = address - section.address;
+    let data = &section.data[section_address..]
+        .chunks(2)
+        .map(|chunk| ((chunk[1] as u16) << 8) + chunk[0] as u16)
+        .take_while(|n| *n != 0)
+        .collect::<Vec<u16>>();
+
+    String::from_utf16(data).unwrap()
+}
+
+trait Addressable {
+    fn rip(&self) -> usize;
+    fn ptr(&self) -> usize;
+    fn u32(&self) -> u32;
+}
+impl Addressable for patternsleuth_scanner::Capture<'_> {
+    fn rip(&self) -> usize {
+        (self.address + 4)
+            .checked_add_signed(i32::from_le_bytes(self.data.try_into().unwrap()) as isize)
+            .unwrap()
+    }
+    fn ptr(&self) -> usize {
+        usize::from_le_bytes(self.data.try_into().unwrap())
+    }
+    fn u32(&self) -> u32 {
+        u32::from_le_bytes(self.data.try_into().unwrap())
+    }
+}
+
+trait Matchable<'data> {
+    fn captures(
+        &'data self,
+        pattern: &Pattern,
+        address: usize,
+    ) -> Option<Vec<patternsleuth_scanner::Capture<'data>>>;
+}
+
+impl<'data> Matchable<'data> for MountedPE<'data> {
+    fn captures(
+        &'data self,
+        pattern: &Pattern,
+        address: usize,
+    ) -> Option<Vec<patternsleuth_scanner::Capture<'data>>> {
+        self.get_section_containing(address)
+            .and_then(move |s| pattern.captures(s.data, s.address, address - s.address))
+    }
 }
 
 /// do nothing, return address of pattern
@@ -1928,5 +1995,16 @@ mod signing_key {
         } else {
             ResolutionType::Failed.into()
         }
+    }
+}
+
+mod fparseparam {
+    use super::*;
+
+    pub fn resolve(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
+
+        let addr = ctx.memory.captures(ctx.pattern, ctx.match_address).unwrap()[0].rip();
+        read_wstring(&ctx, addr.into()).into()
     }
 }

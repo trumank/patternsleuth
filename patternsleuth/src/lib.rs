@@ -21,11 +21,12 @@ use object::{File, Object, ObjectSection};
 
 use patterns::Sig;
 
-pub struct ResolveContext<'data> {
+pub struct ResolveContext<'data, 'pattern> {
     pub exe: &'data Executable<'data>,
     pub memory: &'data MountedPE<'data>,
     pub section: String,
     pub match_address: usize,
+    pub pattern: &'pattern Pattern,
 }
 
 #[derive(Debug)]

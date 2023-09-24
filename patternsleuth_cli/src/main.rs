@@ -463,6 +463,7 @@ fn scan_game<'patterns>(
                         memory: &exe.memory,
                         section: section_name.to_owned(),
                         match_address: address,
+                        pattern: pattern_scans[scan.index].1,
                     },
                     &mut stages,
                 );
