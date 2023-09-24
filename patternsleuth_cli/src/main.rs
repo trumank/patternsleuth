@@ -9,6 +9,7 @@ use object::{Object, ObjectSection};
 use patternsleuth::patterns::resolve_self;
 use patternsleuth::Executable;
 
+use patternsleuth::scanner::Xref;
 use patternsleuth::{
     patterns::{get_patterns, Sig},
     scanner::Pattern,
@@ -27,6 +28,12 @@ enum Commands {
     ViewSymbol(CommandViewSymbol),
 }
 
+fn parse_maybe_hex(s: &str) -> Result<usize> {
+    Ok(s.strip_prefix("0x")
+        .map(|s| usize::from_str_radix(s, 16))
+        .unwrap_or_else(|| s.parse())?)
+}
+
 #[derive(Parser)]
 struct CommandScan {
     /// A game to scan (can be specified multiple times). Scans everything if omitted. Supports
@@ -43,9 +50,13 @@ struct CommandScan {
     #[arg(short, long)]
     disassemble: bool,
 
-    /// A signature to scan for (can be specified multiple times). Scans for all signatures if omitted
+    /// A pattern to scan for (can be specified multiple times)
     #[arg(short, long, group = "scan", value_parser(|s: &_| Pattern::new(s)))]
     patterns: Vec<Pattern>,
+
+    /// An xref to scan for (can be specified multiple times)
+    #[arg(short, long, group = "scan", value_parser(|s: &str| parse_maybe_hex(s).map(Xref)))]
+    xref: Vec<Xref>,
 
     /// Load and display symbols from PDBs when available (can be slow)
     #[arg(long)]
@@ -494,7 +505,7 @@ fn main() -> Result<()> {
 }
 
 fn scan(command: CommandScan) -> Result<()> {
-    let patterns = if command.patterns.is_empty() {
+    let patterns = if command.patterns.is_empty() && command.xref.is_empty() {
         let sig_filter = command.signature.into_iter().collect::<HashSet<_>>();
         get_patterns()?
             .into_iter()
@@ -513,12 +524,21 @@ fn scan(command: CommandScan) -> Result<()> {
             .map(|(i, p)| {
                 PatternConfig::new(
                     Sig::Custom("arg".to_string()),
-                    format!("arg {i}"),
+                    format!("pattern {i}"),
                     None,
                     p,
                     resolve_self,
                 )
             })
+            .chain(command.xref.into_iter().enumerate().map(|(i, p)| {
+                PatternConfig::xref(
+                    Sig::Custom("arg".to_string()),
+                    format!("xref {i}"),
+                    None,
+                    p,
+                    resolve_self,
+                )
+            }))
             .collect_vec()
     };
     let sigs = patterns
