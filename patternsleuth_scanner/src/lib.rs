@@ -1,6 +1,6 @@
 #![feature(portable_simd)]
 
-use anyhow::{bail, Error, Result};
+use anyhow::{bail, Context, Error, Result};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Pattern {
@@ -8,6 +8,7 @@ pub struct Pattern {
     pub mask: Vec<u8>,
     pub custom_offset: usize,
     pub captures: Vec<std::ops::Range<usize>>,
+    pub xrefs: Vec<(usize, Xref)>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -30,7 +31,7 @@ impl TryFrom<&str> for Pattern {
 }
 
 impl Pattern {
-    fn parse_bits(s: &str) -> Option<(u8, u8)> {
+    fn parse_binary_patern(s: &str) -> Option<(u8, u8)> {
         if s.len() == 8 {
             let mut sig = 0;
             let mut mask = 0;
@@ -54,7 +55,7 @@ impl Pattern {
         }
     }
 
-    fn parse_hex(s: &str) -> Option<(u8, u8)> {
+    fn parse_hex_pattern(s: &str) -> Option<(u8, u8)> {
         if s.len() == 2 {
             let mut sig = 0;
             let mut mask = 0;
@@ -73,6 +74,12 @@ impl Pattern {
         }
     }
 
+    fn parse_maybe_hex(s: &str) -> Result<usize> {
+        Ok(s.strip_prefix("0x")
+            .map(|s| usize::from_str_radix(s, 16))
+            .unwrap_or_else(|| s.parse())?)
+    }
+
     pub fn new(s: &str) -> Result<Self> {
         let mut sig = vec![];
         let mut mask = vec![];
@@ -80,10 +87,13 @@ impl Pattern {
 
         let mut capture_stack = vec![];
         let mut captures = vec![];
+        let mut xrefs = vec![];
 
         let mut i = 0;
         for w in s.split_whitespace() {
-            if let Some((s, m)) = Self::parse_hex(w).or_else(|| Self::parse_bits(w)) {
+            if let Some((s, m)) =
+                Self::parse_hex_pattern(w).or_else(|| Self::parse_binary_patern(w))
+            {
                 if m != 0xff && sig.is_empty() {
                     bail!("first byte cannot be \"??\"");
                 } else {
@@ -106,7 +116,19 @@ impl Pattern {
                             bail!("unexpected closing capture at word {i}");
                         }
                     }
-                    _ => bail!("bad pattern word \"{}\"", w),
+                    _ => {
+                        if let Some(xref) = w.strip_prefix('X').map(Self::parse_maybe_hex) {
+                            let xref =
+                                Xref(xref.with_context(|| format!("failed to parse xref {w}"))?);
+                            xrefs.push((sig.len(), xref));
+                            for _ in 0..4 {
+                                sig.push(0);
+                                mask.push(0);
+                            }
+                        } else {
+                            bail!("bad pattern word \"{}\"", w)
+                        }
+                    }
                 }
             }
         }
@@ -119,6 +141,7 @@ impl Pattern {
             mask,
             custom_offset,
             captures,
+            xrefs,
         })
     }
     /// Create a pattern from a literal Vec<u8> with `mask` filled with 0xff and `custom_offset = 0`.
@@ -128,16 +151,24 @@ impl Pattern {
             sig,
             custom_offset: 0,
             captures: vec![],
+            xrefs: vec![],
         })
     }
     #[inline]
-    pub fn is_match(&self, data: &[u8], index: usize) -> bool {
+    pub fn is_match(&self, data: &[u8], base_address: usize, index: usize) -> bool {
         for i in 0..self.mask.len() {
             if data[index + i] & self.mask[i] != self.sig[i] {
                 return false;
             }
         }
-        true
+        self.xrefs.iter().all(|(offset, xref)| {
+            (base_address + index + offset + 4)
+                .checked_add_signed(i32::from_le_bytes(
+                    data[index + offset..index + offset + 4].try_into().unwrap(),
+                ) as isize)
+                .map(|x| x == xref.0)
+                .unwrap_or(false)
+        })
     }
     pub fn captures<'data>(
         &self,
@@ -145,7 +176,7 @@ impl Pattern {
         base_address: usize,
         index: usize,
     ) -> Option<Vec<Capture<'data>>> {
-        self.is_match(data, index).then(|| {
+        self.is_match(data, base_address, index).then(|| {
             self.captures
                 .iter()
                 .map(|c| Capture {
@@ -200,7 +231,7 @@ pub fn scan<'id, ID: Sync>(
     // prefix
     for (id, p) in patterns {
         for i in 0..prefix.len().min(data.len().saturating_sub(p.sig.len() - 1)) {
-            if p.is_match(data, i) {
+            if p.is_match(data, base_address, i) {
                 matches.push((*id, base_address + i));
             }
         }
@@ -228,7 +259,7 @@ pub fn scan<'id, ID: Sync>(
 
                             let j = prefix.len() + (offset + i) * LANES + next as usize;
 
-                            if p.is_match(data, j) {
+                            if p.is_match(data, base_address, j) {
                                 matches.push((*id, p.compute_result(data, base_address, j)));
                             }
                         }
@@ -244,7 +275,7 @@ pub fn scan<'id, ID: Sync>(
     let start = prefix.len() + middle.len() * LANES;
     for (id, p) in patterns {
         for i in start..start + suffix.len().saturating_sub(p.sig.len() - 1) {
-            if p.is_match(data, i) {
+            if p.is_match(data, base_address, i) {
                 matches.push((*id, base_address + i));
             }
         }
@@ -279,7 +310,7 @@ pub fn scan_memchr<'id, ID: Sync>(
 
                     for i in memchr::memchr_iter(pattern.sig[0], chunk) {
                         let j = offset + i;
-                        if pattern.is_match(data, j) {
+                        if pattern.is_match(data, base_address, j) {
                             matches.push((*id, pattern.compute_result(data, base_address, j)));
                         }
                     }
@@ -331,7 +362,7 @@ pub fn scan_memchr_lookup<'id, ID: Sync>(
                     for i in memchr::memchr_iter(*first, chunk) {
                         let j = offset + i;
                         for (id, p) in patterns {
-                            if p.is_match(data, j) {
+                            if p.is_match(data, base_address, j) {
                                 matches.push((*id, p.compute_result(data, base_address, j)));
                             }
                         }
@@ -347,7 +378,7 @@ pub fn scan_memchr_lookup<'id, ID: Sync>(
     let start = middle.len();
     for (id, p) in patterns {
         for i in start..start + (data.len() - middle.len()).saturating_sub(p.sig.len() - 1) {
-            if p.is_match(data, i) {
+            if p.is_match(data, base_address, i) {
                 matches.push((*id, base_address + i));
             }
         }
@@ -536,29 +567,29 @@ mod test {
 
     #[test]
     fn test_parse_bits() {
-        assert_eq!(None, Pattern::parse_bits("0000000"));
-        assert_eq!(None, Pattern::parse_bits("000000000"));
-        assert_eq!(Some((0, 0xff)), Pattern::parse_bits("00000000"));
+        assert_eq!(None, Pattern::parse_binary_patern("0000000"));
+        assert_eq!(None, Pattern::parse_binary_patern("000000000"));
+        assert_eq!(Some((0, 0xff)), Pattern::parse_binary_patern("00000000"));
         assert_eq!(
             Some((0b0000_0000, 0b0111_1111)),
-            Pattern::parse_bits("?0000000")
+            Pattern::parse_binary_patern("?0000000")
         );
         assert_eq!(
             Some((0b0100_0000, 0b0111_1111)),
-            Pattern::parse_bits("?1000000")
+            Pattern::parse_binary_patern("?1000000")
         );
     }
 
     #[test]
     fn test_parse_hex() {
-        assert_eq!(Some((0xff, 0xff)), Pattern::parse_hex("ff"));
-        assert_eq!(Some((0x00, 0xff)), Pattern::parse_hex("00"));
-        assert_eq!(Some((0x0f, 0x0f)), Pattern::parse_hex("?f"));
-        assert_eq!(Some((0x00, 0x0f)), Pattern::parse_hex("?0"));
-        assert_eq!(Some((0x00, 0xf0)), Pattern::parse_hex("0?"));
-        assert_eq!(None, Pattern::parse_hex("z0"));
-        assert_eq!(None, Pattern::parse_hex("0"));
-        assert_eq!(None, Pattern::parse_hex("000"));
+        assert_eq!(Some((0xff, 0xff)), Pattern::parse_hex_pattern("ff"));
+        assert_eq!(Some((0x00, 0xff)), Pattern::parse_hex_pattern("00"));
+        assert_eq!(Some((0x0f, 0x0f)), Pattern::parse_hex_pattern("?f"));
+        assert_eq!(Some((0x00, 0x0f)), Pattern::parse_hex_pattern("?0"));
+        assert_eq!(Some((0x00, 0xf0)), Pattern::parse_hex_pattern("0?"));
+        assert_eq!(None, Pattern::parse_hex_pattern("z0"));
+        assert_eq!(None, Pattern::parse_hex_pattern("0"));
+        assert_eq!(None, Pattern::parse_hex_pattern("000"));
     }
 
     #[test]
@@ -570,6 +601,7 @@ mod test {
                 mask: vec![0xff, 0],
                 custom_offset: 0,
                 captures: vec![],
+                xrefs: vec![],
             },
             Pattern::new("00 ??").unwrap()
         );
@@ -579,6 +611,7 @@ mod test {
                 mask: vec![0xff, 0],
                 custom_offset: 0,
                 captures: vec![],
+                xrefs: vec![],
             },
             Pattern::new("10 ??").unwrap()
         );
@@ -588,6 +621,7 @@ mod test {
                 mask: vec![0xff, 0, 0b11011011],
                 custom_offset: 0,
                 captures: vec![],
+                xrefs: vec![],
             },
             Pattern::new("10 ?? 01?10?11").unwrap()
         );
@@ -604,6 +638,7 @@ mod test {
                 mask: vec![0xff, 0, 0xff, 0xff],
                 custom_offset: 0,
                 captures: vec![2..2, 1..2, 2..4],
+                xrefs: vec![],
             },
             Pattern::new("00 [ ?? [ ] ] [ 10 20 ]").unwrap()
         );
