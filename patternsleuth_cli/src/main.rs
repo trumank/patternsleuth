@@ -72,7 +72,12 @@ struct CommandSymbols {
 }
 
 #[derive(Parser)]
-struct CommandBuildIndex {}
+struct CommandBuildIndex {
+    /// A game to scan (can be specified multiple times). Scans everything if omitted. Supports
+    /// globs
+    #[arg(short, long)]
+    game: Vec<String>,
+}
 
 #[derive(Parser)]
 struct CommandReadIndex {}
@@ -489,17 +494,6 @@ fn main() -> Result<()> {
 }
 
 fn scan(command: CommandScan) -> Result<()> {
-    let games_filter = command
-        .game
-        .into_iter()
-        .map(|g| {
-            Ok(globset::GlobBuilder::new(&g)
-                .case_insensitive(true)
-                .build()?
-                .compile_matcher())
-        })
-        .collect::<Result<Vec<_>>>()?;
-
     let patterns = if command.patterns.is_empty() {
         let sig_filter = command.signature.into_iter().collect::<HashSet<_>>();
         get_patterns()?
@@ -540,30 +534,8 @@ fn scan(command: CommandScan) -> Result<()> {
     use itertools::join;
     use prettytable::{format, row, Cell, Row, Table};
 
-    for entry in fs::read_dir("games")?
-        .collect::<Result<Vec<_>, _>>()?
-        .iter()
-        .sorted_by_key(|e| e.file_name())
-    {
-        let dir_name = entry.file_name();
-        let game = dir_name.to_string_lossy().to_string();
-        if !games_filter
-            .is_empty()
-            .then_some(true)
-            .unwrap_or_else(|| games_filter.iter().any(|g| g.is_match(&game)))
-        {
-            continue;
-        }
-
-        let Some(exe_path) = find_ext(entry.path(), "exe")
-            .transpose()
-            .or_else(|| find_ext(entry.path(), "elf").transpose())
-            .transpose()?
-        else {
-            continue;
-        };
-
-        println!("{:?} {:?}", game, exe_path.display());
+    for GameEntry { name, exe_path } in get_games(command.game)? {
+        println!("{:?} {:?}", name, exe_path.display());
         let bin_data = fs::read(&exe_path)?;
         let exe = match Executable::read(
             &bin_data,
@@ -578,7 +550,7 @@ fn scan(command: CommandScan) -> Result<()> {
             }
         };
 
-        games.insert(game.to_string());
+        games.insert(name.to_string());
 
         let scan = scan_game(&exe, &patterns)?;
 
@@ -722,7 +694,7 @@ fn scan(command: CommandScan) -> Result<()> {
 
         // fold current game scans into summary scans
         scan.results.into_iter().fold(&mut all, |map, m| {
-            map.entry((game.to_string(), (&m.0.sig, &m.0.name)))
+            map.entry((name.to_string(), (&m.0.sig, &m.0.name)))
                 .or_default()
                 .push(m.1);
             map
@@ -824,49 +796,19 @@ fn scan(command: CommandScan) -> Result<()> {
 }
 
 fn symbols(command: CommandSymbols) -> Result<()> {
-    let games_filter = command
-        .game
-        .into_iter()
-        .map(|g| {
-            Ok(globset::GlobBuilder::new(&g)
-                .case_insensitive(true)
-                .build()?
-                .compile_matcher())
-        })
-        .collect::<Result<Vec<_>>>()?;
-
     let re = &command.symbol;
     let filter = |name: &_| re.iter().any(|re| re.is_match(name));
-
-    let mut games: HashSet<String> = Default::default();
 
     use prettytable::{Cell, Row, Table};
 
     let mut cells = vec![];
 
-    for entry in fs::read_dir("games")?
-        .collect::<Result<Vec<_>, _>>()?
-        .iter()
-        .sorted_by_key(|e| e.file_name())
-    {
-        let dir_name = entry.file_name();
-        let game = dir_name.to_string_lossy().to_string();
-        if !games_filter
-            .is_empty()
-            .then_some(true)
-            .unwrap_or_else(|| games_filter.iter().any(|g| g.is_match(&game)))
-        {
-            continue;
-        }
-
-        let Some(exe_path) = find_ext(entry.path(), "exe")? else {
-            continue;
-        };
+    for GameEntry { name, exe_path } in get_games(command.game)? {
         if !exe_path.with_extension("pdb").exists() {
             continue;
         }
 
-        println!("{:?} {:?}", game, exe_path.display());
+        println!("{:?} {:?}", name, exe_path.display());
         let bin_data = fs::read(&exe_path)?;
         let exe = match Executable::read(&bin_data, &exe_path, true, true) {
             Ok(exe) => exe,
@@ -891,7 +833,7 @@ fn symbols(command: CommandSymbols) -> Result<()> {
                         println!("MISALIGNED EXCEPTION ENTRY FOR {}", name);
                     } else {
                         cells.push((
-                            game.clone(),
+                            name.clone(),
                             disassemble::disassemble_range(&exe, full_range),
                         ));
                     }
@@ -900,8 +842,6 @@ fn symbols(command: CommandSymbols) -> Result<()> {
                 }
             }
         }
-
-        games.insert(game.to_string());
     }
 
     let mut table = Table::new();
@@ -912,6 +852,51 @@ fn symbols(command: CommandSymbols) -> Result<()> {
     table.printstd();
 
     Ok(())
+}
+
+struct GameEntry {
+    name: String,
+    exe_path: PathBuf,
+}
+
+fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameEntry>> {
+    let games_filter = filter
+        .as_ref()
+        .iter()
+        .map(|g| {
+            Ok(globset::GlobBuilder::new(g)
+                .case_insensitive(true)
+                .build()?
+                .compile_matcher())
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    fs::read_dir("games")?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .sorted_by_key(|e| e.file_name())
+        .map(|entry| -> Result<Option<GameEntry>> {
+            let dir_name = entry.file_name();
+            let name = dir_name.to_string_lossy().to_string();
+            if !games_filter
+                .is_empty()
+                .then_some(true)
+                .unwrap_or_else(|| games_filter.iter().any(|g| g.is_match(&name)))
+            {
+                return Ok(None);
+            }
+
+            let Some(exe_path) = find_ext(entry.path(), "exe")
+                .transpose()
+                .or_else(|| find_ext(entry.path(), "elf").transpose())
+                .transpose()?
+            else {
+                return Ok(None);
+            };
+            Ok(Some(GameEntry { name, exe_path }))
+        })
+        .filter_map(|r| r.transpose())
+        .collect::<Result<Vec<GameEntry>>>()
 }
 
 mod index {
@@ -1120,7 +1105,7 @@ mod index {
         Ok(())
     }
 
-    pub(crate) fn build(_command: CommandBuildIndex) -> Result<()> {
+    pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
         fn union_merge(
             _key: &[u8],
             old_value: Option<&[u8]>,
@@ -1153,23 +1138,10 @@ mod index {
         let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
         symbols_tree.set_merge_operator(union_merge);
 
-        let mut games_with_symbols = vec![];
-        for entry in fs::read_dir("games")? {
-            let entry = entry?;
-
-            let dir_name = entry.file_name();
-            let game = dir_name.to_string_lossy().to_string();
-
-            let Some(exe_path) = find_ext(entry.path(), "exe")? else {
-                continue;
-            };
-
-            if !exe_path.with_extension("pdb").exists() {
-                continue;
-            }
-
-            games_with_symbols.push((game, exe_path));
-        }
+        let games_with_symbols = get_games(command.game)?
+            .into_iter()
+            .filter(|g| g.exe_path.with_extension("pdb").exists())
+            .collect::<Vec<_>>();
 
         use indicatif::ParallelProgressIterator;
         use indicatif::ProgressIterator;
@@ -1189,7 +1161,7 @@ mod index {
         games_with_symbols
             .par_iter()
             .progress_with(pb.clone())
-            .try_for_each(|(game, exe_path)| -> Result<()> {
+            .try_for_each(|GameEntry { name, exe_path }| -> Result<()> {
                 pb.set_message("total");
 
                 let bin_data = fs::read(exe_path)?;
@@ -1208,7 +1180,7 @@ mod index {
 
                 let pb = m.add(indicatif::ProgressBar::new(symbols.len() as u64));
                 pb.set_style(sty.clone());
-                pb.set_message(format!("collecting symbols for {}", game));
+                pb.set_message(format!("collecting symbols for {}", name));
 
                 let mut symbols_map = symbols_map.lock().unwrap();
                 symbols
@@ -1230,7 +1202,7 @@ mod index {
                 if let Some(functions) = exe.functions {
                     let pb = m.add(indicatif::ProgressBar::new(functions.len() as u64));
                     pb.set_style(sty.clone());
-                    pb.set_message(format!("insertingi functions for {}", game));
+                    pb.set_message(format!("insertingi functions for {}", name));
 
                     functions
                         .iter()
