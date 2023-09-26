@@ -30,3 +30,5 @@ strum = { workspace = true }
 sled = { version = "0.34.7", features = ["compression"] }
 bincode = { version = "2.0.0-rc.3" }
 indicatif = { version = "0.17.6", features = ["rayon"] }
+csv = "1.2.2"
+chrono = "0.4.31"

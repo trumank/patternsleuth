@@ -135,6 +135,9 @@ impl Pattern {
         if let Some(start) = capture_stack.pop() {
             bail!("unclosed capture at word {start}");
         }
+        if sig.is_empty() {
+            bail!("pattern must match at least one byte");
+        }
 
         Ok(Self {
             sig,
@@ -193,11 +196,27 @@ impl Pattern {
     }
 }
 
+impl Display for Pattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut buffer = String::new();
+        buffer.push_str(&format!("{:02X}", self.sig[0]));
+        for (sig, mask) in self.sig.iter().zip(&self.mask).skip(1) {
+            if *mask == 0 {
+                buffer.push_str(" ??");
+            } else {
+                buffer.push_str(&format!(" {:02X}", sig));
+            }
+        }
+        write!(f, "{}", buffer)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Xref(pub usize);
 
 use std::{
     collections::HashMap,
+    fmt::Display,
     simd::{SimdPartialEq, ToBitMask},
 };
 

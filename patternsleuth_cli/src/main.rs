@@ -26,6 +26,7 @@ enum Commands {
     SearchIndex(CommandSearchIndex),
     ListIndex(CommandListIndex),
     ViewSymbol(CommandViewSymbol),
+    BruteForce(CommandBruteForce),
 }
 
 fn parse_maybe_hex(s: &str) -> Result<usize> {
@@ -107,6 +108,9 @@ struct CommandViewSymbol {
 
 #[derive(Parser)]
 struct CommandListIndex {}
+
+#[derive(Parser)]
+struct CommandBruteForce {}
 
 mod disassemble {
     use std::ops::Range;
@@ -502,6 +506,7 @@ fn main() -> Result<()> {
         Commands::SearchIndex(command) => index::search(command),
         Commands::ListIndex(command) => index::list(command),
         Commands::ViewSymbol(command) => index::view(command),
+        Commands::BruteForce(command) => index::brute_force(command),
     }
 }
 
@@ -930,6 +935,7 @@ mod index {
     use super::*;
 
     use bincode::{Decode, Encode};
+    use patternsleuth::ScanType;
     use prettytable::{Cell, Row, Table};
     use rayon::prelude::*;
 
@@ -1034,36 +1040,8 @@ mod index {
                 }
             }
 
-            if let Some(len) = function_bodies.iter().map(|b| b.len()).min() {
-                let mut sig = vec![];
-                let mut mask = vec![];
-
-                let mut last_eq = 0;
-
-                for i in 0..len {
-                    if function_bodies.iter().map(|b| b[i]).all_equal() {
-                        sig.push(function_bodies[0][i]);
-                        mask.push(0xff);
-                        last_eq = i + 1;
-                    } else {
-                        sig.push(0);
-                        mask.push(0);
-                    }
-                }
-                sig.truncate(last_eq);
-                mask.truncate(last_eq);
-
-                let pattern = sig
-                    .iter()
-                    .zip(mask)
-                    .map(|(sig, mask)| match mask {
-                        0xff => Cow::Owned(format!("{sig:02X?}")),
-                        0 => "??".into(),
-                        _ => unreachable!(),
-                    })
-                    .join(" ");
-
-                println!("{pattern}");
+            if let Some(pattern) = build_common_pattern(function_bodies) {
+                println!("{}", pattern);
             }
 
             let mut table = Table::new();
@@ -1269,5 +1247,183 @@ mod index {
             })?;
 
         Ok(())
+    }
+
+    pub(crate) fn brute_force(_command: CommandBruteForce) -> Result<()> {
+        let config = bincode::config::standard().with_big_endian();
+
+        let db: sled::Db = sled::open("symbol_db")?;
+
+        let functions_tree: sled::Tree = db.open_tree(b"functions")?;
+        let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
+
+        let games = get_games([])?;
+
+        let mut patterns = vec![];
+
+        let date = chrono::Local::now();
+
+        let mut log = csv::Writer::from_path(
+            Path::new("scans").join(format!("scan-{}.log", date.format("%Y-%m-%d_%H-%M-%S"))),
+        )?;
+
+        for key in symbols_tree.iter().keys() {
+            let key_enc = key?;
+            let key: SymbolKey = bincode::borrow_decode_from_slice(&key_enc, config)?.0;
+
+            if let Some(symbol_value) = symbols_tree.get(key_enc)? {
+                let value: SymbolValue =
+                    bincode::borrow_decode_from_slice(&symbol_value, config)?.0;
+
+                let mut cells = vec![];
+                let mut function_bodies = vec![];
+
+                for f in value.functions {
+                    let fn_key_enc = bincode::encode_to_vec(&f, config)?;
+                    if let Some(function_value) = functions_tree.get(fn_key_enc)? {
+                        let function_value: FunctionValue =
+                            bincode::borrow_decode_from_slice(&function_value, config)?.0;
+
+                        cells.push((
+                            f.executable,
+                            disassemble::disassemble_bytes(f.address, &function_value.bytes),
+                        ));
+
+                        function_bodies.push(function_value.bytes.to_vec());
+                    }
+                }
+
+                if function_bodies.len() > 1 {
+                    if let Some(pattern) = build_common_pattern(function_bodies) {
+                        //println!("{} {}", key.name, pattern);
+                        if let Ok(pattern) = Pattern::new(&pattern) {
+                            if 10 < pattern.mask.iter().filter(|m| **m != 0).count() {
+                                patterns.push((key.name, pattern));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if patterns.len() > 10000 {
+                let mut patterns = patterns
+                    .drain(..)
+                    .map(|(symbol, pattern)| {
+                        PatternConfig::new(
+                            Sig::Custom(symbol.clone()),
+                            symbol,
+                            None,
+                            pattern,
+                            resolve_self,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                let mut games_matched: HashMap<_, usize> = Default::default();
+
+                for GameEntry { name, exe_path } in &games {
+                    println!("p = {} {:?} {:?}", patterns.len(), name, exe_path.display());
+                    let bin_data = fs::read(exe_path)?;
+                    let exe = match Executable::read(&bin_data, exe_path, false, false) {
+                        Ok(exe) => exe,
+                        Err(err) => {
+                            println!("err reading {}: {}", exe_path.display(), err);
+                            continue;
+                        }
+                    };
+
+                    let scan = scan_game(&exe, &patterns)?;
+
+                    // group results by Sig
+                    let folded_scans = scan
+                        .results
+                        .iter()
+                        .map(|(config, m)| (&config.sig, (config, m)))
+                        .fold(HashMap::new(), |mut map: HashMap<_, Vec<_>>, (k, v)| {
+                            map.entry(k).or_default().push(v);
+                            map
+                        });
+
+                    println!("{name}");
+                    for (sig, group) in &folded_scans {
+                        let sig = match sig {
+                            Sig::Custom(name) => name,
+                            _ => unreachable!(),
+                        };
+                        println!("\t{} {sig:10}", group.len());
+                    }
+                    let counts: HashMap<Sig, _> = folded_scans
+                        .iter()
+                        .map(|(sig, group)| ((*sig).clone(), group.len()))
+                        .collect();
+
+                    patterns.retain(|p| counts.get(&p.sig).map(|c| *c <= 1).unwrap_or(true));
+
+                    for config in &patterns {
+                        if counts.contains_key(&config.sig) {
+                            let symbol = match &config.sig {
+                                Sig::Custom(name) => name,
+                                _ => unreachable!(),
+                            };
+                            *games_matched.entry(symbol.clone()).or_default() += 1;
+                        }
+                    }
+                }
+
+                for config in patterns {
+                    let symbol = match config.sig {
+                        Sig::Custom(name) => name,
+                        _ => unreachable!(),
+                    };
+                    log.write_record([
+                        games_matched.get(&symbol).unwrap().to_string(),
+                        symbol,
+                        match config.scan.scan_type {
+                            ScanType::Pattern(pattern) => pattern.to_string(),
+                            _ => unreachable!(),
+                        },
+                    ])?;
+                }
+                log.flush()?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn build_common_pattern(function_bodies: impl AsRef<[Vec<u8>]>) -> Option<String> {
+        let function_bodies = function_bodies.as_ref();
+        if let Some(len) = function_bodies.iter().map(|b| b.len()).min() {
+            let mut sig = vec![];
+            let mut mask = vec![];
+
+            let mut last_eq = 0;
+
+            for i in 0..len {
+                if function_bodies.iter().map(|b| b[i]).all_equal() {
+                    sig.push(function_bodies[0][i]);
+                    mask.push(0xff);
+                    last_eq = i + 1;
+                } else {
+                    sig.push(0);
+                    mask.push(0);
+                }
+            }
+            sig.truncate(last_eq);
+            mask.truncate(last_eq);
+
+            Some(
+                sig.iter()
+                    .zip(mask)
+                    .map(|(sig, mask)| match mask {
+                        0xff => Cow::Owned(format!("{sig:02X?}")),
+                        0 => "??".into(),
+                        _ => unreachable!(),
+                    })
+                    .join(" "),
+            )
+        } else {
+            None
+        }
     }
 }
