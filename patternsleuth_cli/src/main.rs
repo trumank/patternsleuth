@@ -17,6 +17,8 @@ use patternsleuth::{
     Scan,
 };
 
+mod sift4;
+
 #[derive(Parser)]
 enum Commands {
     Scan(CommandScan),
@@ -935,6 +937,7 @@ mod index {
     use super::*;
 
     use bincode::{Decode, Encode};
+    use iced_x86::{Decoder, DecoderOptions, Mnemonic};
     use patternsleuth::ScanType;
     use prettytable::{Cell, Row, Table};
     use rayon::prelude::*;
@@ -1019,11 +1022,17 @@ mod index {
             config,
         )?;
 
+        fn get_mnemonics(address: usize, data: &[u8]) -> Vec<Mnemonic> {
+            let mut decoder = Decoder::with_ip(64, data, address as u64, DecoderOptions::NONE);
+            decoder.iter().map(|i| i.mnemonic()).collect::<Vec<_>>()
+        }
+
         if let Some(symbol_value) = symbols_tree.get(symbol_enc)? {
             let value: SymbolValue = bincode::borrow_decode_from_slice(&symbol_value, config)?.0;
 
             let mut cells = vec![];
             let mut function_bodies = vec![];
+            let mut mnemonics = vec![];
 
             for f in value.functions {
                 let fn_key_enc = bincode::encode_to_vec(&f, config)?;
@@ -1036,6 +1045,8 @@ mod index {
                         disassemble::disassemble_bytes(f.address, &function_value.bytes),
                     ));
 
+                    mnemonics.push(get_mnemonics(f.address, &function_value.bytes));
+
                     function_bodies.push(function_value.bytes.to_vec());
                 }
             }
@@ -1043,6 +1054,28 @@ mod index {
             if let Some(pattern) = build_common_pattern(function_bodies) {
                 println!("{}", pattern);
             }
+
+            let mut table = Table::new();
+            table.add_row(Row::new(
+                [Cell::new("")]
+                    .into_iter()
+                    .chain(
+                        mnemonics
+                            .iter()
+                            .enumerate()
+                            .map(|(i, _)| Cell::new(&i.to_string())),
+                    )
+                    .collect(),
+            ));
+            for (a_i, a) in mnemonics.iter().enumerate() {
+                let mut cells = vec![Cell::new(&a_i.to_string())];
+                for (_b_i, b) in mnemonics.iter().enumerate() {
+                    let diff = sift4::simple(a, b);
+                    cells.push(Cell::new(&diff.to_string()));
+                }
+                table.add_row(Row::new(cells));
+            }
+            table.printstd();
 
             let mut table = Table::new();
             table.set_titles(cells.iter().map(|c| c.0.clone()).collect());
