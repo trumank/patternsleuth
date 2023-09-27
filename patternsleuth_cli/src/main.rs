@@ -1027,6 +1027,10 @@ mod index {
             decoder.iter().map(|i| i.mnemonic()).collect::<Vec<_>>()
         }
 
+        fn count_unequal<T: PartialEq>(a: &[T], b: &[T]) -> usize {
+            a.iter().zip(b).filter(|(a, b)| a != b).count() + a.len().abs_diff(b.len())
+        }
+
         if let Some(symbol_value) = symbols_tree.get(symbol_enc)? {
             let value: SymbolValue = bincode::borrow_decode_from_slice(&symbol_value, config)?.0;
 
@@ -1087,13 +1091,13 @@ mod index {
                     )
                     .collect(),
             ));
-            let max = 200;
+            let max = 100;
 
             let mut distances = HashMap::new();
-            for (a_i, Function { mnemonics: a, .. }) in functions.iter().enumerate() {
+            for (a_i, Function { bytes: a, .. }) in functions.iter().enumerate() {
                 let mut cells = vec![Cell::new(&a_i.to_string())];
-                for (b_i, Function { mnemonics: b, .. }) in functions.iter().enumerate() {
-                    let distance = sift4::simple(&a[..a.len().min(max)], &b[..b.len().min(max)]);
+                for (b_i, Function { bytes: b, .. }) in functions.iter().enumerate() {
+                    let distance = count_unequal(&a[..a.len().min(max)], &b[..b.len().min(max)]);
                     distances.insert((a_i, b_i), distance);
                     distances.insert((b_i, a_i), distance);
                     cells.push(Cell::new(&distance.to_string()));
@@ -1119,7 +1123,7 @@ mod index {
                         })
                         .min_by_key(|(d, _)| *d)
                         .unwrap();
-                    if *d < 10 {
+                    if *d < 50 {
                         group.push(b);
                     } else {
                         groups.push(vec![b]);
@@ -1130,17 +1134,22 @@ mod index {
                 vec![]
             };
 
+            let mut patterns = vec![];
+
             for group in &groups {
-                println!(
-                    "{}",
+                let pattern = 
                     build_common_pattern(
                         group
                             .iter()
-                            .map(|f| &f.bytes[..f.bytes.len().min(100)])
+                            .map(|f| &f.bytes[..f.bytes.len().min(max)])
                             .collect::<Vec<_>>()
                     )
-                    .unwrap()
+                    .unwrap();
+                println!(
+                    "{}",
+                    pattern
                 );
+                patterns.push(pattern);
                 println!(
                     "{:#?}",
                     group
@@ -1149,6 +1158,11 @@ mod index {
                         .sorted()
                         .collect::<Vec<_>>()
                 );
+            }
+
+            println!("./run.sh scan --skip-exceptions --summary\\");
+            for pattern in patterns {
+                println!("  -p '{}' \\", pattern);
             }
 
             for group in &groups {
