@@ -1030,29 +1030,49 @@ mod index {
         if let Some(symbol_value) = symbols_tree.get(symbol_enc)? {
             let value: SymbolValue = bincode::borrow_decode_from_slice(&symbol_value, config)?.0;
 
-            let mut cells = vec![];
-            let mut function_bodies = vec![];
-            let mut mnemonics = vec![];
+            struct Function {
+                index: usize,
+                key: FunctionKey,
+                mnemonics: Vec<Mnemonic>,
+                bytes: Vec<u8>,
+            }
 
-            for f in value.functions {
-                let fn_key_enc = bincode::encode_to_vec(&f, config)?;
+            let mut cells = vec![];
+            let mut functions = vec![];
+
+            for key in value.functions {
+                let fn_key_enc = bincode::encode_to_vec(&key, config)?;
                 if let Some(function_value) = functions_tree.get(fn_key_enc)? {
                     let function_value: FunctionValue =
                         bincode::borrow_decode_from_slice(&function_value, config)?.0;
+                    let bytes = function_value.bytes.to_vec();
 
                     cells.push((
-                        f.executable,
-                        disassemble::disassemble_bytes(f.address, &function_value.bytes),
+                        key.executable.clone(),
+                        disassemble::disassemble_bytes(key.address, &bytes),
                     ));
 
-                    mnemonics.push(get_mnemonics(f.address, &function_value.bytes));
-
-                    function_bodies.push(function_value.bytes.to_vec());
+                    let index = functions.len();
+                    functions.push(Function {
+                        index,
+                        mnemonics: get_mnemonics(key.address, &bytes),
+                        key,
+                        bytes,
+                    });
                 }
             }
 
-            if let Some(pattern) = build_common_pattern(function_bodies) {
+            if let Some(pattern) =
+                build_common_pattern(functions.iter().map(|f| &f.bytes).collect::<Vec<_>>())
+            {
                 println!("{}", pattern);
+            }
+
+            for function in &functions {
+                println!(
+                    "{:2} {:08X} {}",
+                    function.index, function.key.address, function.key.executable
+                );
             }
 
             let mut table = Table::new();
@@ -1060,29 +1080,99 @@ mod index {
                 [Cell::new("")]
                     .into_iter()
                     .chain(
-                        mnemonics
+                        functions
                             .iter()
                             .enumerate()
                             .map(|(i, _)| Cell::new(&i.to_string())),
                     )
                     .collect(),
             ));
-            for (a_i, a) in mnemonics.iter().enumerate() {
+            let max = 200;
+
+            let mut distances = HashMap::new();
+            for (a_i, Function { mnemonics: a, .. }) in functions.iter().enumerate() {
                 let mut cells = vec![Cell::new(&a_i.to_string())];
-                for (_b_i, b) in mnemonics.iter().enumerate() {
-                    let diff = sift4::simple(a, b);
-                    cells.push(Cell::new(&diff.to_string()));
+                for (b_i, Function { mnemonics: b, .. }) in functions.iter().enumerate() {
+                    let distance = sift4::simple(&a[..a.len().min(max)], &b[..b.len().min(max)]);
+                    distances.insert((a_i, b_i), distance);
+                    distances.insert((b_i, a_i), distance);
+                    cells.push(Cell::new(&distance.to_string()));
                 }
                 table.add_row(Row::new(cells));
             }
             table.printstd();
 
+            let groups = if let Some(last) = functions.pop() {
+                let mut groups = vec![vec![last]];
+                while let Some(b) = functions.pop() {
+                    let (d, group) = groups
+                        .iter_mut()
+                        .map(|group| {
+                            (
+                                group
+                                    .iter()
+                                    .map(|a| distances.get(&(a.index, b.index)).unwrap())
+                                    .max()
+                                    .unwrap(),
+                                group,
+                            )
+                        })
+                        .min_by_key(|(d, _)| *d)
+                        .unwrap();
+                    if *d < 10 {
+                        group.push(b);
+                    } else {
+                        groups.push(vec![b]);
+                    }
+                }
+                groups
+            } else {
+                vec![]
+            };
+
+            for group in &groups {
+                println!(
+                    "{}",
+                    build_common_pattern(
+                        group
+                            .iter()
+                            .map(|f| &f.bytes[..f.bytes.len().min(100)])
+                            .collect::<Vec<_>>()
+                    )
+                    .unwrap()
+                );
+                println!(
+                    "{:#?}",
+                    group
+                        .iter()
+                        .map(|f| &f.key.executable)
+                        .sorted()
+                        .collect::<Vec<_>>()
+                );
+            }
+
+            for group in &groups {
+                let mut table = Table::new();
+                table.set_titles(group.iter().map(|f| &f.key.executable).collect());
+                table.add_row(Row::new(
+                    group
+                        .iter()
+                        .map(|f| {
+                            Cell::new(&disassemble::disassemble_bytes(f.key.address, &f.bytes))
+                        })
+                        .collect(),
+                ));
+                table.printstd();
+            }
+
+            /*
             let mut table = Table::new();
             table.set_titles(cells.iter().map(|c| c.0.clone()).collect());
             table.add_row(Row::new(
                 cells.into_iter().map(|c| Cell::new(&c.1)).collect(),
             ));
             table.printstd();
+            */
         } else {
             println!("not found");
         }
@@ -1424,17 +1514,17 @@ mod index {
         Ok(())
     }
 
-    fn build_common_pattern(function_bodies: impl AsRef<[Vec<u8>]>) -> Option<String> {
+    fn build_common_pattern<B: AsRef<[u8]>>(function_bodies: impl AsRef<[B]>) -> Option<String> {
         let function_bodies = function_bodies.as_ref();
-        if let Some(len) = function_bodies.iter().map(|b| b.len()).min() {
+        if let Some(len) = function_bodies.iter().map(|b| b.as_ref().len()).min() {
             let mut sig = vec![];
             let mut mask = vec![];
 
             let mut last_eq = 0;
 
             for i in 0..len {
-                if function_bodies.iter().map(|b| b[i]).all_equal() {
-                    sig.push(function_bodies[0][i]);
+                if function_bodies.iter().map(|b| b.as_ref()[i]).all_equal() {
+                    sig.push(function_bodies[0].as_ref()[i]);
                     mask.push(0xff);
                     last_eq = i + 1;
                 } else {
