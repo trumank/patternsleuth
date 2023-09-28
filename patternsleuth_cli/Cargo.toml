@@ -32,3 +32,5 @@ bincode = { version = "2.0.0-rc.3" }
 indicatif = { version = "0.17.6", features = ["rayon"] }
 csv = "1.2.2"
 chrono = "0.4.31"
+rusqlite = "0.29.0"
+crossbeam = "0.8.2"

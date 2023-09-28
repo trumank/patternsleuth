@@ -1137,18 +1137,14 @@ mod index {
             let mut patterns = vec![];
 
             for group in &groups {
-                let pattern = 
-                    build_common_pattern(
-                        group
-                            .iter()
-                            .map(|f| &f.bytes[..f.bytes.len().min(max)])
-                            .collect::<Vec<_>>()
-                    )
-                    .unwrap();
-                println!(
-                    "{}",
-                    pattern
-                );
+                let pattern = build_common_pattern(
+                    group
+                        .iter()
+                        .map(|f| &f.bytes[..f.bytes.len().min(max)])
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap();
+                println!("{}", pattern);
                 patterns.push(pattern);
                 println!(
                     "{:#?}",
@@ -1242,146 +1238,150 @@ mod index {
     }
 
     pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
-        fn union_merge(
-            _key: &[u8],
-            old_value: Option<&[u8]>,
-            merged_bytes: &[u8],
-        ) -> Option<Vec<u8>> {
-            if let Some(old_value) = old_value {
-                let config = bincode::config::standard().with_big_endian();
-                let mut old_value: SymbolValue =
-                    bincode::borrow_decode_from_slice(old_value, config)
-                        .unwrap()
-                        .0;
-                let merged_value: SymbolValue =
-                    bincode::borrow_decode_from_slice(merged_bytes, config)
-                        .unwrap()
-                        .0;
+        use crossbeam::channel::bounded;
+        use rusqlite::Connection;
 
-                old_value.functions.extend(merged_value.functions);
-
-                Some(bincode::encode_to_vec(old_value, config).unwrap())
-            } else {
-                Some(merged_bytes.to_vec())
-            }
+        #[derive(Debug)]
+        enum Insert {
+            Function((String, usize, Vec<u8>)),
+            Symbol((String, usize, String)),
         }
 
-        let config = bincode::config::standard().with_big_endian();
+        let mut conn = Connection::open("data.db")?;
 
-        let db: sled::Db = sled::open("symbol_db")?;
+        conn.pragma_update(None, "synchronous", "OFF")?;
+        conn.pragma_update(None, "journal_mode", "MEMORY")?;
 
-        let functions_tree: sled::Tree = db.open_tree(b"functions")?;
-        let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
-        symbols_tree.set_merge_operator(union_merge);
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS functions (
+                game    TEXT NOT NULL,
+                address INTEGER NOT NULL,
+                data    BLOB NOT NULL
+            )",
+            (),
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS symbols (
+                game    TEXT NOT NULL,
+                address INTEGER NOT NULL,
+                symbol  TEXT NOT NULL
+            )",
+            (),
+        )?;
 
-        let games_with_symbols = get_games(command.game)?
-            .into_iter()
-            .filter(|g| g.exe_path.with_extension("pdb").exists())
-            .collect::<Vec<_>>();
+        let (tx, rx) = bounded::<Insert>(0);
 
-        use indicatif::ParallelProgressIterator;
-        use indicatif::ProgressIterator;
-
-        let m = indicatif::MultiProgress::new();
-        let sty = indicatif::ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
-        )
-        .unwrap()
-        .progress_chars("##-");
-
-        let pb = m.add(indicatif::ProgressBar::new(games_with_symbols.len() as u64));
-        pb.set_style(sty.clone());
-
-        let symbols_map = Arc::new(Mutex::new(HashMap::new()));
-
-        games_with_symbols
-            .par_iter()
-            .progress_with(pb.clone())
-            .try_for_each(|GameEntry { name, exe_path }| -> Result<()> {
-                pb.set_message("total");
-
-                let bin_data = fs::read(exe_path)?;
-                let exe = match Executable::read(
-                    &bin_data, exe_path, true, // symbols
-                    true, // exceptions
-                ) {
-                    Ok(exe) => exe,
-                    Err(err) => {
-                        println!("err reading {}: {}", exe_path.display(), err);
-                        return Ok(());
+        crossbeam::scope(|scope| -> Result<()> {
+            scope.spawn(move |_| -> Result<()> {
+                let transction = conn.transaction()?;
+                while let Ok(msg) = rx.recv() {
+                    match msg {
+                        Insert::Symbol(i) => {
+                            let r = transction.execute(
+                                "INSERT INTO symbols (game, address, symbol) VALUES (?1, ?2, ?3)",
+                                i.clone(),
+                            );
+                            if let Err(e) = r {
+                                println!("{:?} {:?}", e, i);
+                            }
+                        }
+                        Insert::Function(i) => {
+                            let r = transction.execute(
+                                "INSERT INTO functions (game, address, data) VALUES (?1, ?2, ?3)",
+                                i.clone(),
+                            );
+                            if let Err(e) = r {
+                                println!("{:?} {:?}", e, i);
+                            }
+                        }
                     }
-                };
-
-                let symbols = exe.symbols.as_ref().unwrap();
-
-                let pb = m.add(indicatif::ProgressBar::new(symbols.len() as u64));
-                pb.set_style(sty.clone());
-                pb.set_message(format!("collecting symbols for {}", name));
-
-                let mut symbols_map = symbols_map.lock().unwrap();
-                symbols
-                    .iter()
-                    .progress_with(pb)
-                    .try_for_each(|(address, name)| -> Result<()> {
-                        let key = SymbolKey { name: name.into() };
-
-                        let value: &mut SymbolValue = symbols_map.entry(key).or_default();
-                        value.functions.insert(FunctionKey {
-                            address: *address,
-                            executable: exe_path.to_string_lossy().to_string(),
-                        });
-
-                        Ok(())
-                    })?;
-                drop(symbols_map);
-
-                if let Some(functions) = exe.functions {
-                    let pb = m.add(indicatif::ProgressBar::new(functions.len() as u64));
-                    pb.set_style(sty.clone());
-                    pb.set_message(format!("insertingi functions for {}", name));
-
-                    functions
-                        .iter()
-                        .progress_with(pb)
-                        .try_for_each(|function| -> Result<()> {
-                            let range = function.full_range();
-                            let bytes = &exe.memory[range.clone()];
-
-                            let key = FunctionKey {
-                                address: range.start,
-                                executable: exe_path.to_string_lossy().to_string(),
-                            };
-
-                            let value = FunctionValue {
-                                bytes: bytes.into(),
-                            };
-
-                            functions_tree.insert(
-                                bincode::encode_to_vec(key, config)?,
-                                bincode::encode_to_vec(value, config)?,
-                            )?;
-                            Ok(())
-                        })?;
                 }
+                transction.commit()?;
                 Ok(())
-            })?;
+            });
 
-        let symbols_map = symbols_map.lock().unwrap();
+            let games_with_symbols = get_games(command.game)?
+                .into_iter()
+                .filter(|g| g.exe_path.with_extension("pdb").exists())
+                .collect::<Vec<_>>();
 
-        let pb = m.add(indicatif::ProgressBar::new(symbols_map.len() as u64));
-        pb.set_style(sty.clone());
-        pb.set_message("inserting symbols");
+            use indicatif::ParallelProgressIterator;
+            use indicatif::ProgressIterator;
 
-        symbols_map
-            .iter()
-            .progress_with(pb)
-            .try_for_each(|(key, value)| -> Result<()> {
-                symbols_tree.merge(
-                    bincode::encode_to_vec(key, config)?,
-                    bincode::encode_to_vec(value, config)?,
-                )?;
-                Ok(())
-            })?;
+            let m = indicatif::MultiProgress::new();
+            let sty = indicatif::ProgressStyle::with_template(
+                "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
+            )
+            .unwrap()
+            .progress_chars("##-");
+
+            let pb = m.add(indicatif::ProgressBar::new(games_with_symbols.len() as u64));
+            pb.set_style(sty.clone());
+
+            games_with_symbols
+                .par_iter()
+                .progress_with(pb.clone())
+                .try_for_each(|GameEntry { name, exe_path }| -> Result<()> {
+                    pb.set_message("total");
+
+                    let bin_data = fs::read(exe_path)?;
+                    let exe = match Executable::read(
+                        &bin_data, exe_path, true, // symbols
+                        true, // exceptions
+                    ) {
+                        Ok(exe) => exe,
+                        Err(err) => {
+                            println!("err reading {}: {}", exe_path.display(), err);
+                            return Ok(());
+                        }
+                    };
+
+                    let symbols = exe.symbols.as_ref().unwrap();
+
+                    let pb = m.add(indicatif::ProgressBar::new(symbols.len() as u64));
+                    pb.set_style(sty.clone());
+                    pb.set_message(format!("inserting symbols for {}", name));
+
+                    symbols.iter().progress_with(pb).try_for_each(
+                        |(address, name)| -> Result<()> {
+                            tx.send(Insert::Symbol((
+                                exe_path.to_string_lossy().to_string(),
+                                *address,
+                                name.to_string(),
+                            )))
+                            .unwrap();
+
+                            Ok(())
+                        },
+                    )?;
+
+                    if let Some(functions) = exe.functions {
+                        let pb = m.add(indicatif::ProgressBar::new(functions.len() as u64));
+                        pb.set_style(sty.clone());
+                        pb.set_message(format!("inserting functions for {}", name));
+
+                        functions.iter().progress_with(pb).try_for_each(
+                            |function| -> Result<()> {
+                                let range = function.full_range();
+                                let bytes = &exe.memory[range.clone()];
+
+                                tx.send(Insert::Function((
+                                    exe_path.to_string_lossy().to_string(),
+                                    range.start,
+                                    bytes.into(),
+                                )))
+                                .unwrap();
+
+                                Ok(())
+                            },
+                        )?;
+                    }
+                    Ok(())
+                })?;
+            drop(tx);
+            Ok(())
+        })
+        .unwrap()?;
 
         Ok(())
     }
