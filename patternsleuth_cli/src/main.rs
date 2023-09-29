@@ -389,6 +389,19 @@ mod disassemble {
         output.buffer
     }
 
+    pub(crate) fn get_xrefs(address: usize, data: &[u8]) -> Vec<(usize, usize)> {
+        let mut xrefs = vec![];
+        for instruction in Decoder::with_ip(64, data, address as u64, DecoderOptions::NONE) {
+            if instruction.op_kinds().any(|op| op == OpKind::NearBranch64) {
+                xrefs.push((
+                    instruction.ip() as usize,
+                    instruction.near_branch64() as usize,
+                ));
+            }
+        }
+        xrefs
+    }
+
     fn get_color(s: &str, kind: FormatterTextKind) -> ColoredString {
         match kind {
             FormatterTextKind::Directive | FormatterTextKind::Keyword => s.bright_yellow(),
@@ -1264,6 +1277,7 @@ mod index {
         enum Insert {
             Function((String, usize, Vec<u8>)),
             Symbol((String, usize, String)),
+            Xref((String, usize, usize, usize)),
         }
 
         let mut conn = Connection::open("data.db")?;
@@ -1287,6 +1301,15 @@ mod index {
             )",
             (),
         )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS xrefs (
+                game      TEXT NOT NULL,
+                address_function    INTEGER NOT NULL,
+                address_instruction INTEGER NOT NULL,
+                address_reference   INTEGER NOT NULL
+            )",
+            (),
+        )?;
 
         let (tx, rx) = bounded::<Insert>(0);
 
@@ -1307,6 +1330,15 @@ mod index {
                         Insert::Function(i) => {
                             let r = transction.execute(
                                 "INSERT INTO functions (game, address, data) VALUES (?1, ?2, ?3)",
+                                i.clone(),
+                            );
+                            if let Err(e) = r {
+                                panic!("{:?} {:?}", e, i);
+                            }
+                        }
+                        Insert::Xref(i) => {
+                            let r = transction.execute(
+                                "INSERT INTO xrefs (game, address_function, address_instruction, address_reference) VALUES (?1, ?2, ?3, ?4)",
                                 i.clone(),
                             );
                             if let Err(e) = r {
@@ -1391,6 +1423,16 @@ mod index {
                                 )))
                                 .unwrap();
 
+                                for (inst, xref) in disassemble::get_xrefs(range.start, bytes) {
+                                    tx.send(Insert::Xref((
+                                        exe_path.to_string_lossy().to_string(),
+                                        range.start,
+                                        inst,
+                                        xref,
+                                    )))
+                                    .unwrap();
+                                }
+
                                 Ok(())
                             },
                         )?;
@@ -1403,15 +1445,19 @@ mod index {
         .unwrap()?;
 
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS functions_game_address_idx ON functions (game, address);",
+            "CREATE INDEX IF NOT EXISTS functions_game_address_idx ON functions (game, address)",
             (),
         )?;
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS symbols_game_address_idx ON symbols (game, address);",
+            "CREATE INDEX IF NOT EXISTS symbols_game_address_idx ON symbols (game, address)",
             (),
         )?;
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS symbols_symbol_idx ON symbols (symbol);",
+            "CREATE INDEX IF NOT EXISTS symbols_symbol_idx ON symbols (symbol)",
+            (),
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS xrefs_game_address_reference_idx ON xrefs (game, address_reference)",
             (),
         )?;
 
