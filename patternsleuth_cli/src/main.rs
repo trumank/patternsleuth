@@ -928,19 +928,15 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameEntry>> {
 }
 
 mod index {
-    use std::{
-        borrow::Cow,
-        collections::BTreeSet,
-        sync::{Arc, Mutex},
-    };
+    use std::{borrow::Cow, collections::BTreeSet};
 
     use super::*;
 
     use bincode::{Decode, Encode};
-    use iced_x86::{Decoder, DecoderOptions, Mnemonic};
     use patternsleuth::ScanType;
     use prettytable::{Cell, Row, Table};
     use rayon::prelude::*;
+    use rusqlite::Connection;
 
     #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord, Hash)]
     struct SymbolKey {
@@ -1008,66 +1004,49 @@ mod index {
     }
 
     pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
-        let config = bincode::config::standard().with_big_endian();
+        let conn = Connection::open("data.db")?;
 
-        let db: sled::Db = sled::open("symbol_db")?;
-
-        let functions_tree: sled::Tree = db.open_tree(b"functions")?;
-        let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
-
-        let symbol_enc = bincode::encode_to_vec(
-            SymbolKey {
-                name: command.symbol,
-            },
-            config,
-        )?;
-
-        fn get_mnemonics(address: usize, data: &[u8]) -> Vec<Mnemonic> {
-            let mut decoder = Decoder::with_ip(64, data, address as u64, DecoderOptions::NONE);
-            decoder.iter().map(|i| i.mnemonic()).collect::<Vec<_>>()
+        struct SqlFunction {
+            game: String,
+            address: usize,
+            data: Vec<u8>,
         }
+
+        let mut stmt = conn.prepare("SELECT game, address, data FROM functions JOIN symbols USING(game, address) WHERE symbol = ?1")?;
+        let rows = stmt.query_map((&command.symbol,), |row| {
+            Ok(SqlFunction {
+                game: row.get(0)?,
+                address: row.get(1)?,
+                data: row.get(2)?,
+            })
+        })?;
 
         fn count_unequal<T: PartialEq>(a: &[T], b: &[T]) -> usize {
             a.iter().zip(b).filter(|(a, b)| a != b).count() + a.len().abs_diff(b.len())
         }
 
-        if let Some(symbol_value) = symbols_tree.get(symbol_enc)? {
-            let value: SymbolValue = bincode::borrow_decode_from_slice(&symbol_value, config)?.0;
+        struct Function {
+            index: usize,
+            sql: SqlFunction,
+        }
 
-            struct Function {
-                index: usize,
-                key: FunctionKey,
-                mnemonics: Vec<Mnemonic>,
-                bytes: Vec<u8>,
-            }
+        let mut cells = vec![];
+        let mut functions = vec![];
 
-            let mut cells = vec![];
-            let mut functions = vec![];
+        for row in rows {
+            let sql = row?;
+            cells.push((
+                sql.game.clone(),
+                disassemble::disassemble_bytes(sql.address, &sql.data),
+            ));
 
-            for key in value.functions {
-                let fn_key_enc = bincode::encode_to_vec(&key, config)?;
-                if let Some(function_value) = functions_tree.get(fn_key_enc)? {
-                    let function_value: FunctionValue =
-                        bincode::borrow_decode_from_slice(&function_value, config)?.0;
-                    let bytes = function_value.bytes.to_vec();
+            let index = functions.len();
+            functions.push(Function { index, sql });
+        }
 
-                    cells.push((
-                        key.executable.clone(),
-                        disassemble::disassemble_bytes(key.address, &bytes),
-                    ));
-
-                    let index = functions.len();
-                    functions.push(Function {
-                        index,
-                        mnemonics: get_mnemonics(key.address, &bytes),
-                        key,
-                        bytes,
-                    });
-                }
-            }
-
+        if !functions.is_empty() {
             if let Some(pattern) =
-                build_common_pattern(functions.iter().map(|f| &f.bytes).collect::<Vec<_>>())
+                build_common_pattern(functions.iter().map(|f| &f.sql.data).collect::<Vec<_>>())
             {
                 println!("{}", pattern);
             }
@@ -1075,7 +1054,7 @@ mod index {
             for function in &functions {
                 println!(
                     "{:2} {:08X} {}",
-                    function.index, function.key.address, function.key.executable
+                    function.index, function.sql.address, function.sql.game
                 );
             }
 
@@ -1094,9 +1073,23 @@ mod index {
             let max = 100;
 
             let mut distances = HashMap::new();
-            for (a_i, Function { bytes: a, .. }) in functions.iter().enumerate() {
+            for (
+                a_i,
+                Function {
+                    sql: SqlFunction { data: a, .. },
+                    ..
+                },
+            ) in functions.iter().enumerate()
+            {
                 let mut cells = vec![Cell::new(&a_i.to_string())];
-                for (b_i, Function { bytes: b, .. }) in functions.iter().enumerate() {
+                for (
+                    b_i,
+                    Function {
+                        sql: SqlFunction { data: b, .. },
+                        ..
+                    },
+                ) in functions.iter().enumerate()
+                {
                     let distance = count_unequal(&a[..a.len().min(max)], &b[..b.len().min(max)]);
                     distances.insert((a_i, b_i), distance);
                     distances.insert((b_i, a_i), distance);
@@ -1140,7 +1133,7 @@ mod index {
                 let pattern = build_common_pattern(
                     group
                         .iter()
-                        .map(|f| &f.bytes[..f.bytes.len().min(max)])
+                        .map(|f| &f.sql.data[..f.sql.data.len().min(max)])
                         .collect::<Vec<_>>(),
                 )
                 .unwrap();
@@ -1150,7 +1143,7 @@ mod index {
                     "{:#?}",
                     group
                         .iter()
-                        .map(|f| &f.key.executable)
+                        .map(|f| &f.sql.game)
                         .sorted()
                         .collect::<Vec<_>>()
                 );
@@ -1163,12 +1156,12 @@ mod index {
 
             for group in &groups {
                 let mut table = Table::new();
-                table.set_titles(group.iter().map(|f| &f.key.executable).collect());
+                table.set_titles(group.iter().map(|f| &f.sql.game).collect());
                 table.add_row(Row::new(
                     group
                         .iter()
                         .map(|f| {
-                            Cell::new(&disassemble::disassemble_bytes(f.key.address, &f.bytes))
+                            Cell::new(&disassemble::disassemble_bytes(f.sql.address, &f.sql.data))
                         })
                         .collect(),
                 ));
@@ -1220,17 +1213,15 @@ mod index {
                 bincode::borrow_decode_from_slice::<SymbolKey, _>(&key, config)?,
                 bincode::borrow_decode_from_slice::<SymbolValue, _>(&value, config)?,
             );
-            //dbg!(key, value);
             println!("{:X?} {:X?}", key, value);
         }
 
         for entry in functions_tree.iter() {
             let (key, value) = entry?;
-            let (key, value) = (
+            let (key, _value) = (
                 bincode::borrow_decode_from_slice::<FunctionKey, _>(&key, config)?,
                 bincode::borrow_decode_from_slice::<FunctionValue, _>(&value, config)?,
             );
-            //dbg!(key, value);
             println!("{:X?}", key);
         }
 
@@ -1239,7 +1230,6 @@ mod index {
 
     pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
         use crossbeam::channel::bounded;
-        use rusqlite::Connection;
 
         #[derive(Debug)]
         enum Insert {
@@ -1248,7 +1238,6 @@ mod index {
         }
 
         let mut conn = Connection::open("data.db")?;
-        //let mut conn = Connection::open_in_memory()?;
 
         conn.pragma_update(None, "synchronous", "OFF")?;
         conn.pragma_update(None, "journal_mode", "MEMORY")?;
@@ -1393,7 +1382,7 @@ mod index {
             (),
         )?;
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS symbols_symbol_idx ON symbols (symbols);",
+            "CREATE INDEX IF NOT EXISTS symbols_symbol_idx ON symbols (symbol);",
             (),
         )?;
 
