@@ -1248,6 +1248,7 @@ mod index {
         }
 
         let mut conn = Connection::open("data.db")?;
+        //let mut conn = Connection::open_in_memory()?;
 
         conn.pragma_update(None, "synchronous", "OFF")?;
         conn.pragma_update(None, "journal_mode", "MEMORY")?;
@@ -1268,26 +1269,15 @@ mod index {
             )",
             (),
         )?;
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS symbol_names (
-                symbol    TEXT NOT NULL PRIMARY KEY
-            )",
-            (),
-        )?;
 
         let (tx, rx) = bounded::<Insert>(0);
 
         crossbeam::scope(|scope| -> Result<()> {
-            scope.spawn(move |_| -> Result<()> {
+            scope.spawn(|_| -> Result<()> {
                 let transction = conn.transaction()?;
                 while let Ok(msg) = rx.recv() {
                     match msg {
                         Insert::Symbol(i) => {
-                            let r = transction
-                                .execute("INSERT OR IGNORE INTO symbol_names (symbol) VALUES (?1)", (&i.2,));
-                            if let Err(e) = r {
-                                panic!("{:?} {:?}", e, i);
-                            }
                             let r = transction.execute(
                                 "INSERT INTO symbols (game, address, symbol) VALUES (?1, ?2, ?3)",
                                 (&i.0, i.1, &i.2),
@@ -1393,6 +1383,19 @@ mod index {
             Ok(())
         })
         .unwrap()?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS functions_game_address_idx ON functions (game, address);",
+            (),
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS symbols_game_address_idx ON symbols (game, address);",
+            (),
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS symbols_symbol_idx ON symbols (symbols);",
+            (),
+        )?;
 
         Ok(())
     }
