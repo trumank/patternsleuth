@@ -106,6 +106,10 @@ struct CommandSearchIndex {
 struct CommandViewSymbol {
     #[arg()]
     symbol: String,
+
+    /// Whether to show symbols in function disassembly
+    #[arg(long)]
+    show_symbols: bool,
 }
 
 #[derive(Parser)]
@@ -121,6 +125,7 @@ mod disassemble {
     use colored::{ColoredString, Colorize};
     use iced_x86::{
         Decoder, DecoderOptions, Formatter, FormatterOutput, FormatterTextKind, IntelFormatter,
+        OpKind,
     };
 
     #[derive(Default)]
@@ -330,6 +335,17 @@ mod disassemble {
     }
 
     pub(crate) fn disassemble_bytes(address: usize, data: &[u8]) -> String {
+        disassemble_bytes_with_symbols(address, data, |_| None)
+    }
+
+    pub(crate) fn disassemble_bytes_with_symbols<F>(
+        address: usize,
+        data: &[u8],
+        symbols: F,
+    ) -> String
+    where
+        F: Fn(usize) -> Option<String>,
+    {
         let mut output = Output::default();
 
         output.buffer.push_str(&format!(
@@ -340,13 +356,9 @@ mod disassemble {
 
         output.buffer.push('\n');
 
-        let mut decoder = Decoder::with_ip(64, data, address as u64, DecoderOptions::NONE);
-
-        let instructions = decoder.iter().collect::<Vec<_>>();
-
         let mut formatter = IntelFormatter::new();
         formatter.options_mut().set_first_operand_char_index(8);
-        for instruction in instructions {
+        for instruction in Decoder::with_ip(64, data, address as u64, DecoderOptions::NONE) {
             let ip = format!("{:016x}", instruction.ip());
             output.buffer.push_str(&ip);
             output.buffer.push_str(":  ");
@@ -364,6 +376,14 @@ mod disassemble {
             }
 
             formatter.format(&instruction, &mut output);
+
+            if instruction.op_kinds().any(|op| op == OpKind::NearBranch64) {
+                if let Some(symbol) = symbols(instruction.near_branch64() as usize) {
+                    output
+                        .buffer
+                        .push_str(&format!(" {}", symbol.bright_yellow().to_string()));
+                }
+            }
             output.buffer.push('\n');
         }
         output.buffer
@@ -928,15 +948,15 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameEntry>> {
 }
 
 mod index {
-    use std::{borrow::Cow, collections::BTreeSet};
-
     use super::*;
+
+    use std::{borrow::Cow, collections::BTreeSet};
 
     use bincode::{Decode, Encode};
     use patternsleuth::ScanType;
     use prettytable::{Cell, Row, Table};
     use rayon::prelude::*;
-    use rusqlite::Connection;
+    use rusqlite::{Connection, OptionalExtension};
 
     #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord, Hash)]
     struct SymbolKey {
@@ -1030,15 +1050,10 @@ mod index {
             sql: SqlFunction,
         }
 
-        let mut cells = vec![];
         let mut functions = vec![];
 
         for row in rows {
             let sql = row?;
-            cells.push((
-                sql.game.clone(),
-                disassemble::disassemble_bytes(sql.address, &sql.data),
-            ));
 
             let index = functions.len();
             functions.push(Function { index, sql });
@@ -1161,7 +1176,21 @@ mod index {
                     group
                         .iter()
                         .map(|f| {
-                            Cell::new(&disassemble::disassemble_bytes(f.sql.address, &f.sql.data))
+                            Cell::new(&disassemble::disassemble_bytes_with_symbols(
+                                f.sql.address,
+                                &f.sql.data,
+                                |address| -> Option<String> {
+                                    command.show_symbols.then(||
+                                    conn
+                                        .query_row_and_then(
+                                            "SELECT symbol FROM symbols WHERE game = ?1 AND address = ?2",
+                                            (&f.sql.game, address),
+                                            |row| row.get(0).optional(),
+                                        )
+                                        .ok()
+                                        .flatten()).flatten()
+                                }
+                            ))
                         })
                         .collect(),
                 ));
