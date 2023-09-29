@@ -1285,15 +1285,8 @@ mod index {
                 while let Ok(msg) = rx.recv() {
                     match msg {
                         Insert::Symbol(i) => {
-                            let r = transction.execute(
-                                "INSERT OR IGNORE INTO symbol_names (symbol) VALUES (?1)",
-                                (&i.2, ),
-                            );
-                            if let Err(e) = r {
-                                panic!("{:?} {:?}", e, i);
-                            }
                             let r = transction.query_row(
-                                "SELECT id_symbol FROM symbol_names WHERE symbol = ?1",
+                                "INSERT INTO symbol_names (symbol) VALUES(?1) ON CONFLICT DO UPDATE SET symbol = ?1 RETURNING id_symbol",
                                 (&i.2, ),
                                 |row| row.get::<_, u64>(0),
                             );
