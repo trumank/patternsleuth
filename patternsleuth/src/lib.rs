@@ -26,7 +26,7 @@ pub struct ResolveContext<'data, 'pattern> {
     pub memory: &'data MountedPE<'data>,
     pub section: String,
     pub match_address: usize,
-    pub pattern: &'pattern Pattern,
+    pub scan: &'pattern Scan,
 }
 
 #[derive(Debug)]

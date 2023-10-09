@@ -2004,7 +2004,11 @@ mod fparseparam {
     pub fn resolve(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
         stages.0.push(ctx.match_address);
 
-        let addr = ctx.memory.captures(ctx.pattern, ctx.match_address).unwrap()[0].rip();
+        let addr = ctx
+            .memory
+            .captures(ctx.scan.scan_type.get_pattern().unwrap(), ctx.match_address)
+            .unwrap()[0]
+            .rip();
         read_wstring(&ctx, addr.into()).into()
     }
 }
