@@ -28,8 +28,10 @@ pub enum Sig {
     #[strum(serialize = "FMinimalViewInfo::FMinimalViewInfo")]
     FMinimalViewInfoCTor, // FMinimalViewInfo::FMinimalViewInfo and operator= are equal in code but called at different locations. One of the matches is the ctor the other is the = operator.
     FMinimalViewInfoLockFOV,
-    #[strum(serialize = "FName::ToString")]
-    FNameToString,
+    #[strum(serialize = "FName::ToString(void)")]
+    FNameToStringVoid,
+    #[strum(serialize = "FName::ToString(FString&)")]
+    FNameToStringFString,
     #[strum(serialize = "FName::FName")]
     FNameFName,
     GEngine,
@@ -735,98 +737,98 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
 
         //===============================[FNameToString]=============================================================================================
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringFString,
             "A".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("E8 ?? ?? ?? ?? 48 8B 4C 24 ?? 8B FD 48 85 C9")?,
             FNameToStringID::resolve,
         ),
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringFString,
             "B".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("E8 ?? ?? ?? ?? BD 01 00 00 00 41 39 6E ?? 0F 8E")?,
             FNameToStringID::resolve,
         ),
         PatternConfig::new(
-            Sig::FNameToString,//419-427
+            Sig::FNameToStringFString,//419-427
             "SetEnums".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("0f 84 ?? ?? ?? ?? 48 8b ?? e8 ?? ?? ?? ?? 84 c0 0f 85 ?? ?? ?? ?? 48 8d ?? 24 ?? 48 8b ?? e8 ?? ?? ?? ??")?,
             FNameToStringID::setenums,
         ),
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringVoid,
             "LW".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 8b 48 ?? 48 89 4c 24 ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00 48 8d")?,
             RIPRelativeResolvers::resolve_RIP_offset::<4>,
         ),
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringFString,
             "Bnew3".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("E8 ?? ?? ?? ?? ?? 01 00 00 00 ?? 39 ?? 48 0F 8E")?,
             FNameToStringID::resolve,
         ),
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringVoid,
             "C".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("E8 ?? ?? ?? ?? 83 7D C8 00 48 8D 15 ?? ?? ?? ?? 0F 5A DE")?,
             FNameToStringID::resolve,
         ),
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringVoid,
             "Dnew".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("E8 ?? ?? ?? ?? 83 7D C8 00 48 8D 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? 48 0f")?,
             FNameToStringID::resolve,
         ),
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringFString,
             "KH3".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 89 5C 24 ?? 48 89 ?? 24 ?? 48 89 ?? 24 ?? 41 56 48 83 EC ?? 48 8B DA 4C 8B F1 e8 ?? ?? ?? ?? 4C 8B C8 41 8B 06 99")?,
             resolve_self,
         ),
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringVoid,
             "FullyLoad".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("c6 ?? 2a 01 48 89 44 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00")?,
             RIPRelativeResolvers::resolve_RIP_offset::<4>,
         ),
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringVoid,
             "FMemoryArchive".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 89 0f eb 15 48 8b cf e8 | ?? ?? ?? ?? 48 8d ?? 24 ?? 48 8b cb e8 ?? ?? ?? ??  48 8b ?? 24 ?? 48 85 c9 74 05")?,
             RIPRelativeResolvers::resolve_RIP_offset::<4>,
         ),
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringVoid,
             "FLoadTimeTracker".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 63 c9 48 c1 ?? 05 48 03 ?? e8 | ?? ?? ?? ?? 48 8b ?? ?? 48 85 c9 74 05")?,
             RIPRelativeResolvers::resolve_RIP_offset::<4>,
         ),
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringVoid,
             "ISlateStyleJoin".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("e8 ?? ?? ?? ?? 48 ?? ?? 24 ?? 48 ?? ?? 24 98 00 00 00 e8 | ?? ?? ?? ?? 8b 48 ?? 83 f9 01")?,
             RIPRelativeResolvers::resolve_RIP_offset::<4>,
         ),
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringVoid,
             "UClassRename".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("00 74 ?? 48 8d ?? 24 ?? 48 8b ?? e8 ?? ?? ?? ?? 48 8b c8 48 8d ?? 24 ?? e8 | ?? ?? ?? ?? 83 78 08 00 74 ?? ?? ?? ?? eb")?,
             RIPRelativeResolvers::resolve_RIP_offset::<4>,
         ),
         PatternConfig::new(
-            Sig::FNameToString,
+            Sig::FNameToStringVoid,
             "LinkerManagerExec".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 8d 0c c1 e8 | ?? ?? ?? ?? 83 78 08 00")?,
