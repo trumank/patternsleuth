@@ -6,6 +6,7 @@ use anyhow::Result;
 use clap::Parser;
 use itertools::Itertools;
 use object::{Object, ObjectSection};
+use patricia_tree::StringPatriciaMap;
 use patternsleuth::patterns::resolve_self;
 use patternsleuth::Executable;
 
@@ -935,8 +936,7 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameEntry>> {
     fs::read_dir("games")?
         .collect::<Result<Vec<_>, _>>()?
         .iter()
-        .sorted_by_key(|e| e.file_name())
-        .map(|entry| -> Result<Option<GameEntry>> {
+        .map(|entry| -> Result<Option<(String, PathBuf)>> {
             let dir_name = entry.file_name();
             let name = dir_name.to_string_lossy().to_string();
             if !games_filter
@@ -954,10 +954,16 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameEntry>> {
             else {
                 return Ok(None);
             };
-            Ok(Some(GameEntry { name, exe_path }))
+            Ok(Some((name, exe_path)))
         })
         .filter_map(|r| r.transpose())
-        .collect::<Result<Vec<GameEntry>>>()
+        .collect::<Result<Vec<(String, _)>>>()
+        .map(|entries| {
+            sample_order(entries, 3)
+                .into_iter()
+                .map(|(name, exe_path)| GameEntry { name, exe_path })
+                .collect::<Vec<GameEntry>>()
+        })
 }
 
 mod index {
@@ -1640,5 +1646,50 @@ mod index {
         } else {
             None
         }
+    }
+}
+
+/// Distribute pairs such that unique prefixes are encountered early
+/// e.g.
+/// 7_a 8_a 9_a 7_b 7_c 7_d 8_b 8_c 9_b
+fn sample_order<V>(entries: Vec<(String, V)>, prefix_size: usize) -> Vec<(String, V)> {
+    let mut trie = StringPatriciaMap::from_iter(entries);
+    let mut len = 1;
+    let mut result = vec![];
+    while !trie.is_empty() {
+        let mut prefixes = HashSet::new();
+        for (k, _v) in trie.iter() {
+            if k.chars().count() >= len {
+                prefixes.insert(k.chars().take(len).collect::<String>());
+            }
+        }
+        for p in prefixes.iter().sorted() {
+            let take = trie
+                .iter_prefix(p)
+                .take(prefix_size)
+                .map(|(k, _v)| k)
+                .collect_vec();
+            for k in take {
+                let v = trie.remove(k.clone()).unwrap();
+                result.push((k, v));
+            }
+        }
+        len += 1;
+    }
+    result
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_sample_cont() {
+        let entries = ["aa", "ba", "ca", "ab", "ac", "bc"]
+            .iter()
+            .map(|k| (k.to_string(), ()))
+            .collect_vec();
+        let ordered = sample_order(entries.clone(), 1);
+        assert_eq!(entries, ordered);
     }
 }
