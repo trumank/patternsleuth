@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
+use indicatif::ProgressBar;
 use itertools::Itertools;
 use object::{Object, ObjectSection};
 use patricia_tree::StringPatriciaMap;
@@ -77,6 +78,10 @@ struct CommandScan {
     /// Show scan summary
     #[arg(long)]
     summary: bool,
+
+    /// Show scan progress
+    #[arg(long)]
+    progress: bool,
 }
 
 #[derive(Parser)]
@@ -599,21 +604,50 @@ fn scan(command: CommandScan) -> Result<()> {
     let mut all: HashMap<(String, (&Sig, &String)), Vec<Resolution>> = HashMap::new();
 
     use colored::Colorize;
+    use indicatif::ProgressIterator;
     use itertools::join;
     use prettytable::{format, row, Cell, Row, Table};
 
-    for GameEntry { name, exe_path } in get_games(command.game)? {
-        println!("{:?} {:?}", name, exe_path.display());
-        let bin_data = fs::read(&exe_path)?;
+    enum Output {
+        None,
+        Stdout,
+        Progress(ProgressBar),
+    }
+
+    impl Output {
+        fn println<M: AsRef<str>>(&self, msg: M) {
+            match self {
+                Output::None => {}
+                Output::Stdout => println!("{}", msg.as_ref()),
+                Output::Progress(progress) => progress.println(msg),
+            }
+        }
+    }
+
+    let games_vec = get_games(command.game)?;
+
+    let (output, iter): (_, Box<dyn Iterator<Item = _>>) = if command.progress {
+        let progress = ProgressBar::new(games_vec.len() as u64);
+        (
+            Output::Progress(progress.clone()),
+            Box::new(games_vec.iter().progress_with(progress)),
+        )
+    } else {
+        (Output::Stdout, Box::new(games_vec.iter()))
+    };
+
+    for GameEntry { name, exe_path } in iter {
+        output.println(format!("{:?} {:?}", name, exe_path.display()));
+        let bin_data = fs::read(exe_path)?;
         let exe = match Executable::read(
             &bin_data,
-            &exe_path,
+            exe_path,
             command.symbols,
             !command.skip_exceptions,
         ) {
             Ok(exe) => exe,
             Err(err) => {
-                println!("err reading {}: {}", exe_path.display(), err);
+                output.println(format!("err reading {}: {}", exe_path.display(), err));
                 continue;
             }
         };
@@ -806,7 +840,7 @@ fn scan(command: CommandScan) -> Result<()> {
 
             table.add_row(Row::new(cells));
         }
-        table.printstd();
+        output.println(table.to_string());
 
         // fold current game scans into summary scans
         scan.results.into_iter().fold(&mut all, |map, m| {
@@ -815,9 +849,10 @@ fn scan(command: CommandScan) -> Result<()> {
                 .push(m.1);
             map
         });
-
-        println!();
     }
+
+    // force any progress output to be dropped
+    let output = Output::Stdout;
 
     if command.summary {
         #[derive(Debug, Default)]
@@ -905,7 +940,7 @@ fn scan(command: CommandScan) -> Result<()> {
         //let games: HashSet<String> = all.keys().map(|(game, _)| game).cloned().collect();
         //println!("{:#?}", all);
 
-        summary.printstd();
+        output.println(summary.to_string());
     }
 
     Ok(())
