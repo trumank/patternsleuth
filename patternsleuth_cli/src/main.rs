@@ -46,7 +46,7 @@ struct CommandScan {
     game: Vec<String>,
 
     /// A signature to scan for (can be specified multiple times). Scans for all signatures if omitted
-    #[arg(short, long, group = "scan")]
+    #[arg(short, long)]
     signature: Vec<Sig>,
 
     /// Show disassembly context for each stage of every match (I recommend only using with
@@ -55,11 +55,11 @@ struct CommandScan {
     disassemble: bool,
 
     /// A pattern to scan for (can be specified multiple times)
-    #[arg(short, long, group = "scan", value_parser(|s: &_| Pattern::new(s)))]
+    #[arg(short, long, value_parser(|s: &_| Pattern::new(s)))]
     patterns: Vec<Pattern>,
 
     /// An xref to scan for (can be specified multiple times)
-    #[arg(short, long, group = "scan", value_parser(|s: &str| parse_maybe_hex(s).map(Xref)))]
+    #[arg(short, long, value_parser(|s: &str| parse_maybe_hex(s).map(Xref)))]
     xref: Vec<Xref>,
 
     /// Load and display symbols from PDBs when available (can be slow)
@@ -547,42 +547,42 @@ fn main() -> Result<()> {
 }
 
 fn scan(command: CommandScan) -> Result<()> {
-    let patterns = if command.patterns.is_empty() && command.xref.is_empty() {
-        let sig_filter = command.signature.into_iter().collect::<HashSet<_>>();
-        get_patterns()?
-            .into_iter()
-            .filter(|p| {
-                sig_filter
-                    .is_empty()
-                    .then_some(true)
-                    .unwrap_or_else(|| sig_filter.contains(&p.sig))
-            })
-            .collect_vec()
-    } else {
-        command
-            .patterns
-            .into_iter()
-            .enumerate()
-            .map(|(i, p)| {
-                PatternConfig::new(
-                    Sig::Custom("arg".to_string()),
-                    format!("pattern {i}"),
-                    None,
-                    p,
-                    resolve_self,
-                )
-            })
-            .chain(command.xref.into_iter().enumerate().map(|(i, p)| {
-                PatternConfig::xref(
-                    Sig::Custom("arg".to_string()),
-                    format!("xref {i}"),
-                    None,
-                    p,
-                    resolve_self,
-                )
-            }))
-            .collect_vec()
-    };
+    let sig_filter = command.signature.into_iter().collect::<HashSet<_>>();
+    let include_default = command.patterns.is_empty() && command.xref.is_empty();
+    let patterns = get_patterns()?
+        .into_iter()
+        .filter(|p| {
+            sig_filter
+                .is_empty()
+                .then_some(include_default)
+                .unwrap_or_else(|| sig_filter.contains(&p.sig))
+        })
+        .chain(
+            command
+                .patterns
+                .into_iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    PatternConfig::new(
+                        Sig::Custom("arg".to_string()),
+                        format!("pattern {i}"),
+                        None,
+                        p,
+                        resolve_self,
+                    )
+                })
+                .chain(command.xref.into_iter().enumerate().map(|(i, p)| {
+                    PatternConfig::xref(
+                        Sig::Custom("arg".to_string()),
+                        format!("xref {i}"),
+                        None,
+                        p,
+                        resolve_self,
+                    )
+                })),
+        )
+        .collect_vec();
+
     let sigs = patterns
         .iter()
         .map(|p| p.sig.clone())
