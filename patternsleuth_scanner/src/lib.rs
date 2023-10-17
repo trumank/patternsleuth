@@ -147,7 +147,7 @@ impl Pattern {
             xrefs,
         })
     }
-    /// Create a pattern from a literal Vec<u8> with `mask` filled with 0xff and `custom_offset = 0`.
+    /// Create a pattern from a literal `Vec<u8>` with `mask` filled with 0xff and `custom_offset = 0`.
     pub fn from_bytes(sig: Vec<u8>) -> Result<Self> {
         Ok(Self {
             mask: vec![0xff; sig.len()],
