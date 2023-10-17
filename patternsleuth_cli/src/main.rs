@@ -54,6 +54,10 @@ struct CommandScan {
     #[arg(short, long)]
     disassemble: bool,
 
+    /// Show disassembly context for each matched address
+    #[arg(short, long)]
+    disassemble_merged: bool,
+
     /// A pattern to scan for (can be specified multiple times)
     #[arg(short, long, value_parser(|s: &_| Pattern::new(s)))]
     patterns: Vec<Pattern>,
@@ -684,6 +688,54 @@ fn scan(command: CommandScan) -> Result<()> {
                         table.add_row(Row::new(cells));
                     }
                     cells.push(Cell::new(&table.to_string()));
+                } else if command.disassemble_merged {
+                    cells.push(Cell::new({
+                        let cells = sig_scans
+                            .iter()
+                            .fold(
+                                HashMap::<&ResolutionType, HashMap<&str, usize>>::new(),
+                                |mut map, m| {
+                                    *map.entry(&m.1.res)
+                                        .or_default()
+                                        .entry(&m.0.name)
+                                        .or_default() += 1;
+                                    map
+                                },
+                            )
+                            .iter()
+                            // sort by pattern name, then match address
+                            .sorted_by_key(|&data| data.0)
+                            .map(|(m, counts)| match &m {
+                                ResolutionType::Address(address) => {
+                                    let dis = disassemble::disassemble(&exe, *address, None);
+
+                                    let mut lines = vec![];
+                                    for (name, count) in counts.iter().sorted_by_key(|e| e.0) {
+                                        let count = if *count > 1 {
+                                            format!(" (x{count})")
+                                        } else {
+                                            "".to_string()
+                                        };
+
+                                        lines.push(
+                                            format!("{:?}{}", name, count).normal().to_string(),
+                                        );
+                                    }
+                                    lines.push(dis);
+
+                                    Cell::new(&join(lines, "\n"))
+                                }
+                                _ => todo!(),
+                            })
+                            .collect::<Vec<_>>();
+
+                        let mut table = Table::new();
+                        table.set_format(*format::consts::FORMAT_NO_BORDER);
+
+                        table.add_row(Row::new(cells));
+
+                        &table.to_string()
+                    }));
                 } else {
                     cells.push(Cell::new({
                         let mut lines = sig_scans
