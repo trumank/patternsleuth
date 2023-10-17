@@ -170,7 +170,9 @@ mod disassemble {
                         #[allow(clippy::unnecessary_to_owned)]
                         output
                             .buffer
-                            .push_str(&format!("{}\n", symbol).bright_yellow().to_string());
+                            .push_str(&format!("{}", symbol).bright_yellow().to_string());
+                        output.buffer.push_str(&"".normal().to_string());
+                        output.buffer.push('\n');
                     }
                 }
                 let data =
