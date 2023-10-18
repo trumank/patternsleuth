@@ -1160,6 +1160,7 @@ mod index {
     }
 
     pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
+        println!("{:?}", command.symbol);
         let conn = Connection::open("data.db")?;
 
         struct SqlFunction {
@@ -1196,11 +1197,7 @@ mod index {
         }
 
         if !functions.is_empty() {
-            if let Some(pattern) =
-                build_common_pattern(functions.iter().map(|f| &f.sql.data).collect::<Vec<_>>())
-            {
-                println!("{}", pattern);
-            }
+            println!("{} total functions", functions.len());
 
             for function in &functions {
                 println!(
@@ -1300,7 +1297,7 @@ mod index {
                 );
             }
 
-            println!("./run.sh scan --skip-exceptions --summary\\");
+            println!("./run.sh scan --skip-exceptions --summary \\");
             for pattern in patterns {
                 println!("  -p '{}' \\", pattern);
             }
