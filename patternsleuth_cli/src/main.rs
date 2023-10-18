@@ -875,7 +875,7 @@ fn scan(command: CommandScan) -> Result<()> {
         }
 
         let mut summary = Table::new();
-        let title_strs: Vec<String> = ["".to_owned()]
+        let title_strs: Vec<String> = ["".into(), "unqiue addresses".into()]
             .into_iter()
             .chain(
                 patterns
@@ -886,14 +886,25 @@ fn scan(command: CommandScan) -> Result<()> {
         summary.set_titles(Row::new(title_strs.iter().map(|s| Cell::new(s)).collect()));
         let mut totals = patterns.iter().map(|_| Summary::default()).collect_vec();
 
+        let mut no_matches = 0;
+        let mut one_match = 0;
+        let mut gt_one_match = 0;
+
         for game in games.iter().sorted() {
             let mut row = vec![Cell::new(game)];
+
+            let mut matched_addresses = HashSet::new();
 
             let summaries: Vec<Summary> = patterns
                 .iter()
                 .map(|conf| {
                     let res = all.get(&(game.to_string(), (&conf.sig, &conf.name)));
                     if let Some(res) = res {
+                        for res in res {
+                            if let ResolutionType::Address(addr) = res.res {
+                                matched_addresses.insert(addr);
+                            }
+                        }
                         Summary {
                             matches: res.len(),
                             resolved: res
@@ -927,15 +938,32 @@ fn scan(command: CommandScan) -> Result<()> {
                 }
             }
 
+            match matched_addresses.len() {
+                0 => {
+                    no_matches += 1;
+                }
+                1 => {
+                    one_match += 1;
+                }
+                _ => {
+                    gt_one_match += 1;
+                }
+            }
+
+            row.push(Cell::new(&format!("unique={}", matched_addresses.len())));
+
             let cell_strs: Vec<String> = summaries.iter().map(Summary::format).collect();
             row.extend(cell_strs.iter().map(|s| Cell::new(s)));
             summary.add_row(Row::new(row));
         }
 
-        let total_strs = [format!("{}", games.len())]
-            .into_iter()
-            .chain(totals.iter().map(Summary::format))
-            .collect_vec();
+        let total_strs = [
+            format!("total={}", games.len()),
+            format!("0={} 1={} >1={}", no_matches, one_match, gt_one_match),
+        ]
+        .into_iter()
+        .chain(totals.iter().map(Summary::format))
+        .collect_vec();
         summary.add_row(Row::new(
             total_strs.iter().map(|s| Cell::new(s)).collect_vec(),
         ));
