@@ -213,6 +213,7 @@ impl PatternConfig {
 
 pub struct Executable<'data> {
     pub data: &'data [u8],
+    pub exception_data: &'data [u8],
     pub object: object::File<'data>,
     pub memory: MountedPE<'data>,
     pub functions: Option<Vec<RuntimeFunction>>,
@@ -237,6 +238,38 @@ impl<'data> Executable<'data> {
             .then(|| symbols::dump_pdb_symbols(pdb_path, base_address))
             .transpose()?;
 
+        let exception_data = match object {
+            object::File::Pe64(ref inner) => {
+                let exception_directory = inner
+                    .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
+                    .context("no exception directory")?;
+
+                let r = exception_directory.address_range();
+                println!(
+                    "{:x} {:x} {:x} {:x}",
+                    r.0 as usize + base_address,
+                    r.1 as usize + base_address,
+                    exception_directory
+                        .virtual_address
+                        .get(object::LittleEndian) as usize
+                        + base_address,
+                    exception_directory.size.get(object::LittleEndian)
+                );
+                let section = memory
+                    .get_section_containing(
+                        exception_directory
+                            .virtual_address
+                            .get(object::LittleEndian) as usize
+                            + base_address,
+                    )
+                    .unwrap();
+                println!("{:?} {:x}", section.name, section.data.len());
+
+                exception_directory.data(data, &inner.section_table())?
+            }
+            _ => &[],
+        };
+
         let functions = load_functions
             .then(|| -> Result<_> {
                 Ok(match object {
@@ -246,6 +279,16 @@ impl<'data> Executable<'data> {
                         let exception_directory = inner
                             .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
                             .context("no exception directory")?;
+
+                        println!(
+                            "{:x} {:x}",
+                            base_address
+                                + exception_directory
+                                    .virtual_address
+                                    .get(object::LittleEndian)
+                                    as usize,
+                            exception_directory.size.get(object::LittleEndian)
+                        );
 
                         let data = exception_directory.data(data, &inner.section_table())?;
                         let count = data.len() / 12;
@@ -263,11 +306,14 @@ impl<'data> Executable<'data> {
                                 unwind,
                                 children: vec![],
                             };
+                            println!("{function:x?} {:x}", unwind - base_address);
 
                             // TODO this is totally gross. need to implement a nice way to stream sparse sections
                             let section = memory
                                 .get_section_containing(unwind)
                                 .context("out of bounds reading unwind info")?;
+
+                            dbg!(&section.name);
                             let mut offset = unwind - section.address;
 
                             let has_chain_info = section.data[offset] >> 3 == 0x4;
@@ -280,10 +326,15 @@ impl<'data> Executable<'data> {
                                     offset += 2;
                                 }
 
-                                let mut tmp = [0; 4];
-                                tmp.copy_from_slice(&section.data[offset..offset + 4]);
-                                let parent = base_address + u32::from_le_bytes(tmp) as usize;
-                                children.push((parent, function.clone()));
+                                if section.data.len() > offset {
+                                    let parent = base_address
+                                        + u32::from_le_bytes(
+                                            section.data[offset..offset + 4].try_into().unwrap(),
+                                        ) as usize;
+                                    children.push((parent, function.clone()));
+                                } else {
+                                    println!("not adding chain info {offset}");
+                                }
                             }
                             functions.insert(function.range.start, function);
                         }
@@ -318,13 +369,129 @@ impl<'data> Executable<'data> {
 
         Ok(Executable {
             data,
+            exception_data,
             object,
             memory,
             functions,
             symbols,
         })
     }
-    pub fn get_function(&self, address: usize) -> Option<&RuntimeFunction> {
+    pub fn get_function(&self, address: usize) -> Option<RuntimeFunction> {
+        println!("get_function(0x{address:x})");
+        let base_address = self.object.relative_address_base() as usize;
+
+        let count = self.exception_data.len() / 12;
+
+        for i in 0..count {
+            let addr_begin = base_address
+                + u32::from_le_bytes(self.exception_data[i * 12..i * 12 + 4].try_into().unwrap())
+                    as usize;
+            if addr_begin <= address {
+                let addr_end = base_address
+                    + u32::from_le_bytes(
+                        self.exception_data[i * 12 + 4..i * 12 + 8]
+                            .try_into()
+                            .unwrap(),
+                    ) as usize;
+                //println!("{address:x} {addr_begin:x} {addr_end:x}");
+                if addr_end > address {
+                    let unwind = base_address
+                        + u32::from_le_bytes(
+                            self.exception_data[i * 12 + 8..i * 12 + 12]
+                                .try_into()
+                                .unwrap(),
+                        ) as usize;
+
+                    let mut f = RuntimeFunction {
+                        range: addr_begin..addr_end,
+                        unwind,
+                        children: vec![],
+                    };
+
+                    loop {
+                        println!("CHECKING UNWIND OF {f:x?}");
+                        let section = self
+                            .memory
+                            .get_section_containing(f.unwind)
+                            .context("out of bounds reading unwind info")
+                            .unwrap();
+
+                        dbg!(&section.name);
+                        let mut offset = f.unwind - section.address;
+
+                        let has_chain_info = section.data[offset] >> 3 == 0x4;
+                        if has_chain_info {
+                            println!("HAS PARENT {f:x?}");
+                            let unwind_code_count = section.data[offset + 2];
+
+                            println!("UNWIND CODES {unwind_code_count}");
+                            offset += 4 + 2 * unwind_code_count as usize;
+                            if offset % 4 != 0 {
+                                // align
+                                offset += 2;
+                            }
+
+                            if section.data.len() > offset {
+                                let addr_begin = base_address
+                                    + u32::from_le_bytes(
+                                        section.data[offset..offset + 4].try_into().unwrap(),
+                                    ) as usize;
+                                let addr_end = base_address
+                                    + u32::from_le_bytes(
+                                        section.data[offset + 4..offset + 8].try_into().unwrap(),
+                                    ) as usize;
+                                let unwind = base_address
+                                    + u32::from_le_bytes(
+                                        section.data[offset + 8..offset + 12].try_into().unwrap(),
+                                    ) as usize;
+
+                                let mut children = std::mem::take(&mut f.children);
+                                children.push(f.clone());
+
+                                f = RuntimeFunction {
+                                    range: addr_begin..addr_end,
+                                    unwind,
+                                    children,
+                                };
+                            } else {
+                                todo!("not adding chain info {offset}");
+                            }
+                        } else {
+                            println!("FOUND {f:#x?}");
+                            return Some(f);
+                        }
+                        //functions.insert(function.range.start, function);
+                    }
+                }
+            }
+        }
+        None
+        //todo!();
+
+        /*
+        let mut i = count / 2;
+
+        let addr_min = base_address + u32::from_le_bytes(self.exception_data[i * 12..i * 12 + 4].try_into().unwrap()) as usize;
+        if address < addr_min {
+            i = i / 2;
+        } else {
+            i = i + i / 2;
+        }
+        */
+
+        //None
+
+        //let mut cur = Cursor::new(data);
+
+        //let mut functions: BTreeMap<usize, RuntimeFunction> = Default::default();
+        //let mut children = vec![];
+        //for _ in 0..count {
+        //let range = base_address + cur.read_u32::<LE>()? as usize
+        //..base_address + cur.read_u32::<LE>()? as usize;
+        //let unwind = base_address + cur.read_u32::<LE>()? as usize;
+        //}
+
+        /*
         if let Some(functions) = &self.functions {
             // TODO figure out what to do in the rare case of overlapping entries
             match functions.binary_search_by_key(&address, |f| f.range.start) {
@@ -337,6 +504,7 @@ impl<'data> Executable<'data> {
         } else {
             None
         }
+        */
     }
 }
 
