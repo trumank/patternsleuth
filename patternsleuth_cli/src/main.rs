@@ -170,12 +170,13 @@ mod disassemble {
             ));
 
             let (is_fn, data, start_address) = if let Some(f) = exe.get_function(address) {
+                let range = f.full_range();
                 output.buffer.push_str(&format!(
                     "{:016x} - {:016x} = function\n",
-                    f.range.start, f.range.end
+                    range.start, range.end
                 ));
                 if let Some(symbols) = &exe.symbols {
-                    if let Some(symbol) = symbols.get(&f.range.start) {
+                    if let Some(symbol) = symbols.get(&range.start) {
                         #[allow(clippy::unnecessary_to_owned)]
                         output
                             .buffer
@@ -184,9 +185,15 @@ mod disassemble {
                         output.buffer.push('\n');
                     }
                 }
+                println!(
+                    "{:x} {:x} {:x} {f:x?}",
+                    address,
+                    section.address,
+                    section.data.len()
+                );
                 let data =
-                    &section.data[f.range.start - section.address..f.range.end - section.address];
-                let start_address = f.range.start as u64;
+                    &section.data[range.start - section.address..range.end - section.address];
+                let start_address = range.start as u64;
                 (true, data, start_address)
             } else {
                 output.buffer.push_str("no function");
