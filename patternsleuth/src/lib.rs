@@ -244,27 +244,6 @@ impl<'data> Executable<'data> {
                     .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
                     .context("no exception directory")?;
 
-                let r = exception_directory.address_range();
-                println!(
-                    "{:x} {:x} {:x} {:x}",
-                    r.0 as usize + base_address,
-                    r.1 as usize + base_address,
-                    exception_directory
-                        .virtual_address
-                        .get(object::LittleEndian) as usize
-                        + base_address,
-                    exception_directory.size.get(object::LittleEndian)
-                );
-                let section = memory
-                    .get_section_containing(
-                        exception_directory
-                            .virtual_address
-                            .get(object::LittleEndian) as usize
-                            + base_address,
-                    )
-                    .unwrap();
-                println!("{:?} {:x}", section.name, section.data.len());
-
                 exception_directory.data(data, &inner.section_table())?
             }
             _ => &[],
@@ -279,16 +258,6 @@ impl<'data> Executable<'data> {
                         let exception_directory = inner
                             .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
                             .context("no exception directory")?;
-
-                        println!(
-                            "{:x} {:x}",
-                            base_address
-                                + exception_directory
-                                    .virtual_address
-                                    .get(object::LittleEndian)
-                                    as usize,
-                            exception_directory.size.get(object::LittleEndian)
-                        );
 
                         let data = exception_directory.data(data, &inner.section_table())?;
                         let count = data.len() / 12;
@@ -306,14 +275,12 @@ impl<'data> Executable<'data> {
                                 unwind,
                                 children: vec![],
                             };
-                            println!("{function:x?} {:x}", unwind - base_address);
 
                             // TODO this is totally gross. need to implement a nice way to stream sparse sections
                             let section = memory
                                 .get_section_containing(unwind)
                                 .context("out of bounds reading unwind info")?;
 
-                            dbg!(&section.name);
                             let mut offset = unwind - section.address;
 
                             let has_chain_info = section.data[offset] >> 3 == 0x4;
@@ -333,7 +300,7 @@ impl<'data> Executable<'data> {
                                         ) as usize;
                                     children.push((parent, function.clone()));
                                 } else {
-                                    println!("not adding chain info {offset}");
+                                    dbg!("not adding chain info {offset}");
                                 }
                             }
                             functions.insert(function.range.start, function);
@@ -351,21 +318,6 @@ impl<'data> Executable<'data> {
                 })
             })
             .transpose()?;
-        /*
-        for (i, window) in functions.windows(2).enumerate() {
-            match window {
-                [a, b] => {
-                    if a.range.end > b.range.start {
-                        println!("overlapping exception table @ {} len = {}: {a:x?} {b:x?}", i, functions.len());
-                    }
-                    if a.range.start >= b.range.start {
-                        println!("out of order exception table @ {} len = {}: {a:x?} {b:x?}", i, functions.len());
-                    }
-                }
-                _ => unreachable!()
-            }
-        }
-        */
 
         Ok(Executable {
             data,
@@ -377,7 +329,6 @@ impl<'data> Executable<'data> {
         })
     }
     pub fn get_function(&self, address: usize) -> Option<RuntimeFunction> {
-        println!("get_function(0x{address:x})");
         let base_address = self.object.relative_address_base() as usize;
 
         let count = self.exception_data.len() / 12;
@@ -393,7 +344,6 @@ impl<'data> Executable<'data> {
                             .try_into()
                             .unwrap(),
                     ) as usize;
-                //println!("{address:x} {addr_begin:x} {addr_end:x}");
                 if addr_end > address {
                     let unwind = base_address
                         + u32::from_le_bytes(
@@ -409,22 +359,17 @@ impl<'data> Executable<'data> {
                     };
 
                     loop {
-                        println!("CHECKING UNWIND OF {f:x?}");
-                        let section = self
-                            .memory
-                            .get_section_containing(f.unwind)
-                            .context("out of bounds reading unwind info")
-                            .unwrap();
+                        let Some(section) = self.memory.get_section_containing(f.unwind) else {
+                            dbg!("out of bounds reading unwind info");
+                            return None;
+                        };
 
-                        dbg!(&section.name);
                         let mut offset = f.unwind - section.address;
 
                         let has_chain_info = section.data[offset] >> 3 == 0x4;
                         if has_chain_info {
-                            println!("HAS PARENT {f:x?}");
                             let unwind_code_count = section.data[offset + 2];
 
-                            println!("UNWIND CODES {unwind_code_count}");
                             offset += 4 + 2 * unwind_code_count as usize;
                             if offset % 4 != 0 {
                                 // align
@@ -457,7 +402,6 @@ impl<'data> Executable<'data> {
                                 todo!("not adding chain info {offset}");
                             }
                         } else {
-                            println!("FOUND {f:#x?}");
                             return Some(f);
                         }
                         //functions.insert(function.range.start, function);
@@ -466,45 +410,6 @@ impl<'data> Executable<'data> {
             }
         }
         None
-        //todo!();
-
-        /*
-        let mut i = count / 2;
-
-        let addr_min = base_address + u32::from_le_bytes(self.exception_data[i * 12..i * 12 + 4].try_into().unwrap()) as usize;
-        if address < addr_min {
-            i = i / 2;
-        } else {
-            i = i + i / 2;
-        }
-        */
-
-        //None
-
-        //let mut cur = Cursor::new(data);
-
-        //let mut functions: BTreeMap<usize, RuntimeFunction> = Default::default();
-        //let mut children = vec![];
-        //for _ in 0..count {
-        //let range = base_address + cur.read_u32::<LE>()? as usize
-        //..base_address + cur.read_u32::<LE>()? as usize;
-        //let unwind = base_address + cur.read_u32::<LE>()? as usize;
-        //}
-
-        /*
-        if let Some(functions) = &self.functions {
-            // TODO figure out what to do in the rare case of overlapping entries
-            match functions.binary_search_by_key(&address, |f| f.range.start) {
-                Ok(i) => Some(&functions[i]),
-                Err(i) => {
-                    let f = &functions.get(i - 1);
-                    f.filter(|f| f.range.contains(&address))
-                }
-            }
-        } else {
-            None
-        }
-        */
     }
 }
 
