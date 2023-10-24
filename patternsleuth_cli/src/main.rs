@@ -185,12 +185,6 @@ mod disassemble {
                         output.buffer.push('\n');
                     }
                 }
-                println!(
-                    "{:x} {:x} {:x} {f:x?}",
-                    address,
-                    section.address,
-                    section.data.len()
-                );
                 let data =
                     &section.data[range.start - section.address..range.end - section.address];
                 let start_address = range.start as u64;
@@ -1010,14 +1004,7 @@ fn symbols(command: CommandSymbols) -> Result<()> {
         for (address, name) in exe.symbols.as_ref().unwrap() {
             if filter(name) {
                 if let Some(exception) = exe.get_function(*address) {
-                    let full_range = exception.full_range();
-                    println!(
-                        "{:016x} {:016x} {:08x} {}",
-                        address,
-                        full_range.end,
-                        full_range.len(),
-                        name
-                    );
+                    let full_range = exception.full_range(); // TODO this now shows only the first exception block and misses any chained exceptions that may be covering the function
                     if exception.range.start != *address {
                         println!("MISALIGNED EXCEPTION ENTRY FOR {}", name);
                     } else {
