@@ -76,7 +76,8 @@ pub enum Sig {
     AES,
     Lock,
     FParseParam,
-    FParseParamCalls,
+
+    UEVRConsoleManager,
 }
 
 pub fn get_patterns() -> Result<Vec<PatternConfig>> {
@@ -1492,14 +1493,15 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
             "FParse::Param".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 54 41 55 41 56 41 57 48 83 EC 20 66 83 39 00 4C 8B ?? 4C")?,
-            resolve_self,
+            fparseparam::resolve_stage1,
         ),
+
         PatternConfig::new(
-            Sig::FParseParamCalls,
-            "FParse::Param calls".to_string(),
-            Some(object::SectionKind::Text),
-            Pattern::new("48 8d 15 [ ?? ?? ?? ?? ] e8 X0x141aac5a0")?, // TODO get this xref address from pattern dependency
-            fparseparam::resolve,
+            Sig::UEVRConsoleManager,
+            "UEVRConsoleManager".to_string(),
+            None,
+            Pattern::from_bytes("r.DumpingMovie".encode_utf16().flat_map(u16::to_le_bytes).collect())?,
+            uevr::resolve_console_manager,
         ),
     ])
 }
@@ -2003,6 +2005,21 @@ mod signing_key {
 mod fparseparam {
     use super::*;
 
+    pub fn resolve_stage1(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
+
+        ResolutionAction::Continue(Scan {
+            section: Some(object::SectionKind::Text),
+            scan_type: Pattern::new(&format!(
+                "48 8d 15 [ ?? ?? ?? ?? ] e8 X0x{:x}",
+                ctx.match_address
+            ))
+            .unwrap()
+            .into(),
+            resolve,
+        })
+    }
+
     pub fn resolve(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
         stages.0.push(ctx.match_address);
 
@@ -2012,5 +2029,37 @@ mod fparseparam {
             .unwrap()[0]
             .rip();
         read_wstring(&ctx, addr.into()).into()
+    }
+}
+
+mod uevr {
+    use super::*;
+
+    pub fn resolve_console_manager(
+        ctx: ResolveContext,
+        stages: &mut ResolveStages,
+    ) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
+
+        ResolutionAction::Continue(Scan {
+            section: Some(object::SectionKind::Text),
+            scan_type: Pattern::new(&format!("48 8d 15 X0x{:x}", ctx.match_address))
+                .unwrap()
+                .into(),
+            resolve: resolve_console_manager_stage2,
+        })
+    }
+
+    pub fn resolve_console_manager_stage2(
+        ctx: ResolveContext,
+        stages: &mut ResolveStages,
+    ) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
+
+        if let Some(f) = ctx.exe.get_function(ctx.match_address) {
+            f.range.start.into()
+        } else {
+            ResolutionType::Failed.into()
+        }
     }
 }
