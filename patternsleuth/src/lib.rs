@@ -219,6 +219,79 @@ pub struct Executable<'data> {
     pub functions: Option<Vec<RuntimeFunction>>,
     pub symbols: Option<HashMap<usize, String>>,
 }
+fn read_functions(
+    object: &File<'_>,
+    data: &[u8],
+    memory: &MountedPE<'_>,
+) -> Result<Vec<RuntimeFunction>> {
+    Ok(match object {
+        object::File::Pe64(ref inner) => {
+            // TODO entries are sorted so it should be possible to binary search entries
+            // directly from the directory rather than read them all up front
+            let exception_directory = inner
+                .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
+                .context("no exception directory")?;
+
+            let base_address = object.relative_address_base() as usize;
+
+            let data = exception_directory.data(data, &inner.section_table())?;
+            let count = data.len() / 12;
+            let mut cur = std::io::Cursor::new(data);
+
+            let mut functions: BTreeMap<usize, RuntimeFunction> = Default::default();
+            let mut children = vec![];
+            for _ in 0..count {
+                let range = base_address + cur.read_u32::<LE>()? as usize
+                    ..base_address + cur.read_u32::<LE>()? as usize;
+                let unwind = base_address + cur.read_u32::<LE>()? as usize;
+
+                let function = RuntimeFunction {
+                    range,
+                    unwind,
+                    children: vec![],
+                };
+
+                // TODO this is totally gross. need to implement a nice way to stream sparse sections
+                let section = memory
+                    .get_section_containing(unwind)
+                    .context("out of bounds reading unwind info")?;
+
+                let mut offset = unwind - section.address;
+
+                let has_chain_info = section.data[offset] >> 3 == 0x4;
+                if has_chain_info {
+                    let unwind_code_count = section.data[offset + 2];
+
+                    offset += 4 + 2 * unwind_code_count as usize;
+                    if offset % 4 != 0 {
+                        // align
+                        offset += 2;
+                    }
+
+                    if section.data.len() > offset {
+                        let parent = base_address
+                            + u32::from_le_bytes(
+                                section.data[offset..offset + 4].try_into().unwrap(),
+                            ) as usize;
+                        children.push((parent, function.clone()));
+                    } else {
+                        dbg!("not adding chain info {offset}");
+                    }
+                }
+                functions.insert(function.range.start, function);
+            }
+            for (parent, child) in children {
+                functions.get_mut(&parent).unwrap().children.push(child);
+            }
+
+            functions.into_values().collect()
+        }
+        object::File::Pe32(_) => {
+            vec![]
+        }
+        _ => todo!("{:?}", object::FileKind::parse(data)?),
+    })
+}
 impl<'data> Executable<'data> {
     pub fn read<P: AsRef<Path>>(
         data: &'data [u8],
@@ -228,8 +301,6 @@ impl<'data> Executable<'data> {
     ) -> Result<Executable<'data>> {
         let object = object::File::parse(data)?;
         let memory = MountedPE::new(&object)?;
-
-        use std::io::Cursor;
 
         let base_address = object.relative_address_base() as usize;
 
@@ -250,74 +321,12 @@ impl<'data> Executable<'data> {
         };
 
         let functions = load_functions
-            .then(|| -> Result<_> {
-                Ok(match object {
-                    object::File::Pe64(ref inner) => {
-                        // TODO entries are sorted so it should be possible to binary search entries
-                        // directly from the directory rather than read them all up front
-                        let exception_directory = inner
-                            .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
-                            .context("no exception directory")?;
-
-                        let data = exception_directory.data(data, &inner.section_table())?;
-                        let count = data.len() / 12;
-                        let mut cur = Cursor::new(data);
-
-                        let mut functions: BTreeMap<usize, RuntimeFunction> = Default::default();
-                        let mut children = vec![];
-                        for _ in 0..count {
-                            let range = base_address + cur.read_u32::<LE>()? as usize
-                                ..base_address + cur.read_u32::<LE>()? as usize;
-                            let unwind = base_address + cur.read_u32::<LE>()? as usize;
-
-                            let function = RuntimeFunction {
-                                range,
-                                unwind,
-                                children: vec![],
-                            };
-
-                            // TODO this is totally gross. need to implement a nice way to stream sparse sections
-                            let section = memory
-                                .get_section_containing(unwind)
-                                .context("out of bounds reading unwind info")?;
-
-                            let mut offset = unwind - section.address;
-
-                            let has_chain_info = section.data[offset] >> 3 == 0x4;
-                            if has_chain_info {
-                                let unwind_code_count = section.data[offset + 2];
-
-                                offset += 4 + 2 * unwind_code_count as usize;
-                                if offset % 4 != 0 {
-                                    // align
-                                    offset += 2;
-                                }
-
-                                if section.data.len() > offset {
-                                    let parent = base_address
-                                        + u32::from_le_bytes(
-                                            section.data[offset..offset + 4].try_into().unwrap(),
-                                        ) as usize;
-                                    children.push((parent, function.clone()));
-                                } else {
-                                    dbg!("not adding chain info {offset}");
-                                }
-                            }
-                            functions.insert(function.range.start, function);
-                        }
-                        for (parent, child) in children {
-                            functions.get_mut(&parent).unwrap().children.push(child);
-                        }
-
-                        functions.into_values().collect()
-                    }
-                    object::File::Pe32(_) => {
-                        vec![]
-                    }
-                    _ => todo!("{:?}", object::FileKind::parse(data)?),
-                })
+            .then(|| {
+                read_functions(&object, data, &memory)
+                    .map_err(|e| println!("Failed to parse exceptions: {e}"))
+                    .ok()
             })
-            .transpose()?;
+            .flatten();
 
         Ok(Executable {
             data,
