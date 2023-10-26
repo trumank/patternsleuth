@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use super::{
-    MountedPE, Pattern, PatternConfig, ResolutionAction, ResolutionType, ResolveContext,
+    Memory, MemoryTrait, Pattern, PatternConfig, ResolutionAction, ResolutionType, ResolveContext,
     ResolveStages, Scan, Xref,
 };
 
@@ -1507,9 +1507,9 @@ pub fn get_patterns() -> Result<Vec<PatternConfig>> {
 }
 
 fn read_wstring(ctx: &ResolveContext, address: usize) -> String {
-    let section = ctx.memory.get_section_containing(address).unwrap();
-    let section_address = address - section.address;
-    let data = &section.data[section_address..]
+    let data = &ctx
+        .memory
+        .range_from(address..)
         .chunks(2)
         .map(|chunk| ((chunk[1] as u16) << 8) + chunk[0] as u16)
         .take_while(|n| *n != 0)
@@ -1545,14 +1545,14 @@ trait Matchable<'data> {
     ) -> Option<Vec<patternsleuth_scanner::Capture<'data>>>;
 }
 
-impl<'data> Matchable<'data> for MountedPE<'data> {
+impl<'data> Matchable<'data> for Memory<'data> {
     fn captures(
         &'data self,
         pattern: &Pattern,
         address: usize,
     ) -> Option<Vec<patternsleuth_scanner::Capture<'data>>> {
         self.get_section_containing(address)
-            .and_then(move |s| pattern.captures(s.data, s.address, address - s.address))
+            .and_then(move |s| pattern.captures(s.data(), s.address(), address - s.address()))
     }
 }
 
@@ -1605,7 +1605,7 @@ mod RIPRelativeResolvers {
     }
 
     fn resolve_RIP(
-        memory: &MountedPE,
+        memory: &Memory,
         match_address: usize,
         next_opcode_offset: usize,
         stages: &mut ResolveStages,
@@ -1770,18 +1770,18 @@ mod FPakPlatformFile {
                 let res = patternsleuth_scanner::scan_memchr(
                     &patterns.iter().map(|p| (&(), p)).collect::<Vec<_>>(),
                     0,
-                    section.data,
+                    section.data(),
                 );
                 let mut addresses = res
                     .into_iter()
                     .map(|(_, address)| {
                         // TODO allow passing sub-patterns to stages?
                         // TODO rename 'stages' to 'addresses_of_interest' or similar and give them names
-                        stages.0.push(section.address + address);
-                        section.address
+                        stages.0.push(section.address() + address);
+                        section.address()
                             + (address + 4)
                                 .checked_add_signed(i32::from_le_bytes(
-                                    section.data[address..address + 4].try_into().unwrap(),
+                                    section.data()[address..address + 4].try_into().unwrap(),
                                 ) as isize)
                                 .unwrap()
                     })
@@ -1802,20 +1802,20 @@ mod FPakPlatformFile {
             .memory
             .get_section_containing(ctx.match_address)
             .map(|section| {
-                let start = ctx.match_address - section.address;
+                let start = ctx.match_address - section.address();
                 let res = patternsleuth_scanner::scan_memchr(
                     &patterns.iter().map(|p| (&(), p)).collect::<Vec<_>>(),
                     start,
-                    &section.data[start..start + 400],
+                    &section.data()[start..start + 400],
                 );
                 let mut addresses = res
                     .into_iter()
                     .map(|(_, address)| {
-                        stages.0.push(section.address + address);
-                        section.address
+                        stages.0.push(section.address() + address);
+                        section.address()
                             + (address + 4)
                                 .checked_add_signed(i32::from_le_bytes(
-                                    section.data[address..address + 4].try_into().unwrap(),
+                                    section.data()[address..address + 4].try_into().unwrap(),
                                 ) as isize)
                                 .unwrap()
                     })

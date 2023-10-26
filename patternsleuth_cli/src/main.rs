@@ -137,6 +137,7 @@ mod disassemble {
         Decoder, DecoderOptions, Formatter, FormatterOutput, FormatterTextKind, IntelFormatter,
         OpKind,
     };
+    use patternsleuth::MemoryTrait;
 
     #[derive(Default)]
     struct Output {
@@ -164,9 +165,9 @@ mod disassemble {
             output.buffer.push_str(&format!(
                 "{:016x}\n{:016x} - {:016x} = {}\n",
                 address,
-                section.address,
-                section.address + section.data.len(),
-                section.name,
+                section.address(),
+                section.address() + section.data().len(),
+                section.name(),
             ));
 
             let (is_fn, data, start_address) = if let Some(f) = exe.get_function(address) {
@@ -185,16 +186,15 @@ mod disassemble {
                         output.buffer.push('\n');
                     }
                 }
-                let data =
-                    &section.data[range.start - section.address..range.end - section.address];
                 let start_address = range.start as u64;
+                let data = section.range(range);
                 (true, data, start_address)
             } else {
                 output.buffer.push_str("no function");
 
-                let data = &section.data[(address - context * max_inst)
-                    .saturating_sub(section.address)
-                    ..(address + context * max_inst).saturating_sub(section.address)];
+                let data = &section.data()[(address - context * max_inst)
+                    .saturating_sub(section.address())
+                    ..(address + context * max_inst).saturating_sub(section.address())];
                 let start_address = (address - context * max_inst) as u64;
                 (false, data, start_address)
             };
@@ -284,14 +284,14 @@ mod disassemble {
         let mut output = Output::default();
 
         if let Some(section) = exe.memory.get_section_containing(address) {
-            let data = &section.data[range.start - section.address..range.end - section.address];
+            let data = &section.range(range);
 
             output.buffer.push_str(&format!(
                 "{:016x}\n{:016x} - {:016x} = {}\n",
                 address,
-                section.address,
-                section.address + section.data.len(),
-                section.name,
+                section.address(),
+                section.address() + section.data().len(),
+                section.name(),
             ));
 
             if let Some(f) = exe.get_function(address) {

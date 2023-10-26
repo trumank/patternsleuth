@@ -9,7 +9,7 @@ pub mod scanner {
 
 use std::{
     collections::{BTreeMap, HashMap},
-    ops::{Index, Range},
+    ops::{Index, Range, RangeFrom, RangeTo},
     path::Path,
 };
 
@@ -23,7 +23,7 @@ use patterns::Sig;
 
 pub struct ResolveContext<'data, 'pattern> {
     pub exe: &'data Executable<'data>,
-    pub memory: &'data MountedPE<'data>,
+    pub memory: &'data Memory<'data>,
     pub section: String,
     pub match_address: usize,
     pub scan: &'pattern Scan,
@@ -213,21 +213,19 @@ impl PatternConfig {
 
 pub struct Executable<'data> {
     pub data: &'data [u8],
-    pub exception_data: &'data [u8],
+    pub exception_data: MemorySection<'data>,
     pub object: object::File<'data>,
-    pub memory: MountedPE<'data>,
-    pub functions: Option<Vec<RuntimeFunction>>,
+    pub memory: Memory<'data>,
+    pub functions: Option<Vec<RuntimeFunctionNode>>,
     pub symbols: Option<HashMap<usize, String>>,
 }
 fn read_functions(
     object: &File<'_>,
     data: &[u8],
-    memory: &MountedPE<'_>,
-) -> Result<Vec<RuntimeFunction>> {
+    memory: &Memory<'_>,
+) -> Result<Vec<RuntimeFunctionNode>> {
     Ok(match object {
         object::File::Pe64(ref inner) => {
-            // TODO entries are sorted so it should be possible to binary search entries
-            // directly from the directory rather than read them all up front
             let exception_directory = inner
                 .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
                 .context("no exception directory")?;
@@ -238,14 +236,14 @@ fn read_functions(
             let count = data.len() / 12;
             let mut cur = std::io::Cursor::new(data);
 
-            let mut functions: BTreeMap<usize, RuntimeFunction> = Default::default();
+            let mut functions: BTreeMap<usize, RuntimeFunctionNode> = Default::default();
             let mut children = vec![];
             for _ in 0..count {
                 let range = base_address + cur.read_u32::<LE>()? as usize
                     ..base_address + cur.read_u32::<LE>()? as usize;
                 let unwind = base_address + cur.read_u32::<LE>()? as usize;
 
-                let function = RuntimeFunction {
+                let function = RuntimeFunctionNode {
                     range,
                     unwind,
                     children: vec![],
@@ -256,11 +254,11 @@ fn read_functions(
                     .get_section_containing(unwind)
                     .context("out of bounds reading unwind info")?;
 
-                let mut offset = unwind - section.address;
+                let mut offset = unwind - section.section.address;
 
-                let has_chain_info = section.data[offset] >> 3 == 0x4;
+                let has_chain_info = section.section.data[offset] >> 3 == 0x4;
                 if has_chain_info {
-                    let unwind_code_count = section.data[offset + 2];
+                    let unwind_code_count = section.section.data[offset + 2];
 
                     offset += 4 + 2 * unwind_code_count as usize;
                     if offset % 4 != 0 {
@@ -268,10 +266,10 @@ fn read_functions(
                         offset += 2;
                     }
 
-                    if section.data.len() > offset {
+                    if section.section.data.len() > offset {
                         let parent = base_address
                             + u32::from_le_bytes(
-                                section.data[offset..offset + 4].try_into().unwrap(),
+                                section.section.data[offset..offset + 4].try_into().unwrap(),
                             ) as usize;
                         children.push((parent, function.clone()));
                     } else {
@@ -300,7 +298,7 @@ impl<'data> Executable<'data> {
         load_functions: bool,
     ) -> Result<Executable<'data>> {
         let object = object::File::parse(data)?;
-        let memory = MountedPE::new(&object)?;
+        let memory = Memory::new(&object)?;
 
         let base_address = object.relative_address_base() as usize;
 
@@ -315,9 +313,18 @@ impl<'data> Executable<'data> {
                     .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
                     .context("no exception directory")?;
 
-                exception_directory.data(data, &inner.section_table())?
+                MemorySection {
+                    address: base_address
+                        + exception_directory
+                            .virtual_address
+                            .get(object::LittleEndian) as usize,
+                    data: exception_directory.data(data, &inner.section_table())?,
+                }
             }
-            _ => &[],
+            _ => MemorySection {
+                address: 0,
+                data: &[],
+            },
         };
 
         let functions = load_functions
@@ -337,83 +344,88 @@ impl<'data> Executable<'data> {
             symbols,
         })
     }
-    pub fn get_function(&self, address: usize) -> Option<RuntimeFunction> {
+    fn read_exception(&self, address: usize) -> Option<RuntimeFunction> {
         let base_address = self.object.relative_address_base() as usize;
 
-        let count = self.exception_data.len() / 12;
-
-        for i in 0..count {
-            let addr_begin = base_address
-                + u32::from_le_bytes(self.exception_data[i * 12..i * 12 + 4].try_into().unwrap())
-                    as usize;
+        for i in (self.exception_data.address()
+            ..self.exception_data.address + self.exception_data.data.len())
+            .step_by(12)
+        {
+            let addr_begin = base_address + self.exception_data.u32_le(i) as usize;
             if addr_begin <= address {
-                let addr_end = base_address
-                    + u32::from_le_bytes(
-                        self.exception_data[i * 12 + 4..i * 12 + 8]
-                            .try_into()
-                            .unwrap(),
-                    ) as usize;
+                let addr_end = base_address + self.exception_data.u32_le(i + 4) as usize;
                 if addr_end > address {
-                    let unwind = base_address
-                        + u32::from_le_bytes(
-                            self.exception_data[i * 12 + 8..i * 12 + 12]
-                                .try_into()
-                                .unwrap(),
-                        ) as usize;
+                    let unwind = base_address + self.exception_data.u32_le(i + 8) as usize;
 
-                    let mut f = RuntimeFunction {
+                    return Some(RuntimeFunction {
+                        range: addr_begin..addr_end,
+                        unwind,
+                    });
+                }
+            }
+        }
+        None
+    }
+    pub fn get_function(&self, address: usize) -> Option<RuntimeFunctionNode> {
+        let base_address = self.object.relative_address_base() as usize;
+
+        // TODO binary search
+        for i in (self.exception_data.address()
+            ..self.exception_data.address + self.exception_data.data.len())
+            .step_by(12)
+        {
+            let addr_begin = base_address + self.exception_data.u32_le(i) as usize;
+            if addr_begin <= address {
+                let addr_end = base_address + self.exception_data.u32_le(i + 4) as usize;
+                if addr_end > address {
+                    let unwind = base_address + self.exception_data.u32_le(i + 8) as usize;
+
+                    let mut f = RuntimeFunctionNode {
                         range: addr_begin..addr_end,
                         unwind,
                         children: vec![],
                     };
 
                     loop {
-                        let Some(section) = self.memory.get_section_containing(f.unwind) else {
+                        let mut unwind_addr = f.unwind;
+
+                        let Some(section) = self.memory.get_section_containing(unwind_addr) else {
                             dbg!("out of bounds reading unwind info");
                             return None;
                         };
 
-                        let mut offset = f.unwind - section.address;
-
-                        let has_chain_info = section.data[offset] >> 3 == 0x4;
+                        let has_chain_info = section.section.index(unwind_addr) >> 3 == 0x4;
                         if has_chain_info {
-                            let unwind_code_count = section.data[offset + 2];
+                            let unwind_code_count = section.section.index(unwind_addr + 2);
 
-                            offset += 4 + 2 * unwind_code_count as usize;
-                            if offset % 4 != 0 {
+                            unwind_addr += 4 + 2 * unwind_code_count as usize;
+                            if unwind_addr % 4 != 0 {
                                 // align
-                                offset += 2;
+                                unwind_addr += 2;
                             }
 
-                            if section.data.len() > offset {
-                                let addr_begin = base_address
-                                    + u32::from_le_bytes(
-                                        section.data[offset..offset + 4].try_into().unwrap(),
-                                    ) as usize;
-                                let addr_end = base_address
-                                    + u32::from_le_bytes(
-                                        section.data[offset + 4..offset + 8].try_into().unwrap(),
-                                    ) as usize;
-                                let unwind = base_address
-                                    + u32::from_le_bytes(
-                                        section.data[offset + 8..offset + 12].try_into().unwrap(),
-                                    ) as usize;
+                            if section.address() + section.data().len() > unwind_addr + 12 {
+                                let addr_begin =
+                                    base_address + section.u32_le(unwind_addr) as usize;
+                                let addr_end =
+                                    base_address + section.u32_le(unwind_addr + 4) as usize;
+                                let unwind =
+                                    base_address + section.u32_le(unwind_addr + 8) as usize;
 
                                 let mut children = std::mem::take(&mut f.children);
                                 children.push(f.clone());
 
-                                f = RuntimeFunction {
+                                f = RuntimeFunctionNode {
                                     range: addr_begin..addr_end,
                                     unwind,
                                     children,
                                 };
                             } else {
-                                todo!("not adding chain info {offset}");
+                                todo!("not adding chain info {unwind_addr}");
                             }
                         } else {
                             return Some(f);
                         }
-                        //functions.insert(function.range.start, function);
                     }
                 }
             }
@@ -423,12 +435,17 @@ impl<'data> Executable<'data> {
 }
 
 #[derive(Debug, Clone)]
+pub struct RuntimeFunctionNode {
+    pub range: Range<usize>,
+    pub unwind: usize,
+    pub children: Vec<RuntimeFunctionNode>,
+}
+#[derive(Debug, Clone)]
 pub struct RuntimeFunction {
     pub range: Range<usize>,
     pub unwind: usize,
-    pub children: Vec<RuntimeFunction>,
 }
-impl RuntimeFunction {
+impl RuntimeFunctionNode {
     /// Return range accounting for chained entries
     /// This may include gaps not belonging to the function if chains are sparse
     pub fn full_range(&self) -> Range<usize> {
@@ -446,35 +463,168 @@ impl RuntimeFunction {
     }
 }
 
-pub struct PESection<'data> {
-    pub name: String,
-    pub address: usize,
-    pub kind: object::SectionKind,
-    pub data: &'data [u8],
+/// Continuous section of memory
+pub trait MemoryBlockTrait<'data> {
+    /// Return starting address of block
+    fn address(&self) -> usize;
+    /// Returned contained memory
+    fn data(&self) -> &'data [u8];
 }
 
-impl<'data> PESection<'data> {
-    fn new(name: String, address: usize, kind: object::SectionKind, data: &'data [u8]) -> Self {
-        Self {
-            name,
-            address,
-            kind,
-            data,
-        }
+/// Potentially sparse section of memory
+pub trait MemoryTrait<'data> {
+    /// Return u8 at `address`
+    fn index(&self, address: usize) -> u8;
+    /// Return slice of u8 at `range`
+    fn range(&self, range: Range<usize>) -> &'data [u8];
+    /// Return slice of u8 from start of `range` to end of block
+    fn range_from(&self, range: RangeFrom<usize>) -> &'data [u8];
+    /// Return slice of u8 from end of `range` to start of block (not useful because start of block
+    /// is unknown to caller)
+    fn range_to(&self, range: RangeTo<usize>) -> &'data [u8];
+}
+
+/// Memory accessor helpers
+pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
+    /// Return i32 at `address`
+    fn i32_le(&self, address: usize) -> i32 {
+        i32::from_le_bytes(
+            self.range(address..address + std::mem::size_of::<i32>())
+                .try_into()
+                .unwrap(),
+        )
+    }
+    /// Return u32 at `address`
+    fn u32_le(&self, address: usize) -> u32 {
+        u32::from_le_bytes(
+            self.range(address..address + std::mem::size_of::<u32>())
+                .try_into()
+                .unwrap(),
+        )
+    }
+    /// Return u64 at `address`
+    fn u64_le(&self, address: usize) -> u64 {
+        u64::from_le_bytes(
+            self.range(address..address + std::mem::size_of::<u64>())
+                .try_into()
+                .unwrap(),
+        )
+    }
+    /// Return ptr (usize) at `address`
+    fn ptr(&self, address: usize) -> usize {
+        self.u64_le(address) as usize
+    }
+    /// Return instruction relative address at `address`
+    fn rip4(&self, address: usize) -> usize {
+        (address + 4)
+            .checked_add_signed(self.i32_le(address) as isize)
+            .unwrap()
     }
 }
 
-pub struct MountedPE<'data> {
-    sections: Vec<PESection<'data>>,
+impl<'data, T: MemoryTrait<'data>> MemoryAccessorTrait<'data> for T {}
+
+impl<'data, T: MemoryBlockTrait<'data>> MemoryTrait<'data> for T {
+    fn index(&self, address: usize) -> u8 {
+        self.data()[address - self.address()]
+    }
+    fn range(&self, range: Range<usize>) -> &'data [u8] {
+        &self.data()[range.start - self.address()..range.end - self.address()]
+    }
+    fn range_from(&self, range: RangeFrom<usize>) -> &'data [u8] {
+        &self.data()[range.start - self.address()..]
+    }
+    fn range_to(&self, range: RangeTo<usize>) -> &'data [u8] {
+        &self.data()[..range.end - self.address()]
+    }
 }
 
-impl<'data> MountedPE<'data> {
+impl<'data> MemoryTrait<'data> for Memory<'data> {
+    fn index(&self, address: usize) -> u8 {
+        self.get_section_containing(address).unwrap().index(address)
+    }
+    fn range(&self, range: Range<usize>) -> &'data [u8] {
+        self.get_section_containing(range.start)
+            .unwrap()
+            .range(range)
+    }
+    fn range_from(&self, range: RangeFrom<usize>) -> &'data [u8] {
+        self.get_section_containing(range.start)
+            .unwrap()
+            .range_from(range)
+    }
+    fn range_to(&self, range: RangeTo<usize>) -> &'data [u8] {
+        self.get_section_containing(range.end)
+            .unwrap()
+            .range_to(range)
+    }
+}
+
+pub struct MemorySection<'data> {
+    address: usize,
+    data: &'data [u8],
+}
+impl<'data> MemoryBlockTrait<'data> for MemorySection<'data> {
+    fn address(&self) -> usize {
+        self.address
+    }
+    fn data(&self) -> &'data [u8] {
+        self.data
+    }
+}
+
+pub struct NamedMemorySection<'data> {
+    name: String,
+    kind: object::SectionKind,
+    section: MemorySection<'data>,
+}
+
+impl<'data> NamedMemorySection<'data> {
+    fn new(name: String, address: usize, kind: object::SectionKind, data: &'data [u8]) -> Self {
+        Self {
+            name,
+            kind,
+            section: MemorySection { address, data },
+        }
+    }
+}
+impl NamedMemorySection<'_> {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn kind(&self) -> object::SectionKind {
+        self.kind
+    }
+    pub fn address(&self) -> usize {
+        self.section.address()
+    }
+    pub fn data(&self) -> &[u8] {
+        self.section.data()
+    }
+    pub fn len(&self) -> usize {
+        self.section.data.len()
+    }
+}
+impl<'data> MemoryBlockTrait<'data> for NamedMemorySection<'data> {
+    fn address(&self) -> usize {
+        self.section.address()
+    }
+    fn data(&self) -> &'data [u8] {
+        self.section.data()
+    }
+}
+
+pub struct Memory<'data> {
+    sections: Vec<NamedMemorySection<'data>>,
+}
+
+impl<'data> Memory<'data> {
     pub fn new(object: &File<'data>) -> Result<Self> {
         Ok(Self {
             sections: object
                 .sections()
                 .map(|s| {
-                    Ok(PESection::new(
+                    Ok(NamedMemorySection::new(
                         s.name()?.to_string(),
                         s.address() as usize,
                         s.kind(),
@@ -484,9 +634,10 @@ impl<'data> MountedPE<'data> {
                 .collect::<Result<Vec<_>>>()?,
         })
     }
-    pub fn get_section_containing(&self, address: usize) -> Option<&PESection> {
+    pub fn get_section_containing(&self, address: usize) -> Option<&NamedMemorySection<'data>> {
         self.sections.iter().find(|section| {
-            address >= section.address && address < section.address + section.data.len()
+            address >= section.section.address
+                && address < section.section.address + section.section.data.len()
         })
     }
     pub fn find<F>(&self, kind: object::SectionKind, filter: F) -> Option<usize>
@@ -495,35 +646,42 @@ impl<'data> MountedPE<'data> {
     {
         self.sections.iter().find_map(|section| {
             if section.kind == kind {
-                section.data.windows(4).enumerate().find_map(|(i, slice)| {
-                    filter(section.address + i, slice).then_some(section.address + i)
-                })
+                section
+                    .section
+                    .data
+                    .windows(4)
+                    .enumerate()
+                    .find_map(|(i, slice)| {
+                        filter(section.section.address + i, slice)
+                            .then_some(section.section.address + i)
+                    })
             } else {
                 None
             }
         })
     }
 }
-impl<'data> Index<usize> for MountedPE<'data> {
+impl<'data> Index<usize> for Memory<'data> {
     type Output = u8;
     fn index(&self, index: usize) -> &Self::Output {
         self.sections
             .iter()
-            .find_map(|section| section.data.get(index - section.address))
+            .find_map(|section| section.section.data.get(index - section.section.address))
             .unwrap()
     }
 }
-impl<'data> Index<Range<usize>> for MountedPE<'data> {
+impl<'data> Index<Range<usize>> for Memory<'data> {
     type Output = [u8];
     fn index(&self, index: Range<usize>) -> &Self::Output {
         self.sections
             .iter()
             .find_map(|section| {
-                if index.start >= section.address
-                    && index.end <= section.address + section.data.len()
+                if index.start >= section.section.address
+                    && index.end <= section.section.address + section.section.data.len()
                 {
-                    let relative_range = index.start - section.address..index.end - section.address;
-                    Some(&section.data[relative_range])
+                    let relative_range =
+                        index.start - section.section.address..index.end - section.section.address;
+                    Some(&section.section.data[relative_range])
                 } else {
                     None
                 }
