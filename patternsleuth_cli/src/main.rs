@@ -175,9 +175,7 @@ mod disassemble {
                 if let Some(symbols) = &exe.symbols {
                     if let Some(symbol) = symbols.get(&range.start) {
                         #[allow(clippy::unnecessary_to_owned)]
-                        output
-                            .buffer
-                            .push_str(&format!("{}", symbol).bright_yellow().to_string());
+                        output.buffer.push_str(&symbol.bright_yellow().to_string());
                         output.buffer.push_str(&"".normal().to_string());
                         output.buffer.push('\n');
                     }
@@ -388,9 +386,10 @@ mod disassemble {
 
             if instruction.op_kinds().any(|op| op == OpKind::NearBranch64) {
                 if let Some(symbol) = symbols(instruction.near_branch64() as usize) {
+                    #[allow(clippy::unnecessary_to_owned)]
                     output
                         .buffer
-                        .push_str(&format!(" {}", symbol.bright_yellow().to_string()));
+                        .push_str(&format!(" {}", symbol.bright_yellow().to_owned()));
                 }
             }
             output.buffer.push('\n');

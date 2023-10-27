@@ -249,7 +249,6 @@ fn read_functions(
                     children: vec![],
                 };
 
-                // TODO this is totally gross. need to implement a nice way to stream sparse sections
                 let section = memory
                     .get_section_containing(unwind)
                     .context("out of bounds reading unwind info")?;
@@ -627,6 +626,9 @@ impl NamedMemorySection<'_> {
     }
     pub fn len(&self) -> usize {
         self.section.data.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.section.data.is_empty()
     }
 }
 impl<'data> MemoryBlockTrait<'data> for NamedMemorySection<'data> {
