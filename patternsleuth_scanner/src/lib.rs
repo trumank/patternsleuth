@@ -609,7 +609,7 @@ mod test {
 
     #[test]
     fn test_build_pattern() {
-        assert!(Pattern::new("?? ??").is_err());
+        assert!(Pattern::new("?? ??").is_ok());
         assert_eq!(
             Pattern {
                 sig: vec![0, 0],
