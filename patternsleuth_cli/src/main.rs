@@ -26,11 +26,7 @@ enum Commands {
     Scan(CommandScan),
     Symbols(CommandSymbols),
     BuildIndex(CommandBuildIndex),
-    ReadIndex(CommandReadIndex),
-    SearchIndex(CommandSearchIndex),
-    ListIndex(CommandListIndex),
     ViewSymbol(CommandViewSymbol),
-    BruteForce(CommandBruteForce),
 }
 
 fn parse_maybe_hex(s: &str) -> Result<usize> {
@@ -553,11 +549,7 @@ fn main() -> Result<()> {
         Commands::Scan(command) => scan(command),
         Commands::Symbols(command) => symbols(command),
         Commands::BuildIndex(command) => index::build(command),
-        Commands::ReadIndex(command) => index::read(command),
-        Commands::SearchIndex(command) => index::search(command),
-        Commands::ListIndex(command) => index::list(command),
         Commands::ViewSymbol(command) => index::view(command),
-        Commands::BruteForce(command) => index::brute_force(command),
     }
 }
 
@@ -1083,78 +1075,11 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameEntry>> {
 mod index {
     use super::*;
 
-    use std::{borrow::Cow, collections::BTreeSet};
+    use std::borrow::Cow;
 
-    use bincode::{Decode, Encode};
-    use patternsleuth::ScanType;
     use prettytable::{Cell, Row, Table};
     use rayon::prelude::*;
     use rusqlite::{Connection, OptionalExtension};
-
-    #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord, Hash)]
-    struct SymbolKey {
-        name: String,
-    }
-
-    #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord, Default)]
-    struct SymbolValue {
-        functions: BTreeSet<FunctionKey>,
-    }
-
-    #[derive(Debug, Encode, Decode, PartialEq, PartialOrd, Eq, Ord)]
-    struct FunctionKey {
-        address: usize,
-        executable: String,
-    }
-
-    #[derive(Debug, Encode, Decode)]
-    struct FunctionValue<'b> {
-        bytes: Cow<'b, [u8]>,
-    }
-
-    pub(crate) fn search(command: CommandSearchIndex) -> Result<()> {
-        let config = bincode::config::standard().with_big_endian();
-
-        let db: sled::Db = sled::open("symbol_db")?;
-
-        let functions_tree: sled::Tree = db.open_tree(b"functions")?;
-        let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
-
-        for key in symbols_tree.iter().keys() {
-            let key_enc = key?;
-            let key: SymbolKey = bincode::borrow_decode_from_slice(&key_enc, config)?.0;
-            if key.name.contains(&command.symbol) {
-                println!("{:X?}", key.name);
-
-                let mut cells = vec![];
-                if let Some(value_enc) = symbols_tree.get(key_enc)? {
-                    let value: SymbolValue =
-                        bincode::borrow_decode_from_slice(&value_enc, config)?.0;
-                    for f in value.functions {
-                        let fn_key_enc = bincode::encode_to_vec(&f, config)?;
-                        if let Some(function_value) = functions_tree.get(fn_key_enc)? {
-                            let function_value: FunctionValue =
-                                bincode::borrow_decode_from_slice(&function_value, config)?.0;
-
-                            cells.push((
-                                f.executable,
-                                disassemble::disassemble_bytes(f.address, &function_value.bytes),
-                            ));
-                        }
-                    }
-                }
-
-                let mut table = Table::new();
-                table.set_titles(cells.iter().map(|c| c.0.clone()).collect());
-                table.add_row(Row::new(
-                    cells.into_iter().map(|c| Cell::new(&c.1)).collect(),
-                ));
-                table.printstd();
-            }
-        }
-
-        Ok(())
-    }
 
     pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
         println!("{:?}", command.symbol);
@@ -1337,51 +1262,6 @@ mod index {
             */
         } else {
             println!("not found");
-        }
-
-        Ok(())
-    }
-
-    pub(crate) fn list(command: CommandListIndex) -> Result<()> {
-        let config = bincode::config::standard().with_big_endian();
-
-        let db: sled::Db = sled::open("symbol_db")?;
-
-        let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
-
-        for key in symbols_tree.iter().keys() {
-            let key_enc = key?;
-            let key: SymbolKey = bincode::borrow_decode_from_slice(&key_enc, config)?.0;
-            println!("{}", key.name);
-        }
-
-        Ok(())
-    }
-
-    pub(crate) fn read(_command: CommandReadIndex) -> Result<()> {
-        let config = bincode::config::standard().with_big_endian();
-
-        let db: sled::Db = sled::open("symbol_db")?;
-
-        let functions_tree: sled::Tree = db.open_tree(b"functions")?;
-        let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
-
-        for entry in symbols_tree.iter() {
-            let (key, value) = entry?;
-            let (key, value) = (
-                bincode::borrow_decode_from_slice::<SymbolKey, _>(&key, config)?,
-                bincode::borrow_decode_from_slice::<SymbolValue, _>(&value, config)?,
-            );
-            println!("{:X?} {:X?}", key, value);
-        }
-
-        for entry in functions_tree.iter() {
-            let (key, value) = entry?;
-            let (key, _value) = (
-                bincode::borrow_decode_from_slice::<FunctionKey, _>(&key, config)?,
-                bincode::borrow_decode_from_slice::<FunctionValue, _>(&value, config)?,
-            );
-            println!("{:X?}", key);
         }
 
         Ok(())
@@ -1577,148 +1457,6 @@ mod index {
             "CREATE INDEX IF NOT EXISTS xrefs_game_address_reference_idx ON xrefs (game, address_reference)",
             (),
         )?;
-
-        Ok(())
-    }
-
-    pub(crate) fn brute_force(_command: CommandBruteForce) -> Result<()> {
-        let config = bincode::config::standard().with_big_endian();
-
-        let db: sled::Db = sled::open("symbol_db")?;
-
-        let functions_tree: sled::Tree = db.open_tree(b"functions")?;
-        let symbols_tree: sled::Tree = db.open_tree(b"symbols")?;
-
-        let games = get_games([])?;
-
-        let mut patterns = vec![];
-
-        let date = chrono::Local::now();
-
-        let mut log = csv::Writer::from_path(
-            Path::new("scans").join(format!("scan-{}.log", date.format("%Y-%m-%d_%H-%M-%S"))),
-        )?;
-
-        for key in symbols_tree.iter().keys() {
-            let key_enc = key?;
-            let key: SymbolKey = bincode::borrow_decode_from_slice(&key_enc, config)?.0;
-
-            if let Some(symbol_value) = symbols_tree.get(key_enc)? {
-                let value: SymbolValue =
-                    bincode::borrow_decode_from_slice(&symbol_value, config)?.0;
-
-                let mut cells = vec![];
-                let mut function_bodies = vec![];
-
-                for f in value.functions {
-                    let fn_key_enc = bincode::encode_to_vec(&f, config)?;
-                    if let Some(function_value) = functions_tree.get(fn_key_enc)? {
-                        let function_value: FunctionValue =
-                            bincode::borrow_decode_from_slice(&function_value, config)?.0;
-
-                        cells.push((
-                            f.executable,
-                            disassemble::disassemble_bytes(f.address, &function_value.bytes),
-                        ));
-
-                        function_bodies.push(function_value.bytes.to_vec());
-                    }
-                }
-
-                if function_bodies.len() > 1 {
-                    if let Some(pattern) = build_common_pattern(function_bodies) {
-                        //println!("{} {}", key.name, pattern);
-                        if let Ok(pattern) = Pattern::new(&pattern) {
-                            if 10 < pattern.mask.iter().filter(|m| **m != 0).count() {
-                                patterns.push((key.name, pattern));
-                            }
-                        }
-                    }
-                }
-            }
-
-            if patterns.len() > 10000 {
-                let mut patterns = patterns
-                    .drain(..)
-                    .map(|(symbol, pattern)| {
-                        PatternConfig::new(
-                            Sig::Custom(symbol.clone()),
-                            symbol,
-                            None,
-                            pattern,
-                            resolve_self,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-
-                let mut games_matched: HashMap<_, usize> = Default::default();
-
-                for GameEntry { name, exe_path } in &games {
-                    println!("p = {} {:?} {:?}", patterns.len(), name, exe_path.display());
-                    let bin_data = fs::read(exe_path)?;
-                    let exe = match Executable::read(&bin_data, exe_path, false, false) {
-                        Ok(exe) => exe,
-                        Err(err) => {
-                            println!("err reading {}: {}", exe_path.display(), err);
-                            continue;
-                        }
-                    };
-
-                    let scan = scan_game(&exe, &patterns)?;
-
-                    // group results by Sig
-                    let folded_scans = scan
-                        .results
-                        .iter()
-                        .map(|(config, m)| (&config.sig, (config, m)))
-                        .fold(HashMap::new(), |mut map: HashMap<_, Vec<_>>, (k, v)| {
-                            map.entry(k).or_default().push(v);
-                            map
-                        });
-
-                    println!("{name}");
-                    for (sig, group) in &folded_scans {
-                        let sig = match sig {
-                            Sig::Custom(name) => name,
-                            _ => unreachable!(),
-                        };
-                        println!("\t{} {sig:10}", group.len());
-                    }
-                    let counts: HashMap<Sig, _> = folded_scans
-                        .iter()
-                        .map(|(sig, group)| ((*sig).clone(), group.len()))
-                        .collect();
-
-                    patterns.retain(|p| counts.get(&p.sig).map(|c| *c <= 1).unwrap_or(true));
-
-                    for config in &patterns {
-                        if counts.contains_key(&config.sig) {
-                            let symbol = match &config.sig {
-                                Sig::Custom(name) => name,
-                                _ => unreachable!(),
-                            };
-                            *games_matched.entry(symbol.clone()).or_default() += 1;
-                        }
-                    }
-                }
-
-                for config in patterns {
-                    let symbol = match config.sig {
-                        Sig::Custom(name) => name,
-                        _ => unreachable!(),
-                    };
-                    log.write_record([
-                        games_matched.get(&symbol).unwrap().to_string(),
-                        symbol,
-                        match config.scan.scan_type {
-                            ScanType::Pattern(pattern) => pattern.to_string(),
-                            _ => unreachable!(),
-                        },
-                    ])?;
-                }
-                log.flush()?;
-            }
-        }
 
         Ok(())
     }
