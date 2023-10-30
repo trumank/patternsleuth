@@ -213,10 +213,9 @@ impl PatternConfig {
 }
 
 pub struct Executable<'data> {
-    pub data: &'data [u8],
+    pub base_address: usize,
     pub exception_directory_range: Range<usize>,
     pub exception_children_cache: HashMap<usize, Vec<RuntimeFunction>>,
-    pub object: object::File<'data>,
     pub memory: Memory<'data>,
     pub functions: Option<Vec<RuntimeFunctionNode>>,
     pub symbols: Option<HashMap<usize, String>>,
@@ -324,10 +323,9 @@ impl<'data> Executable<'data> {
         };
 
         let mut new = Executable {
-            data,
+            base_address,
             exception_directory_range,
             exception_children_cache: Default::default(),
-            object,
             memory,
             functions: None,
             symbols,
@@ -339,10 +337,8 @@ impl<'data> Executable<'data> {
         Ok(new)
     }
     fn populate_exception_cache(&mut self) {
-        let base_address = self.object.relative_address_base() as usize;
-
         for i in self.exception_directory_range.clone().step_by(12) {
-            let f = RuntimeFunction::read(&self.memory, base_address, i);
+            let f = RuntimeFunction::read(&self.memory, self.base_address, i);
 
             let Some(section) = self.memory.get_section_containing(f.unwind) else {
                 println!("invalid unwind info addr {:x}", f.unwind);
@@ -361,7 +357,7 @@ impl<'data> Executable<'data> {
                 }
 
                 if section.address() + section.data().len() > unwind + 12 {
-                    let chained = RuntimeFunction::read(section, base_address, unwind);
+                    let chained = RuntimeFunction::read(section, self.base_address, unwind);
                     let referenced = self.read_exception(chained.range.start);
 
                     //assert_eq!(Some(&chained), referenced.as_ref());
@@ -382,8 +378,6 @@ impl<'data> Executable<'data> {
         //println!("{:#x?}", self.exception_children_cache);
     }
     fn read_exception(&self, address: usize) -> Option<RuntimeFunction> {
-        let base_address = self.object.relative_address_base() as usize;
-
         let size = 12;
         let mut min = 0;
         let mut max = self.exception_directory_range.len() / size - 1;
@@ -393,11 +387,11 @@ impl<'data> Executable<'data> {
             let i = (max + min) / 2;
             let addr = i * size + self.exception_directory_range.start;
 
-            let addr_begin = base_address + self.memory.u32_le(addr) as usize;
+            let addr_begin = self.base_address + self.memory.u32_le(addr) as usize;
             if addr_begin <= address {
-                let addr_end = base_address + self.memory.u32_le(addr + 4) as usize;
+                let addr_end = self.base_address + self.memory.u32_le(addr + 4) as usize;
                 if addr_end > address {
-                    let unwind = base_address + self.memory.u32_le(addr + 8) as usize;
+                    let unwind = self.base_address + self.memory.u32_le(addr + 8) as usize;
 
                     return Some(RuntimeFunction {
                         range: addr_begin..addr_end,
@@ -413,8 +407,6 @@ impl<'data> Executable<'data> {
         None
     }
     pub fn get_function(&self, address: usize) -> Option<RuntimeFunctionNode> {
-        let base_address = self.object.relative_address_base() as usize;
-
         let section = self
             .memory
             .get_section_containing(self.exception_directory_range.start)
@@ -422,11 +414,11 @@ impl<'data> Executable<'data> {
 
         // TODO binary search
         for i in self.exception_directory_range.clone().step_by(12) {
-            let addr_begin = base_address + section.u32_le(i) as usize;
+            let addr_begin = self.base_address + section.u32_le(i) as usize;
             if addr_begin <= address {
-                let addr_end = base_address + section.u32_le(i + 4) as usize;
+                let addr_end = self.base_address + section.u32_le(i + 4) as usize;
                 if addr_end > address {
-                    let unwind = base_address + section.u32_le(i + 8) as usize;
+                    let unwind = self.base_address + section.u32_le(i + 8) as usize;
 
                     let mut f = RuntimeFunctionNode {
                         range: addr_begin..addr_end,
@@ -454,11 +446,11 @@ impl<'data> Executable<'data> {
 
                             if section.address() + section.data().len() > unwind_addr + 12 {
                                 let addr_begin =
-                                    base_address + section.u32_le(unwind_addr) as usize;
+                                    self.base_address + section.u32_le(unwind_addr) as usize;
                                 let addr_end =
-                                    base_address + section.u32_le(unwind_addr + 4) as usize;
+                                    self.base_address + section.u32_le(unwind_addr + 4) as usize;
                                 let unwind =
-                                    base_address + section.u32_le(unwind_addr + 8) as usize;
+                                    self.base_address + section.u32_le(unwind_addr + 8) as usize;
 
                                 let mut children = std::mem::take(&mut f.children);
                                 children.push(f.clone());
