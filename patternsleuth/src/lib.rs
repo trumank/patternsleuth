@@ -1,6 +1,7 @@
-#![feature(portable_simd)]
+#![feature(portable_simd, str_split_whitespace_remainder)]
 
 pub mod patterns;
+pub mod process;
 pub mod symbols;
 
 pub mod scanner {
@@ -724,6 +725,24 @@ impl<'data> Memory<'data> {
                 })
                 .collect::<Result<Vec<_>>>()?,
         })
+    }
+    pub fn new_external_data(sections: Vec<(object::Section<'_, '_>, Vec<u8>)>) -> Result<Self> {
+        Ok(Self {
+            sections: sections
+                .into_iter()
+                .map(|(s, d)| {
+                    Ok(NamedMemorySection::new(
+                        s.name()?.to_string(),
+                        s.address() as usize,
+                        s.kind(),
+                        d,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        })
+    }
+    pub fn sections(&self) -> &[NamedMemorySection] {
+        &self.sections
     }
     pub fn get_section_containing(&self, address: usize) -> Option<&NamedMemorySection<'data>> {
         self.sections.iter().find(|section| {

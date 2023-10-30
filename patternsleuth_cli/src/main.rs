@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -6,7 +7,6 @@ use anyhow::Result;
 use clap::Parser;
 use indicatif::ProgressBar;
 use itertools::Itertools;
-use object::{Object, ObjectSection};
 use patricia_tree::StringPatriciaMap;
 use patternsleuth::patterns::resolve_self;
 use patternsleuth::Executable;
@@ -41,6 +41,10 @@ struct CommandScan {
     /// globs
     #[arg(short, long)]
     game: Vec<String>,
+
+    /// A game process ID to attach to and scan
+    #[arg(long)]
+    pid: Option<i32>,
 
     /// A signature to scan for (can be specified multiple times). Scans for all signatures if omitted
     #[arg(short, long)]
@@ -461,10 +465,10 @@ fn scan_game<'patterns>(
 
     while !scan_queue.is_empty() {
         let mut new_queue = vec![];
-        for section in exe.object.sections() {
-            let base_address = section.address() as usize;
-            let section_name = section.name()?;
-            let data = section.data()?;
+        for section in exe.memory.sections() {
+            let base_address = section.address();
+            let section_name = section.name();
+            let data = section.data();
 
             let pattern_scans = scan_queue
                 .iter()
@@ -619,7 +623,13 @@ fn scan(command: CommandScan) -> Result<()> {
         }
     }
 
-    let games_vec = get_games(command.game)?;
+    let mut games_vec = vec![];
+
+    if let Some(pid) = command.pid {
+        games_vec.push(GameEntry::Process(GameProcessEntry { pid }));
+    } else {
+        games_vec.extend(get_games(command.game)?.into_iter().map(GameEntry::File));
+    }
 
     let (output, iter): (_, Box<dyn Iterator<Item = _>>) = if command.progress {
         let progress = ProgressBar::new(games_vec.len() as u64);
@@ -631,19 +641,38 @@ fn scan(command: CommandScan) -> Result<()> {
         (Output::Stdout, Box::new(games_vec.iter()))
     };
 
-    for GameEntry { name, exe_path } in iter {
-        output.println(format!("{:?} {:?}", name, exe_path.display()));
-        let bin_data = fs::read(exe_path)?;
-        let exe = match Executable::read(
-            &bin_data,
-            exe_path,
-            command.symbols,
-            !command.skip_exceptions,
-        ) {
-            Ok(exe) => exe,
-            Err(err) => {
-                output.println(format!("err reading {}: {}", exe_path.display(), err));
-                continue;
+    for game in iter {
+        let mut bin_data = None;
+
+        let (name, exe) = match game {
+            GameEntry::File(GameFileEntry { name, exe_path }) => {
+                output.println(format!("{:?} {:?}", name, exe_path.display()));
+
+                bin_data = Some(fs::read(exe_path)?);
+
+                (
+                    Cow::Borrowed(name),
+                    match Executable::read(
+                        bin_data.as_ref().unwrap(),
+                        exe_path,
+                        command.symbols,
+                        !command.skip_exceptions,
+                    ) {
+                        Ok(exe) => exe,
+                        Err(err) => {
+                            output.println(format!("err reading {}: {}", exe_path.display(), err));
+                            continue;
+                        }
+                    },
+                )
+            }
+            GameEntry::Process(GameProcessEntry { pid }) => {
+                output.println(format!("PID={pid}"));
+
+                (
+                    Cow::Owned(format!("PID={pid}")),
+                    patternsleuth::process::read_image_from_pid(*pid)?,
+                )
             }
         };
 
@@ -977,7 +1006,7 @@ fn symbols(command: CommandSymbols) -> Result<()> {
 
     let mut cells = vec![];
 
-    for GameEntry { name, exe_path } in get_games(command.game)? {
+    for GameFileEntry { name, exe_path } in get_games(command.game)? {
         if !exe_path.with_extension("pdb").exists() {
             continue;
         }
@@ -1021,12 +1050,21 @@ fn symbols(command: CommandSymbols) -> Result<()> {
     Ok(())
 }
 
-struct GameEntry {
+enum GameEntry {
+    File(GameFileEntry),
+    Process(GameProcessEntry),
+}
+
+struct GameFileEntry {
     name: String,
     exe_path: PathBuf,
 }
 
-fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameEntry>> {
+struct GameProcessEntry {
+    pid: i32,
+}
+
+fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameFileEntry>> {
     let games_filter = filter
         .as_ref()
         .iter()
@@ -1066,8 +1104,8 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameEntry>> {
         .map(|entries| {
             sample_order(entries, 3)
                 .into_iter()
-                .map(|(name, exe_path)| GameEntry { name, exe_path })
-                .collect::<Vec<GameEntry>>()
+                .map(|(name, exe_path)| GameFileEntry { name, exe_path })
+                .collect::<Vec<GameFileEntry>>()
         })
 }
 
@@ -1368,7 +1406,7 @@ mod index {
             games_with_symbols
                 .par_iter()
                 .progress_with(pb.clone())
-                .try_for_each(|GameEntry { name, exe_path }| -> Result<()> {
+                .try_for_each(|GameFileEntry { name, exe_path }| -> Result<()> {
                     pb.set_message("total");
 
                     let bin_data = fs::read(exe_path)?;
