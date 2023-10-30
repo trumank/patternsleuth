@@ -435,6 +435,7 @@ fn scan_game<'patterns>(
     let mut results = vec![];
 
     struct PendingScan {
+        original_config_index: usize,
         index: usize,
         stages: ResolveStages,
         scan: Scan,
@@ -444,6 +445,7 @@ fn scan_game<'patterns>(
         .iter()
         .enumerate()
         .map(|(index, config)| PendingScan {
+            original_config_index: index,
             index,
             stages: ResolveStages(vec![]),
             scan: config.scan.clone(), // TODO clone isn't ideal but makes handling multi-stage scans a lot easier
@@ -510,6 +512,7 @@ fn scan_game<'patterns>(
                 match action {
                     ResolutionAction::Continue(new_scan) => {
                         new_queue.push(PendingScan {
+                            original_config_index: scan.original_config_index,
                             index: new_queue.len(),
                             stages,
                             scan: new_scan,
@@ -517,7 +520,7 @@ fn scan_game<'patterns>(
                     }
                     ResolutionAction::Finish(res) => {
                         results.push((
-                            &pattern_configs[scan.index],
+                            &pattern_configs[scan.original_config_index],
                             Resolution {
                                 stages: stages.0,
                                 res,
