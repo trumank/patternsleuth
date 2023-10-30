@@ -8,6 +8,7 @@ pub mod scanner {
 }
 
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashMap},
     ops::{Index, Range, RangeFrom, RangeTo},
     path::Path,
@@ -531,7 +532,7 @@ pub trait MemoryBlockTrait<'data> {
     /// Return starting address of block
     fn address(&self) -> usize;
     /// Returned contained memory
-    fn data(&self) -> &'data [u8];
+    fn data(&self) -> &[u8];
 }
 
 /// Potentially sparse section of memory
@@ -539,12 +540,12 @@ pub trait MemoryTrait<'data> {
     /// Return u8 at `address`
     fn index(&self, address: usize) -> u8;
     /// Return slice of u8 at `range`
-    fn range(&self, range: Range<usize>) -> &'data [u8];
+    fn range(&self, range: Range<usize>) -> &[u8];
     /// Return slice of u8 from start of `range` to end of block
-    fn range_from(&self, range: RangeFrom<usize>) -> &'data [u8];
+    fn range_from(&self, range: RangeFrom<usize>) -> &[u8];
     /// Return slice of u8 from end of `range` to start of block (not useful because start of block
     /// is unknown to caller)
-    fn range_to(&self, range: RangeTo<usize>) -> &'data [u8];
+    fn range_to(&self, range: RangeTo<usize>) -> &[u8];
 }
 
 /// Memory accessor helpers
@@ -615,13 +616,13 @@ impl<'data, T: MemoryBlockTrait<'data>> MemoryTrait<'data> for T {
     fn index(&self, address: usize) -> u8 {
         self.data()[address - self.address()]
     }
-    fn range(&self, range: Range<usize>) -> &'data [u8] {
+    fn range(&self, range: Range<usize>) -> &[u8] {
         &self.data()[range.start - self.address()..range.end - self.address()]
     }
-    fn range_from(&self, range: RangeFrom<usize>) -> &'data [u8] {
+    fn range_from(&self, range: RangeFrom<usize>) -> &[u8] {
         &self.data()[range.start - self.address()..]
     }
-    fn range_to(&self, range: RangeTo<usize>) -> &'data [u8] {
+    fn range_to(&self, range: RangeTo<usize>) -> &[u8] {
         &self.data()[..range.end - self.address()]
     }
 }
@@ -630,17 +631,17 @@ impl<'data> MemoryTrait<'data> for Memory<'data> {
     fn index(&self, address: usize) -> u8 {
         self.get_section_containing(address).unwrap().index(address)
     }
-    fn range(&self, range: Range<usize>) -> &'data [u8] {
+    fn range(&self, range: Range<usize>) -> &[u8] {
         self.get_section_containing(range.start)
             .unwrap()
             .range(range)
     }
-    fn range_from(&self, range: RangeFrom<usize>) -> &'data [u8] {
+    fn range_from(&self, range: RangeFrom<usize>) -> &[u8] {
         self.get_section_containing(range.start)
             .unwrap()
             .range_from(range)
     }
-    fn range_to(&self, range: RangeTo<usize>) -> &'data [u8] {
+    fn range_to(&self, range: RangeTo<usize>) -> &[u8] {
         self.get_section_containing(range.end)
             .unwrap()
             .range_to(range)
@@ -649,14 +650,14 @@ impl<'data> MemoryTrait<'data> for Memory<'data> {
 
 pub struct MemorySection<'data> {
     address: usize,
-    data: &'data [u8],
+    data: Cow<'data, [u8]>,
 }
 impl<'data> MemoryBlockTrait<'data> for MemorySection<'data> {
     fn address(&self) -> usize {
         self.address
     }
-    fn data(&self) -> &'data [u8] {
-        self.data
+    fn data(&self) -> &[u8] {
+        &self.data
     }
 }
 
@@ -667,11 +668,19 @@ pub struct NamedMemorySection<'data> {
 }
 
 impl<'data> NamedMemorySection<'data> {
-    fn new(name: String, address: usize, kind: object::SectionKind, data: &'data [u8]) -> Self {
+    fn new<T: Into<Cow<'data, [u8]>>>(
+        name: String,
+        address: usize,
+        kind: object::SectionKind,
+        data: T,
+    ) -> Self {
         Self {
             name,
             kind,
-            section: MemorySection { address, data },
+            section: MemorySection {
+                address,
+                data: data.into(),
+            },
         }
     }
 }
@@ -699,7 +708,7 @@ impl<'data> MemoryBlockTrait<'data> for NamedMemorySection<'data> {
     fn address(&self) -> usize {
         self.section.address()
     }
-    fn data(&self) -> &'data [u8] {
+    fn data(&self) -> &[u8] {
         self.section.data()
     }
 }
