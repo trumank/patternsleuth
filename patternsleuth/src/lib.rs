@@ -214,6 +214,7 @@ impl PatternConfig {
 pub struct Executable<'data> {
     pub data: &'data [u8],
     pub exception_data: MemorySection<'data>,
+    pub exception_children_cache: HashMap<usize, Vec<RuntimeFunction>>,
     pub object: object::File<'data>,
     pub memory: Memory<'data>,
     pub functions: Option<Vec<RuntimeFunctionNode>>,
@@ -326,41 +327,94 @@ impl<'data> Executable<'data> {
             },
         };
 
-        let functions = load_functions
-            .then(|| {
-                read_functions(&object, data, &memory)
-                    .map_err(|e| println!("Failed to parse exceptions: {e}"))
-                    .ok()
-            })
-            .flatten();
-
-        Ok(Executable {
+        let mut new = Executable {
             data,
             exception_data,
+            exception_children_cache: Default::default(),
             object,
             memory,
-            functions,
+            functions: None,
             symbols,
-        })
+        };
+
+        if load_functions {
+            new.populate_exception_cache();
+        }
+        Ok(new)
     }
-    fn read_exception(&self, address: usize) -> Option<RuntimeFunction> {
+    fn populate_exception_cache(&mut self) {
         let base_address = self.object.relative_address_base() as usize;
 
         for i in (self.exception_data.address()
             ..self.exception_data.address + self.exception_data.data.len())
             .step_by(12)
         {
-            let addr_begin = base_address + self.exception_data.u32_le(i) as usize;
+            let f = RuntimeFunction::read(&self.memory, base_address, i);
+
+            let Some(section) = self.memory.get_section_containing(f.unwind) else {
+                println!("invalid unwind info addr");
+                continue;
+            };
+
+            let mut unwind = f.unwind;
+            let has_chain_info = section.section.index(unwind) >> 3 == 0x4;
+            if has_chain_info {
+                let unwind_code_count = section.section.index(unwind + 2);
+
+                unwind += 4 + 2 * unwind_code_count as usize;
+                if unwind % 4 != 0 {
+                    // align
+                    unwind += 2;
+                }
+
+                if section.address() + section.data().len() > unwind + 12 {
+                    let chained = RuntimeFunction::read(section, base_address, unwind);
+                    let referenced = self.read_exception(chained.range.start);
+
+                    //assert_eq!(Some(&chained), referenced.as_ref());
+                    if Some(&chained) != referenced.as_ref() {
+                        println!("mismatch {:x?} {referenced:x?}", Some(&chained));
+                    }
+
+                    self.exception_children_cache
+                        .entry(chained.range.start)
+                        .or_default()
+                        .push(f);
+                } else {
+                    println!("invalid unwind addr");
+                }
+            }
+        }
+
+        //println!("{:#x?}", self.exception_children_cache);
+    }
+    fn read_exception(&self, address: usize) -> Option<RuntimeFunction> {
+        let base_address = self.object.relative_address_base() as usize;
+
+        let size = 12;
+        let mut min = 0;
+        let mut max = self.exception_data.data.len() / size - 1;
+
+        while min <= max {
+            //println!("{} {min} {max}", self.exception_data.data.len() / size);
+            let i = (max + min) / 2;
+            let addr = i * size + self.exception_data.address();
+
+            let addr_begin = base_address + self.exception_data.u32_le(addr) as usize;
             if addr_begin <= address {
-                let addr_end = base_address + self.exception_data.u32_le(i + 4) as usize;
+                let addr_end = base_address + self.exception_data.u32_le(addr + 4) as usize;
                 if addr_end > address {
-                    let unwind = base_address + self.exception_data.u32_le(i + 8) as usize;
+                    let unwind = base_address + self.exception_data.u32_le(addr + 8) as usize;
 
                     return Some(RuntimeFunction {
                         range: addr_begin..addr_end,
                         unwind,
                     });
+                } else {
+                    min = i + 1;
                 }
+            } else {
+                max = i - 1;
             }
         }
         None
@@ -439,10 +493,26 @@ pub struct RuntimeFunctionNode {
     pub unwind: usize,
     pub children: Vec<RuntimeFunctionNode>,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeFunction {
     pub range: Range<usize>,
     pub unwind: usize,
+}
+impl RuntimeFunction {
+    pub fn read<'data>(
+        memory: &impl MemoryTrait<'data>,
+        base_address: usize,
+        address: usize,
+    ) -> Self {
+        let addr_begin = base_address + memory.u32_le(address) as usize;
+        let addr_end = base_address + memory.u32_le(address + 4) as usize;
+        let unwind = base_address + memory.u32_le(address + 8) as usize;
+
+        RuntimeFunction {
+            range: addr_begin..addr_end,
+            unwind,
+        }
+    }
 }
 impl RuntimeFunctionNode {
     /// Return range accounting for chained entries
