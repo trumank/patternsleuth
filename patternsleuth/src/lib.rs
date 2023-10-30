@@ -213,7 +213,7 @@ impl PatternConfig {
 
 pub struct Executable<'data> {
     pub data: &'data [u8],
-    pub exception_data: MemorySection<'data>,
+    pub exception_directory_range: Range<usize>,
     pub exception_children_cache: HashMap<usize, Vec<RuntimeFunction>>,
     pub object: object::File<'data>,
     pub memory: Memory<'data>,
@@ -233,7 +233,10 @@ fn read_functions(
 
             let base_address = object.relative_address_base() as usize;
 
-            let data = exception_directory.data(data, &inner.section_table())?;
+            let (address, size) = exception_directory.address_range();
+            let exception_directory_range =
+                base_address + address as usize..base_address + (address + size) as usize;
+            let data = memory.range(exception_directory_range);
             let count = data.len() / 12;
             let mut cur = std::io::Cursor::new(data);
 
@@ -307,29 +310,21 @@ impl<'data> Executable<'data> {
             .then(|| symbols::dump_pdb_symbols(pdb_path, base_address))
             .transpose()?;
 
-        let exception_data = match object {
+        let exception_directory_range = match object {
             object::File::Pe64(ref inner) => {
                 let exception_directory = inner
                     .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
                     .context("no exception directory")?;
 
-                MemorySection {
-                    address: base_address
-                        + exception_directory
-                            .virtual_address
-                            .get(object::LittleEndian) as usize,
-                    data: exception_directory.data(data, &inner.section_table())?,
-                }
+                let (address, size) = exception_directory.address_range();
+                base_address + address as usize..base_address + (address + size) as usize
             }
-            _ => MemorySection {
-                address: 0,
-                data: &[],
-            },
+            _ => 0..0,
         };
 
         let mut new = Executable {
             data,
-            exception_data,
+            exception_directory_range,
             exception_children_cache: Default::default(),
             object,
             memory,
@@ -345,14 +340,11 @@ impl<'data> Executable<'data> {
     fn populate_exception_cache(&mut self) {
         let base_address = self.object.relative_address_base() as usize;
 
-        for i in (self.exception_data.address()
-            ..self.exception_data.address + self.exception_data.data.len())
-            .step_by(12)
-        {
+        for i in self.exception_directory_range.clone().step_by(12) {
             let f = RuntimeFunction::read(&self.memory, base_address, i);
 
             let Some(section) = self.memory.get_section_containing(f.unwind) else {
-                println!("invalid unwind info addr");
+                println!("invalid unwind info addr {:x}", f.unwind);
                 continue;
             };
 
@@ -381,7 +373,7 @@ impl<'data> Executable<'data> {
                         .or_default()
                         .push(f);
                 } else {
-                    println!("invalid unwind addr");
+                    println!("invalid unwind addr {:x}", unwind);
                 }
             }
         }
@@ -393,18 +385,18 @@ impl<'data> Executable<'data> {
 
         let size = 12;
         let mut min = 0;
-        let mut max = self.exception_data.data.len() / size - 1;
+        let mut max = self.exception_directory_range.len() / size - 1;
 
         while min <= max {
             //println!("{} {min} {max}", self.exception_data.data.len() / size);
             let i = (max + min) / 2;
-            let addr = i * size + self.exception_data.address();
+            let addr = i * size + self.exception_directory_range.start;
 
-            let addr_begin = base_address + self.exception_data.u32_le(addr) as usize;
+            let addr_begin = base_address + self.memory.u32_le(addr) as usize;
             if addr_begin <= address {
-                let addr_end = base_address + self.exception_data.u32_le(addr + 4) as usize;
+                let addr_end = base_address + self.memory.u32_le(addr + 4) as usize;
                 if addr_end > address {
-                    let unwind = base_address + self.exception_data.u32_le(addr + 8) as usize;
+                    let unwind = base_address + self.memory.u32_le(addr + 8) as usize;
 
                     return Some(RuntimeFunction {
                         range: addr_begin..addr_end,
@@ -422,16 +414,18 @@ impl<'data> Executable<'data> {
     pub fn get_function(&self, address: usize) -> Option<RuntimeFunctionNode> {
         let base_address = self.object.relative_address_base() as usize;
 
+        let section = self
+            .memory
+            .get_section_containing(self.exception_directory_range.start)
+            .unwrap();
+
         // TODO binary search
-        for i in (self.exception_data.address()
-            ..self.exception_data.address + self.exception_data.data.len())
-            .step_by(12)
-        {
-            let addr_begin = base_address + self.exception_data.u32_le(i) as usize;
+        for i in self.exception_directory_range.clone().step_by(12) {
+            let addr_begin = base_address + section.u32_le(i) as usize;
             if addr_begin <= address {
-                let addr_end = base_address + self.exception_data.u32_le(i + 4) as usize;
+                let addr_end = base_address + section.u32_le(i + 4) as usize;
                 if addr_end > address {
-                    let unwind = base_address + self.exception_data.u32_le(i + 8) as usize;
+                    let unwind = base_address + section.u32_le(i + 8) as usize;
 
                     let mut f = RuntimeFunctionNode {
                         range: addr_begin..addr_end,
