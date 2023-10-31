@@ -169,6 +169,8 @@ impl From<Xref> for ScanType {
 pub struct ResolveStages(pub Vec<usize>);
 
 type Resolve = fn(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction;
+
+#[derive(Debug)]
 pub struct PatternConfig<S> {
     pub sig: S,
     pub name: String,
@@ -211,6 +213,7 @@ impl<S> PatternConfig<S> {
     }
 }
 
+#[derive(Debug)]
 pub struct ScanResult<'a, S> {
     pub results: Vec<(&'a PatternConfig<S>, Resolution)>,
 }
