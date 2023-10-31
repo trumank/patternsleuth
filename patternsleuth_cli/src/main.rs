@@ -15,8 +15,7 @@ use patternsleuth::scanner::Xref;
 use patternsleuth::{
     patterns::{get_patterns, Sig},
     scanner::Pattern,
-    PatternConfig, Resolution, ResolutionAction, ResolutionType, ResolveContext, ResolveStages,
-    Scan,
+    PatternConfig, Resolution, ResolutionType,
 };
 
 mod sift4;
@@ -435,118 +434,6 @@ fn find_ext<P: AsRef<Path>>(dir: P, ext: &str) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-struct ScanResult<'a, S> {
-    results: Vec<(&'a PatternConfig<S>, Resolution)>,
-}
-
-fn scan_game<'patterns, S>(
-    exe: &Executable,
-    pattern_configs: &'patterns [PatternConfig<S>],
-) -> Result<ScanResult<'patterns, S>> {
-    let mut results = vec![];
-
-    struct PendingScan {
-        original_config_index: usize,
-        index: usize,
-        stages: ResolveStages,
-        scan: Scan,
-    }
-
-    let mut scan_queue = pattern_configs
-        .iter()
-        .enumerate()
-        .map(|(index, config)| PendingScan {
-            original_config_index: index,
-            index,
-            stages: ResolveStages(vec![]),
-            scan: config.scan.clone(), // TODO clone isn't ideal but makes handling multi-stage scans a lot easier
-        })
-        .collect::<Vec<_>>();
-
-    while !scan_queue.is_empty() {
-        let mut new_queue = vec![];
-        for section in exe.memory.sections() {
-            let base_address = section.address();
-            let section_name = section.name();
-            let data = section.data();
-
-            let pattern_scans = scan_queue
-                .iter()
-                .filter_map(|scan| {
-                    scan.scan
-                        .section
-                        .map(|s| s == section.kind())
-                        .unwrap_or(true)
-                        .then(|| {
-                            scan.scan
-                                .scan_type
-                                .get_pattern()
-                                .map(|pattern| (scan, pattern))
-                        })
-                        .flatten()
-                })
-                .collect::<Vec<_>>();
-
-            let xref_scans = scan_queue
-                .iter()
-                .filter_map(|scan| {
-                    scan.scan
-                        .section
-                        .map(|s| s == section.kind())
-                        .unwrap_or(true)
-                        .then(|| scan.scan.scan_type.get_xref().map(|xref| (scan, xref)))
-                        .flatten()
-                })
-                .collect::<Vec<_>>();
-
-            let scan_results =
-                patternsleuth::scanner::scan_memchr_lookup(&pattern_scans, base_address, data)
-                    .into_iter()
-                    .chain(patternsleuth::scanner::scan_xref_binary(
-                        &xref_scans,
-                        base_address,
-                        data,
-                    ));
-
-            for (scan, address) in scan_results {
-                let mut stages = scan.stages.clone();
-                let action = (scan.scan.resolve)(
-                    ResolveContext {
-                        exe,
-                        memory: &exe.memory,
-                        section: section_name.to_owned(),
-                        match_address: address,
-                        scan: &scan_queue[scan.index].scan,
-                    },
-                    &mut stages,
-                );
-                match action {
-                    ResolutionAction::Continue(new_scan) => {
-                        new_queue.push(PendingScan {
-                            original_config_index: scan.original_config_index,
-                            index: new_queue.len(),
-                            stages,
-                            scan: new_scan,
-                        });
-                    }
-                    ResolutionAction::Finish(res) => {
-                        results.push((
-                            &pattern_configs[scan.original_config_index],
-                            Resolution {
-                                stages: stages.0,
-                                res,
-                            },
-                        ));
-                    }
-                }
-            }
-        }
-        scan_queue = new_queue;
-    }
-
-    Ok(ScanResult { results })
-}
-
 fn main() -> Result<()> {
     match Commands::parse() {
         Commands::Scan(command) => scan(command),
@@ -678,7 +565,7 @@ fn scan(command: CommandScan) -> Result<()> {
 
         games.insert(name.to_string());
 
-        let scan = scan_game(&exe, &patterns)?;
+        let scan = exe.scan(&patterns)?;
 
         // group results by Sig
         let folded_scans = scan
