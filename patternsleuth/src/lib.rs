@@ -171,14 +171,14 @@ impl From<Xref> for ScanType {
 pub struct ResolveStages(pub Vec<usize>);
 
 type Resolve = fn(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction;
-pub struct PatternConfig {
-    pub sig: Sig,
+pub struct PatternConfig<S> {
+    pub sig: S,
     pub name: String,
     pub scan: Scan,
 }
-impl PatternConfig {
+impl<S> PatternConfig<S> {
     pub fn new(
-        sig: Sig,
+        sig: S,
         name: String,
         section: Option<object::SectionKind>,
         pattern: Pattern,
@@ -195,7 +195,7 @@ impl PatternConfig {
         }
     }
     pub fn xref(
-        sig: Sig,
+        sig: S,
         name: String,
         section: Option<object::SectionKind>,
         xref: Xref,

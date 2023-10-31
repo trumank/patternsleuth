@@ -435,14 +435,14 @@ fn find_ext<P: AsRef<Path>>(dir: P, ext: &str) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-struct ScanResult<'a> {
-    results: Vec<(&'a PatternConfig, Resolution)>,
+struct ScanResult<'a, S> {
+    results: Vec<(&'a PatternConfig<S>, Resolution)>,
 }
 
-fn scan_game<'patterns>(
+fn scan_game<'patterns, S>(
     exe: &Executable,
-    pattern_configs: &'patterns [PatternConfig],
-) -> Result<ScanResult<'patterns>> {
+    pattern_configs: &'patterns [PatternConfig<S>],
+) -> Result<ScanResult<'patterns, S>> {
     let mut results = vec![];
 
     struct PendingScan {

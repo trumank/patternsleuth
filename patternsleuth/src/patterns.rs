@@ -83,7 +83,7 @@ pub enum Sig {
     StaticClass,
 }
 
-pub fn get_patterns() -> Result<Vec<PatternConfig>> {
+pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
     Ok(vec![
         //===============================[OnApplicationActivationChanged]=============================================================================================
         PatternConfig::new(
