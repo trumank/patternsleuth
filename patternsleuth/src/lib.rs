@@ -245,81 +245,7 @@ pub struct Executable<'data> {
     pub exception_directory_range: Range<usize>,
     pub exception_children_cache: HashMap<usize, Vec<RuntimeFunction>>,
     pub memory: Memory<'data>,
-    pub functions: Option<Vec<RuntimeFunctionNode>>,
     pub symbols: Option<HashMap<usize, String>>,
-}
-fn read_functions(
-    object: &File<'_>,
-    data: &[u8],
-    memory: &Memory<'_>,
-) -> Result<Vec<RuntimeFunctionNode>> {
-    Ok(match object {
-        object::File::Pe64(ref inner) => {
-            let exception_directory = inner
-                .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
-                .context("no exception directory")?;
-
-            let base_address = object.relative_address_base() as usize;
-
-            let (address, size) = exception_directory.address_range();
-            let exception_directory_range =
-                base_address + address as usize..base_address + (address + size) as usize;
-            let data = memory.range(exception_directory_range);
-            let count = data.len() / 12;
-            let mut cur = std::io::Cursor::new(data);
-
-            let mut functions: BTreeMap<usize, RuntimeFunctionNode> = Default::default();
-            let mut children = vec![];
-            for _ in 0..count {
-                let range = base_address + cur.read_u32::<LE>()? as usize
-                    ..base_address + cur.read_u32::<LE>()? as usize;
-                let unwind = base_address + cur.read_u32::<LE>()? as usize;
-
-                let function = RuntimeFunctionNode {
-                    range,
-                    unwind,
-                    children: vec![],
-                };
-
-                let section = memory
-                    .get_section_containing(unwind)
-                    .context("out of bounds reading unwind info")?;
-
-                let mut offset = unwind - section.section.address;
-
-                let has_chain_info = section.section.data[offset] >> 3 == 0x4;
-                if has_chain_info {
-                    let unwind_code_count = section.section.data[offset + 2];
-
-                    offset += 4 + 2 * unwind_code_count as usize;
-                    if offset % 4 != 0 {
-                        // align
-                        offset += 2;
-                    }
-
-                    if section.section.data.len() > offset {
-                        let parent = base_address
-                            + u32::from_le_bytes(
-                                section.section.data[offset..offset + 4].try_into().unwrap(),
-                            ) as usize;
-                        children.push((parent, function.clone()));
-                    } else {
-                        dbg!("not adding chain info {offset}");
-                    }
-                }
-                functions.insert(function.range.start, function);
-            }
-            for (parent, child) in children {
-                functions.get_mut(&parent).unwrap().children.push(child);
-            }
-
-            functions.into_values().collect()
-        }
-        object::File::Pe32(_) => {
-            vec![]
-        }
-        _ => todo!("{:?}", object::FileKind::parse(data)?),
-    })
 }
 impl<'data> Executable<'data> {
     pub fn read<P: AsRef<Path>>(
@@ -355,7 +281,6 @@ impl<'data> Executable<'data> {
             exception_directory_range,
             exception_children_cache: Default::default(),
             memory,
-            functions: None,
             symbols,
         };
 
@@ -367,6 +292,7 @@ impl<'data> Executable<'data> {
     fn populate_exception_cache(&mut self) {
         for i in self.exception_directory_range.clone().step_by(12) {
             let f = RuntimeFunction::read(&self.memory, self.base_address, i);
+            self.exception_children_cache.insert(f.range.start, vec![]);
 
             let Some(section) = self.memory.get_section_containing(f.unwind) else {
                 println!("invalid unwind info addr {:x}", f.unwind);
@@ -386,7 +312,7 @@ impl<'data> Executable<'data> {
 
                 if section.address() + section.data().len() > unwind + 12 {
                     let chained = RuntimeFunction::read(section, self.base_address, unwind);
-                    let referenced = self.read_exception(chained.range.start);
+                    let referenced = self.get_function(chained.range.start);
 
                     //assert_eq!(Some(&chained), referenced.as_ref());
                     if Some(&chained) != referenced.as_ref() {
@@ -405,13 +331,13 @@ impl<'data> Executable<'data> {
 
         //println!("{:#x?}", self.exception_children_cache);
     }
-    fn read_exception(&self, address: usize) -> Option<RuntimeFunction> {
+    /// Get function containing `address` from the exception directory
+    pub fn get_function(&self, address: usize) -> Option<RuntimeFunction> {
         let size = 12;
         let mut min = 0;
         let mut max = self.exception_directory_range.len() / size - 1;
 
         while min <= max {
-            //println!("{} {min} {max}", self.exception_data.data.len() / size);
             let i = (max + min) / 2;
             let addr = i * size + self.exception_directory_range.start;
 
@@ -434,71 +360,60 @@ impl<'data> Executable<'data> {
         }
         None
     }
-    pub fn get_function(&self, address: usize) -> Option<RuntimeFunctionNode> {
-        let section = self
-            .memory
-            .get_section_containing(self.exception_directory_range.start)
-            .unwrap();
+    /// Get root function containing `address` from the exception directory. This can be used to
+    /// find the start address of a function given an address in the body.
+    pub fn get_root_function(&self, address: usize) -> Option<RuntimeFunction> {
+        if let Some(f) = self.get_function(address) {
+            let mut f = RuntimeFunction {
+                range: f.range,
+                unwind: f.unwind,
+            };
 
-        // TODO binary search
-        for i in self.exception_directory_range.clone().step_by(12) {
-            let addr_begin = self.base_address + section.u32_le(i) as usize;
-            if addr_begin <= address {
-                let addr_end = self.base_address + section.u32_le(i + 4) as usize;
-                if addr_end > address {
-                    let unwind = self.base_address + section.u32_le(i + 8) as usize;
+            loop {
+                let mut unwind_addr = f.unwind;
 
-                    let mut f = RuntimeFunctionNode {
-                        range: addr_begin..addr_end,
-                        unwind,
-                        children: vec![],
-                    };
+                let Some(section) = self.memory.get_section_containing(unwind_addr) else {
+                    dbg!("out of bounds reading unwind info");
+                    return None;
+                };
 
-                    loop {
-                        let mut unwind_addr = f.unwind;
+                let has_chain_info = section.section.index(unwind_addr) >> 3 == 0x4;
+                if has_chain_info {
+                    let unwind_code_count = section.section.index(unwind_addr + 2);
 
-                        let Some(section) = self.memory.get_section_containing(unwind_addr) else {
-                            dbg!("out of bounds reading unwind info");
-                            return None;
-                        };
-
-                        let has_chain_info = section.section.index(unwind_addr) >> 3 == 0x4;
-                        if has_chain_info {
-                            let unwind_code_count = section.section.index(unwind_addr + 2);
-
-                            unwind_addr += 4 + 2 * unwind_code_count as usize;
-                            if unwind_addr % 4 != 0 {
-                                // align
-                                unwind_addr += 2;
-                            }
-
-                            if section.address() + section.data().len() > unwind_addr + 12 {
-                                let addr_begin =
-                                    self.base_address + section.u32_le(unwind_addr) as usize;
-                                let addr_end =
-                                    self.base_address + section.u32_le(unwind_addr + 4) as usize;
-                                let unwind =
-                                    self.base_address + section.u32_le(unwind_addr + 8) as usize;
-
-                                let mut children = std::mem::take(&mut f.children);
-                                children.push(f.clone());
-
-                                f = RuntimeFunctionNode {
-                                    range: addr_begin..addr_end,
-                                    unwind,
-                                    children,
-                                };
-                            } else {
-                                todo!("not adding chain info {unwind_addr}");
-                            }
-                        } else {
-                            return Some(f);
-                        }
+                    unwind_addr += 4 + 2 * unwind_code_count as usize;
+                    if unwind_addr % 4 != 0 {
+                        // align
+                        unwind_addr += 2;
                     }
+
+                    if section.address() + section.data().len() > unwind_addr + 12 {
+                        f = RuntimeFunction::read(section, self.base_address, unwind_addr);
+                    } else {
+                        todo!("not adding chain info {unwind_addr}");
+                    }
+                } else {
+                    return Some(f);
+                }
+            }
+        } else {
+            None
+        }
+    }
+    /// Recursively get all child functions of `address` (exact). This is pulled from
+    /// `exception_children_cache` so will be empty if it has not been populated.
+    pub fn get_child_functions(&self, address: usize) -> Vec<RuntimeFunction> {
+        let mut queue = vec![address];
+        let mut all_children = vec![self.get_function(address).unwrap()];
+        while let Some(next) = queue.pop() {
+            if let Some(children) = self.exception_children_cache.get(&next) {
+                for child in children {
+                    queue.push(child.range().start);
+                    all_children.push(child.clone());
                 }
             }
         }
-        None
+        all_children
     }
 
     pub fn scan<'patterns, S>(
@@ -605,12 +520,6 @@ impl<'data> Executable<'data> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct RuntimeFunctionNode {
-    pub range: Range<usize>,
-    pub unwind: usize,
-    pub children: Vec<RuntimeFunctionNode>,
-}
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeFunction {
     pub range: Range<usize>,
@@ -632,21 +541,9 @@ impl RuntimeFunction {
         }
     }
 }
-impl RuntimeFunctionNode {
-    /// Return range accounting for chained entries
-    /// This may include gaps not belonging to the function if chains are sparse
-    pub fn full_range(&self) -> Range<usize> {
-        let start = std::iter::once(self)
-            .chain(self.children.iter())
-            .map(|f| f.range.start)
-            .min()
-            .unwrap();
-        let end = std::iter::once(self)
-            .chain(self.children.iter())
-            .map(|f| f.range.end)
-            .max()
-            .unwrap();
-        start..end
+impl RuntimeFunction {
+    pub fn range(&self) -> Range<usize> {
+        self.range.clone()
     }
 }
 

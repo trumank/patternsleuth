@@ -1573,7 +1573,7 @@ pub fn resolve_self(ctx: ResolveContext, _stages: &mut ResolveStages) -> Resolut
 pub fn resolve_function(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
     stages.0.push(ctx.match_address);
     ctx.exe
-        .get_function(ctx.match_address)
+        .get_root_function(ctx.match_address)
         .map(|f| f.range.start)
         .into()
 }
@@ -2063,7 +2063,7 @@ mod uevr {
     ) -> ResolutionAction {
         stages.0.push(ctx.match_address);
 
-        if let Some(f) = ctx.exe.get_function(ctx.match_address) {
+        if let Some(f) = ctx.exe.get_root_function(ctx.match_address) {
             f.range.start.into()
         } else {
             ResolutionType::Failed.into()

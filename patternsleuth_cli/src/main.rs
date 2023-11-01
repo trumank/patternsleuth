@@ -169,8 +169,12 @@ mod disassemble {
                 section.name(),
             ));
 
-            let (is_fn, data, start_address) = if let Some(f) = exe.get_function(address) {
-                let range = f.full_range();
+            let (is_fn, data, start_address) = if let Some(f) = exe.get_root_function(address) {
+                let fns = exe.get_child_functions(f.range.start);
+                let min = fns.iter().map(|f| f.range.start).min().unwrap();
+                let max = fns.iter().map(|f| f.range.end).max().unwrap();
+                let range = min..max;
+
                 output.buffer.push_str(&format!(
                     "{:016x} - {:016x} = function\n",
                     range.start, range.end
@@ -291,7 +295,7 @@ mod disassemble {
                 section.name(),
             ));
 
-            if let Some(f) = exe.get_function(address) {
+            if let Some(f) = exe.get_root_function(address) {
                 output.buffer.push_str(&format!(
                     "{:016x} - {:016x} = function\n",
                     f.range.start, f.range.end
@@ -910,8 +914,11 @@ fn symbols(command: CommandSymbols) -> Result<()> {
 
         for (address, name) in exe.symbols.as_ref().unwrap() {
             if filter(name) {
-                if let Some(exception) = exe.get_function(*address) {
-                    let full_range = exception.full_range(); // TODO this now shows only the first exception block and misses any chained exceptions that may be covering the function
+                if let Some(exception) = exe.get_root_function(*address) {
+                    let fns = exe.get_child_functions(exception.range.start);
+                    let min = fns.iter().map(|f| f.range.start).min().unwrap();
+                    let max = fns.iter().map(|f| f.range.end).max().unwrap();
+                    let full_range = min..max; // TODO does not handle sparse ranges
                     if exception.range.start != *address {
                         println!("MISALIGNED EXCEPTION ENTRY FOR {}", name);
                     } else {
@@ -1327,37 +1334,48 @@ mod index {
                         },
                     )?;
 
-                    if let Some(functions) = exe.functions {
-                        let pb = m.add(indicatif::ProgressBar::new(functions.len() as u64));
-                        pb.set_style(sty.clone());
-                        pb.set_message(format!("inserting functions for {}", name));
+                    // collect root exceptions / functions
+                    let mut functions = exe.exception_children_cache.keys().collect::<HashSet<_>>();
+                    for e in exe.exception_children_cache.values() {
+                        for c in e {
+                            functions.remove(&c.range.start);
+                        }
+                    }
 
-                        functions.iter().progress_with(pb).try_for_each(
-                            |function| -> Result<()> {
-                                let range = function.full_range();
-                                let bytes = &exe.memory[range.clone()];
+                    let pb = m.add(indicatif::ProgressBar::new(functions.len() as u64));
+                    pb.set_style(sty.clone());
+                    pb.set_message(format!("inserting functions for {}", name));
 
-                                tx.send(Insert::Function((
+                    functions.iter().progress_with(pb).try_for_each(
+                        |function| -> Result<()> {
+                            let fns = exe.get_child_functions(exe.get_function(**function).unwrap().range.start);
+                            let min = fns.iter().map(|f| f.range.start).min().unwrap();
+                            let max = fns.iter().map(|f| f.range.end).max().unwrap();
+                            let range = min..max;
+
+                            let bytes = &exe.memory[range.clone()];
+
+                            tx.send(Insert::Function((
+                                exe_path.to_string_lossy().to_string(),
+                                range.start,
+                                bytes.into(),
+                            )))
+                            .unwrap();
+
+                            for (inst, xref) in disassemble::get_xrefs(range.start, bytes) {
+                                tx.send(Insert::Xref((
                                     exe_path.to_string_lossy().to_string(),
                                     range.start,
-                                    bytes.into(),
+                                    inst,
+                                    xref,
                                 )))
                                 .unwrap();
+                            }
 
-                                for (inst, xref) in disassemble::get_xrefs(range.start, bytes) {
-                                    tx.send(Insert::Xref((
-                                        exe_path.to_string_lossy().to_string(),
-                                        range.start,
-                                        inst,
-                                        xref,
-                                    )))
-                                    .unwrap();
-                                }
+                            Ok(())
+                        },
+                    )?;
 
-                                Ok(())
-                            },
-                        )?;
-                    }
                     Ok(())
                 })?;
             drop(tx);

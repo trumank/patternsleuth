@@ -108,7 +108,6 @@ pub mod unix {
             exception_directory_range,
             exception_children_cache: Default::default(),
             memory,
-            functions: Default::default(),
             symbols: Default::default(),
         })
     }
