@@ -314,9 +314,9 @@ impl<'data> Executable<'data> {
                     let referenced = self.get_function(chained.range.start);
 
                     //assert_eq!(Some(&chained), referenced.as_ref());
-                    if Some(&chained) != referenced.as_ref() {
-                        println!("mismatch {:x?} {referenced:x?}", Some(&chained));
-                    }
+                    //if Some(&chained) != referenced.as_ref() {
+                        //println!("mismatch {:x?} {referenced:x?}", Some(&chained));
+                    //}
 
                     self.exception_children_cache
                         .entry(chained.range.start)
