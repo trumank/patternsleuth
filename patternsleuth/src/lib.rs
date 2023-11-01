@@ -17,7 +17,7 @@ use std::{
 
 use scanner::{Pattern, Xref};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use byteorder::{ReadBytesExt, LE};
 use object::{File, Object, ObjectSection};
 
@@ -216,6 +216,28 @@ impl<S> PatternConfig<S> {
 #[derive(Debug)]
 pub struct ScanResult<'a, S> {
     pub results: Vec<(&'a PatternConfig<S>, Resolution)>,
+}
+impl<'a, S: std::fmt::Debug + PartialEq> ScanResult<'a, S> {
+    pub fn get_unique_sig_address(&self, sig: S) -> Result<usize> {
+        let mut address = None;
+        for (config, res) in &self.results {
+            if config.sig == sig {
+                match res.res {
+                    ResolutionType::Address(addr) => {
+                        if let Some(existing) = address {
+                            if existing != addr {
+                                bail!("sig {sig:?} matched multiple addresses")
+                            }
+                        } else {
+                            address = Some(addr)
+                        }
+                    }
+                    _ => bail!("sig {sig:?} matched a non-address"),
+                }
+            }
+        }
+        address.with_context(|| format!("sig {sig:?} not found"))
+    }
 }
 
 pub struct Executable<'data> {
