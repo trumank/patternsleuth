@@ -10,7 +10,7 @@ pub mod scanner {
 
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     ops::{Index, Range, RangeFrom, RangeTo},
     path::Path,
 };
@@ -18,7 +18,6 @@ use std::{
 use scanner::{Pattern, Xref};
 
 use anyhow::{bail, Context, Result};
-use byteorder::{ReadBytesExt, LE};
 use object::{File, Object, ObjectSection};
 
 pub struct ResolveContext<'data, 'pattern> {

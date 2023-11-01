@@ -13,7 +13,6 @@ path = "src/main.rs"
 [dependencies]
 patternsleuth = { path = "../patternsleuth", features = ["process"] }
 anyhow = { workspace = true }
-byteorder = { workspace = true }
 clap = { workspace = true }
 colored = { workspace = true }
 globset = { workspace = true }
@@ -28,7 +27,6 @@ rayon.workspace = true
 regex = { workspace = true }
 strum = { workspace = true }
 indicatif = { version = "0.17.6", features = ["rayon"] }
-chrono = "0.4.31"
 rusqlite = "0.29.0"
 crossbeam = "0.8.2"
 patricia_tree = "0.6.2"

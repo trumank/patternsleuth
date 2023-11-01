@@ -9,8 +9,6 @@ edition.workspace = true
 [dependencies]
 patternsleuth_scanner = { path = "../patternsleuth_scanner" }
 anyhow = { workspace = true }
-byteorder = { workspace = true }
-itertools = { workspace = true }
 memchr = { workspace = true }
 msvc-demangler = { workspace = true }
 object = { workspace = true }

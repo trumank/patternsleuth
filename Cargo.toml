@@ -19,7 +19,6 @@ debug = true
 
 [workspace.dependencies]
 anyhow = "1.0.72"
-byteorder = "1.4.3"
 clap = { version = "4.3.21", features = ["derive"] }
 colored = "2.0.4"
 globset = "0.4.13"
