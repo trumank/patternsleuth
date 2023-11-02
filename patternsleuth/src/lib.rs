@@ -86,7 +86,7 @@ pub enum ResolutionType {
     String(String),
     /// report no data and just count successful matches
     Count,
-    /// error during resolution or failes some criteria
+    /// error during resolution or fails some criteria
     Failed,
 }
 
