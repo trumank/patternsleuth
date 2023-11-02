@@ -150,11 +150,7 @@ mod disassemble {
         }
     }
 
-    pub(crate) fn disassemble(
-        exe: &Image,
-        address: usize,
-        pattern: Option<&Pattern>,
-    ) -> String {
+    pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>) -> String {
         let context = 20; // number of instructions before and after
         let max_inst = 16; // max size of x86 instruction in bytes
 
@@ -562,7 +558,7 @@ fn scan(command: CommandScan) -> Result<()> {
 
                 (
                     Cow::Owned(format!("PID={pid}")),
-                    patternsleuth::process::read_image_from_pid(*pid)?,
+                    patternsleuth::process::external::read_image_from_pid(*pid)?,
                 )
             }
         };

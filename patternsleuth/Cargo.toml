@@ -17,7 +17,16 @@ rayon = { workspace = true }
 strum = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
-libc = { version = "0.2.149", optional = true }
+libc = { version = "0.2.147", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.48.0", optional = true, features = [
+  "Win32_Foundation",
+  "Win32_System_LibraryLoader",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Threading",
+] }
 
 [features]
-process = ["dep:libc"]
+process-external = ["dep:libc", "dep:windows"]
+process-internal = ["dep:libc", "dep:windows"]

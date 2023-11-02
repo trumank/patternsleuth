@@ -1,8 +1,8 @@
 #[cfg(unix)]
-pub use unix::read_image_from_pid;
+pub use unix::*;
 
 #[cfg(unix)]
-pub mod unix {
+mod unix {
     use std::ops::Range;
 
     use anyhow::{bail, Context, Result};

@@ -317,7 +317,7 @@ impl<'data> Image<'data> {
 
                     //assert_eq!(Some(&chained), referenced.as_ref());
                     //if Some(&chained) != referenced.as_ref() {
-                        //println!("mismatch {:x?} {referenced:x?}", Some(&chained));
+                    //println!("mismatch {:x?} {referenced:x?}", Some(&chained));
                     //}
 
                     self.exception_children_cache
@@ -755,6 +755,21 @@ impl<'data> Memory<'data> {
         })
     }
     pub fn new_external_data(sections: Vec<(object::Section<'_, '_>, Vec<u8>)>) -> Result<Self> {
+        Ok(Self {
+            sections: sections
+                .into_iter()
+                .map(|(s, d)| {
+                    Ok(NamedMemorySection::new(
+                        s.name()?.to_string(),
+                        s.address() as usize,
+                        s.kind(),
+                        d,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        })
+    }
+    pub fn new_internal_data(sections: Vec<(object::Section<'_, '_>, &'data [u8])>) -> Result<Self> {
         Ok(Self {
             sections: sections
                 .into_iter()

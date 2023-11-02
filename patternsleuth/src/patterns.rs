@@ -245,6 +245,7 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             resolve_self,
         ),
 
+        /*
         //===============================[ProcessEventFromCall]=============================================================================================
         PatternConfig::new(
             Sig::ProcessEventFromCall,
@@ -1506,6 +1507,7 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             Pattern::from_bytes("r.DumpingMovie".encode_utf16().flat_map(u16::to_le_bytes).collect())?,
             uevr::resolve_console_manager,
         ),
+        */
 
         /* disabled for now because they spam the log and often crash
         PatternConfig::new(
