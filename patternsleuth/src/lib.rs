@@ -311,7 +311,9 @@ impl<'data> Executable<'data> {
 
                 if section.address() + section.data().len() > unwind + 12 {
                     let chained = RuntimeFunction::read(section, self.base_address, unwind);
-                    let referenced = self.get_function(chained.range.start);
+
+                    // TODO disabled because it spams the log too much
+                    //let referenced = self.get_function(chained.range.start);
 
                     //assert_eq!(Some(&chained), referenced.as_ref());
                     //if Some(&chained) != referenced.as_ref() {
