@@ -8,7 +8,7 @@ pub mod unix {
     use anyhow::{bail, Context, Result};
     use object::{Object, ObjectSection};
 
-    use crate::{Executable, Memory};
+    use crate::{Image, Memory};
 
     fn read_process_mem(pid: i32, address: usize, buffer: &mut [u8]) -> Result<usize> {
         unsafe {
@@ -72,7 +72,7 @@ pub mod unix {
         bail!("no main module found")
     }
 
-    pub fn read_image_from_pid<'data>(pid: i32) -> Result<Executable<'data>> {
+    pub fn read_image_from_pid<'data>(pid: i32) -> Result<Image<'data>> {
         let main_module = find_main_module(pid)?;
 
         let mut image_header = vec![0; main_module.len()];
@@ -103,7 +103,7 @@ pub mod unix {
 
         let memory = Memory::new_external_data(sections)?;
 
-        Ok(Executable {
+        Ok(Image {
             base_address,
             exception_directory_range,
             exception_children_cache: Default::default(),

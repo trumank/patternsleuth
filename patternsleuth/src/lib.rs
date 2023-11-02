@@ -21,7 +21,7 @@ use anyhow::{bail, Context, Result};
 use object::{File, Object, ObjectSection};
 
 pub struct ResolveContext<'data, 'pattern> {
-    pub exe: &'data Executable<'data>,
+    pub exe: &'data Image<'data>,
     pub memory: &'data Memory<'data>,
     pub section: String,
     pub match_address: usize,
@@ -239,20 +239,20 @@ impl<'a, S: std::fmt::Debug + PartialEq> ScanResult<'a, S> {
     }
 }
 
-pub struct Executable<'data> {
+pub struct Image<'data> {
     pub base_address: usize,
     pub exception_directory_range: Range<usize>,
     pub exception_children_cache: HashMap<usize, Vec<RuntimeFunction>>,
     pub memory: Memory<'data>,
     pub symbols: Option<HashMap<usize, String>>,
 }
-impl<'data> Executable<'data> {
+impl<'data> Image<'data> {
     pub fn read<P: AsRef<Path>>(
         data: &'data [u8],
         exe_path: P,
         load_symbols: bool,
         load_functions: bool,
-    ) -> Result<Executable<'data>> {
+    ) -> Result<Image<'data>> {
         let object = object::File::parse(data)?;
         let memory = Memory::new(&object)?;
 
@@ -275,7 +275,7 @@ impl<'data> Executable<'data> {
             _ => 0..0,
         };
 
-        let mut new = Executable {
+        let mut new = Image {
             base_address,
             exception_directory_range,
             exception_children_cache: Default::default(),

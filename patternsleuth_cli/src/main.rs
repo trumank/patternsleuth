@@ -9,7 +9,7 @@ use indicatif::ProgressBar;
 use itertools::Itertools;
 use patricia_tree::StringPatriciaMap;
 use patternsleuth::patterns::resolve_self;
-use patternsleuth::Executable;
+use patternsleuth::Image;
 
 use patternsleuth::scanner::Xref;
 use patternsleuth::{
@@ -151,7 +151,7 @@ mod disassemble {
     }
 
     pub(crate) fn disassemble(
-        exe: &Executable,
+        exe: &Image,
         address: usize,
         pattern: Option<&Pattern>,
     ) -> String {
@@ -280,7 +280,7 @@ mod disassemble {
         output.buffer
     }
 
-    pub(crate) fn disassemble_range(exe: &Executable, range: Range<usize>) -> String {
+    pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
         let address = range.start;
         let mut output = Output::default();
 
@@ -543,7 +543,7 @@ fn scan(command: CommandScan) -> Result<()> {
 
                 (
                     Cow::Borrowed(name),
-                    match Executable::read(
+                    match Image::read(
                         bin_data.as_ref().unwrap(),
                         exe_path,
                         command.symbols,
@@ -904,7 +904,7 @@ fn symbols(command: CommandSymbols) -> Result<()> {
 
         println!("{:?} {:?}", name, exe_path.display());
         let bin_data = fs::read(&exe_path)?;
-        let exe = match Executable::read(&bin_data, &exe_path, true, true) {
+        let exe = match Image::read(&bin_data, &exe_path, true, true) {
             Ok(exe) => exe,
             Err(err) => {
                 println!("err reading {}: {}", exe_path.display(), err);
@@ -1304,7 +1304,7 @@ mod index {
                     pb.set_message("total");
 
                     let bin_data = fs::read(exe_path)?;
-                    let exe = match Executable::read(
+                    let exe = match Image::read(
                         &bin_data, exe_path, true, // symbols
                         true, // exceptions
                     ) {
