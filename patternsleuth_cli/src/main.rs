@@ -53,7 +53,7 @@ struct CommandScan {
     disassemble: bool,
 
     /// Show disassembly context for each matched address
-    #[arg(short, long)]
+    #[arg(long)]
     disassemble_merged: bool,
 
     /// A pattern to scan for (can be specified multiple times)
