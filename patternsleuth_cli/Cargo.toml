@@ -11,7 +11,7 @@ name = "patternsleuth"
 path = "src/main.rs"
 
 [dependencies]
-patternsleuth = { path = "../patternsleuth", features = ["process-external"] }
+patternsleuth = { path = "../patternsleuth", features = ["patterns", "process-external"] }
 anyhow = { workspace = true }
 clap = { workspace = true }
 colored = { workspace = true }

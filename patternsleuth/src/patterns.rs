@@ -1,5 +1,7 @@
 use anyhow::Result;
 
+use crate::resolvers::{resolve_function, resolve_rip_offset, resolve_self};
+
 use super::{
     Memory, MemoryAccessorTrait, Pattern, PatternConfig, ResolutionAction, ResolutionType,
     ResolveContext, ResolveStages, Scan, Xref,
@@ -251,49 +253,49 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "UUU4_Alternative0".to_string(),
             None,
             Pattern::new("F0 0F B1 0D ?? ?? ?? ?? 75 0E ?? ?? ?? 48 ?? ?? 48 ?? ?? E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8B ?? 24 38 48 8B ?? 24 40 48 83")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::ProcessEventFromCall,
             "UUU4_Alternative1".to_string(),
             None,
             Pattern::new("F0 0F B1 11 75 0E ?? ?? ?? 48 ?? ?? 48 ?? ?? E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8B ?? 24 38 48 8B ?? 24 40 48 83")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::ProcessEventFromCall,
             "UUU4_Alternative2".to_string(),
             None,
             Pattern::new("84 C0 75 0E ?? ?? ?? 48 ?? ?? 48 ?? ?? E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8B ?? 24 38 48 8B ?? 24 40 48 83")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::ProcessEventFromCall,
             "UUU4_Alternative3".to_string(),
             None,
             Pattern::new("4C 8B C5 48 8B D7 48 8B CB E8 | ?? ?? ?? ?? 48 8B 5C 24 30 48 8B 6C 24 38 48 8B 74 24 40 48 8B 7C 24 48 48 83 C4 20 41 5E C3")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::ProcessEventFromCall,
             "UUU4_Alternative4_modular".to_string(),
             None,
             Pattern::new("F0 0F B1 11 75 0F 4C 8B C5 48 8B D7 48 8B CB FF 15 | ?? ?? ?? ?? 48 8B 74 24 30")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::ProcessEventFromCall,
             "UUU4_Alternative5".to_string(),
             None,
             Pattern::new("48 8B D6 48 8B CB E8 | ?? ?? ?? ?? 8B 83 ?? ?? ?? ?? 85 C0 75 27 87 BB")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::ProcessEventFromCall,
             "UUU4_Alternative6".to_string(),
             None,
             Pattern::new("75 0E ?? ?? ?? 48 ?? ?? 48 ?? ?? E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8B ?? 24 38 48 8B ?? 24 40 48 83")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
 
         //===============================[ProcessEvent]=============================================================================================
@@ -325,21 +327,21 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "UUU4_Alternative0".to_string(),
             None,
             Pattern::new("48 8B 05 | ?? ?? ?? ?? 48 8B 88 ?? ?? 00 00 48 85 C9 74 ?? 48 8B 49 ?? 48 85 C9")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GEngine,
             "UUU4_Alternative1".to_string(),
             None,
             Pattern::new("48 8B 05 | ?? ?? ?? ?? 48 8B 88 ?? 07 00 00 48 85 C9 74 ?? 48 8B 51 50")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GEngine,
             "UUU4_Alternative2".to_string(),
             None,
             Pattern::new("48 8B 05 | ?? ?? ?? ?? 48 8B 88 ?? ?? ?? ?? 48 85 C9 0F 84 ?? ?? ?? ?? 48 89 74 24 50 48 8B 71")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
 
         //===============================[EngineVersion]=============================================================================================
@@ -492,35 +494,35 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "UUU4_Alternative0".to_string(),
             None,
             Pattern::new("48 89 44 24 ?? E8 | ?? ?? ?? ?? 48 85 C0 0F 85 ?? ?? 00 00 48 8D 05")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::UWorldSpawnActorFromCall,
             "UUU4_Alternative1".to_string(),
             None,
             Pattern::new("4C 8D 4D B7 4C 8D 44 24 ?? 48 8B D7 E8 | ?? ?? ?? ?? 48 85 C0 0F 85")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::UWorldSpawnActorFromCall,
             "UUU4_Alternative2".to_string(),
             None,
             Pattern::new("4C 8D 44 24 ?? ?? 8B ?? E8 | ?? ?? ?? ?? 48 85 C0 0F 85 ?? ?? 00 00 48 8D 05")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::UWorldSpawnActorFromCall,
             "UUU5_Alternative0".to_string(),
             None,
             Pattern::new("48 8B C8 4C 8D 45 80 E8 | ?? ?? ?? ?? 48 85 C0 74 ?? B3 01")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::UWorldSpawnActorFromCall,
             "UUU5_Alternative1".to_string(),
             None,
             Pattern::new("48 8B C8 4C 8D 44 24 50 E8 | ?? ?? ?? ?? 48 85 C0 75")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
 
         //===============================[WidgetPaintOpacityRead]=============================================================================================
@@ -766,7 +768,7 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "LW".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 8b 48 ?? 48 89 4c 24 ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00 48 8d")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameToStringFString,
@@ -801,49 +803,49 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "FullyLoad".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("c6 ?? 2a 01 48 89 44 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameToStringVoid,
             "FMemoryArchive".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 89 0f eb 15 48 8b cf e8 | ?? ?? ?? ?? 48 8d ?? 24 ?? 48 8b cb e8 ?? ?? ?? ??  48 8b ?? 24 ?? 48 85 c9 74 05")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameToStringVoid,
             "FLoadTimeTracker".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 63 c9 48 c1 ?? 05 48 03 ?? e8 | ?? ?? ?? ?? 48 8b ?? ?? 48 85 c9 74 05")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameToStringVoid,
             "ISlateStyleJoin".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("e8 ?? ?? ?? ?? 48 ?? ?? 24 ?? 48 ?? ?? 24 98 00 00 00 e8 | ?? ?? ?? ?? 8b 48 ?? 83 f9 01")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameToStringVoid,
             "UClassRename".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("00 74 ?? 48 8d ?? 24 ?? 48 8b ?? e8 ?? ?? ?? ?? 48 8b c8 48 8d ?? 24 ?? e8 | ?? ?? ?? ?? 83 78 08 00 74 ?? ?? ?? ?? eb")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameToStringVoid,
             "LinkerManagerExec".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 8d 0c c1 e8 | ?? ?? ?? ?? 83 78 08 00")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::StaticConstructObjectInternal,
             "UUU5_Alternative0".to_string(),
             None,
             Pattern::new("E8 | ?? ?? ?? ?? 48 83 7C 24 60 00 48 8B D8 74 ?? 48 8B 54 24")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
 
         //===============================[FNameFName]=============================================================================================
@@ -887,63 +889,63 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "LW0".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("41 b8 01 00 00 00 48 8d 15 ?? ?? ?? ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ??")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameFName,
             "LW01".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 83 ec ?? 41 b8 01 00 00 00 48 8d 15 ?? ?? ?? ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 48 8b")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameFName,
             "LW1".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("41 b8 01 00 00 00 48 8d 15 ?? ?? ?? ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 48 8b ?? e8")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameFName,
             "LW11".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("e8 ?? ?? ?? ?? 41 b8 01 00 00 00 48 8d 15 ?? ?? ?? ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 48 8b 44")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameFName,
             "LW2".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("ff 50 ?? 41 b8 01 00 00 00 48 8d 15 ?? ?? ?? ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? ")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameFName,
             "LW3".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("41 ?? 01 00 00 00 48 8d ?? 24 ?? 48 0f 45 ?? 24 ?? e8 | ?? ?? ?? ??")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameFName,
             "LW4".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("41 ?? 01 00 00 00 48 8d ?? ?? 48 0f 45 ?? ?? e8 | ?? ?? ?? ??")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameFName,
             "LW5".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("75 ?? 41 ?? 01 00 00 00 48 8d ?? ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 | ?? ?? ?? ?? 48 8d ?? ?? ?? ?? ?? e8")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::FNameFName,
             "LW51".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("ff 0f 85 ?? ?? ?? ?? 41 ?? 01 00 00 00 48 8d ?? ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 | ?? ?? ?? ?? 48 8d ?? ?? ?? ?? ?? e8 ?? ?? ?? ?? e9")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
 
         //===============================[StaticConstructObjectInternal]=============================================================================================
@@ -980,14 +982,14 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "LW".to_string(),
             None,
             Pattern::new("48 89 ?? 24 ?? c7 ?? 24 ?? 00 00 00 00 E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8b ?? 24")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::StaticConstructObjectInternal,
             "LW1".to_string(),
             None,
             Pattern::new("00 48 89 ?? 24 ?? c7 ?? 24 ?? 00 00 00 00 E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8b ?? 24")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::StaticConstructObjectInternal,
@@ -1001,35 +1003,35 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "UUU4_Alternative0".to_string(),
             None,
             Pattern::new("48 8B 84 24 ?? ?? 00 00 48 89 44 24 ?? C7 44 24 ?? 00 00 00 00 E8 | ?? ?? ?? ?? 48 8B 5C 24")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::StaticConstructObjectInternal,
             "UUU4_Alternative1".to_string(),
             None,
             Pattern::new("48 8B C8 89 7C 24 ?? E8 | ?? ?? ?? ?? 48 8B 5C 24 ?? 48 83 C4 ?? 5F C3")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::StaticConstructObjectInternal,
             "UUU4_Alternative2".to_string(),
             None,
             Pattern::new("48 89 ?? 24 30 89 ?? 24 38 E8 | ?? ?? ?? ?? 48 ?? ?? 24 70 48 ?? ?? 24 78")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::StaticConstructObjectInternal,
             "UUU4_Alternative3".to_string(),
             None,
             Pattern::new("E8 | ?? ?? ?? ?? 48 8B 4C 24 30 48 89 ?? ?? ?? ?? ?? 48 85 C9 74 05 E8 ?? ?? ?? ?? 48 8D 4D 48 E8")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::StaticConstructObjectInternal,
             "UUU4_Alternative4".to_string(),
             None,
             Pattern::new("E8 | ?? ?? ?? ?? 49 8B D6 48 8B C8 48 8B D8 E8 ?? ?? ?? ?? 4C 8D 9C 24 90 00 00 00")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
 
         //===============================[GMalloc]=============================================================================================
@@ -1038,21 +1040,21 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "A".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 85 C9 74 2E 53 48 83 EC 20 48 8B D9 48 8B ?? | ?? ?? ?? ?? 48 85 C9")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GMalloc,
             "B".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("E8 ?? ?? ?? ?? 48 8b 0d | ?? ?? ?? ?? 48 8b ?? 48 8b ?? ff 50 ?? 48 83 c4 ?? ?? c3 cc")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GMalloc,
             "alt".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 85 C9 74 ?? 4C 8B 05 | ?? ?? ?? ?? 4D 85 C0 0F 84 ?? ?? ?? ?? 49 8B 00 48")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
 
         //===============================[GUObjectArray]=============================================================================================
@@ -1068,7 +1070,7 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "<=V4.13".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 83 79 10 00 74 F6 48 8B D1 48 8D | ??")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
@@ -1096,140 +1098,140 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "UUU4_Alternative0".to_string(),
             None,
             Pattern::new("48 8D 0D | ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 C6 05 ?? ?? ?? ?? 00 80 3D")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative0_LW".to_string(),
             None,
             Pattern::new("74 ?? 48 8D 0D | ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative1".to_string(),
             None,
             Pattern::new("48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 89 74 24 70 48 89 7C 24 78 45 33 C9")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative2".to_string(),
             None,
             Pattern::new("48 8D 0D | ?? ?? ?? ?? 44 8B 84 24 ?? ?? ?? ?? 8B 94 24 ?? ?? ?? ?? E8 ?? ?? ?? ?? E8")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative3".to_string(),
             None,
             Pattern::new("48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0 74 ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? E8")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative4".to_string(),
             None,
             Pattern::new("84 D2 48 C7 41 10 00 00 00 00 B8 FF FF FF FF 4C 8D 05 | ?? ?? ?? ?? 89 41 08")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative5".to_string(),
             None,
             Pattern::new("48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 45 ?? C9 4C 89 74 24")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative5_LW".to_string(),
             None,
             Pattern::new("75 ?? 48 ?? ?? 48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 45 33 C9 4C 89 74 24")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative6".to_string(),
             None,
             Pattern::new("48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 4C 89 64 ?? 28 4C 89 7C ?? 30 45 33 C9")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative7".to_string(),
             None,
             Pattern::new("48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 4D 80 E8 ?? ?? ?? ?? 48 8D 4D 80 E8 ?? ?? ?? ?? F3")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative8".to_string(),
             None,
             Pattern::new("89 ?? | ?? ?? ?? ?? 45 85 E4 7F ?? 4C 8D 05 ?? ?? ?? ?? BA ?? 00 00 00")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative9".to_string(),
             None,
             Pattern::new("89 1D | ?? ?? ?? ?? 48 8B 9C 24 80 00 00 00 48 89 05 ?? ?? ?? ?? 48")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative10".to_string(),
             None,
             Pattern::new("89 0D ?? ?? ?? ?? 89 15 | ?? ?? ?? ?? 85 FF 7F ?? 4C 8D 05 ?? ?? ?? ?? BA ?? 00 00 00")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative12".to_string(),
             None,
             Pattern::new("89 05 | ?? ?? ?? ?? 85 D2 7F 39 4C 8D 05 ?? ?? ?? ?? BA 67 00 00 00 48 8D 0D")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative13".to_string(),
             None,
             Pattern::new("89 05 | ?? ?? ?? ?? 45 85 E4 7F 46 48 8D 05 ?? ?? ?? ?? 44 8B CE 4C 8D 05")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU4_Alternative14".to_string(),
             None,
             Pattern::new("89 05 | ?? ?? ?? ?? 85 DB 7F 24 4C 8D 05 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 81 F2")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU5_Alternative0".to_string(),
             None,
             Pattern::new("89 ?? | ?? ?? ?? ?? 85 FF 7F ?? 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? 48")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU5_Alternative1".to_string(),
             None,
             Pattern::new("89 ?? | ?? ?? ?? ?? 85 FF 7F ?? 48 8D 15 ?? ?? ?? ?? 48 8D 8C 24 ?? ?? ?? ?? E8")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU5_Alternative2".to_string(),
             None,
             Pattern::new("89 ?? | ?? ?? ?? ?? 85 FF 7F ?? 48 8D 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::GUObjectArray,
             "UUU5_Alternative3".to_string(),
             None,
             Pattern::new("89 15 | ?? ?? ?? ?? 85 FF 7F ?? 48 8D 8C 24 88 00 00 00 E8")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
 
         //===============================[GNatives]=============================================================================================
@@ -1265,63 +1267,63 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "A".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 0D")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::IConsoleManagerSingleton,
             "B".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 4C 24")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::IConsoleManagerSingleton,
             "C".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 83 EC ?? 48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::IConsoleManagerSingleton,
             "D".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 89 3D | ?? ?? ?? ?? 48 85 FF 75 ?? E8 ?? ?? ?? ?? 48 8B 3D ?? ?? ?? ?? 48 8B 07")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::IConsoleManagerSingleton,
             "UUU5_Alternative0".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 8B 0D | ?? ?? ?? ?? 48 0F 45 1D ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::IConsoleManagerSingleton,
             "UUU5_Alternative1".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::IConsoleManagerSingleton,
             "UUU5_Alternative2".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 0D")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::IConsoleManagerSingleton,
             "UUU5_Alternative3".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 4C 24")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::IConsoleManagerSingleton,
             "UUU5_Alternative4".to_string(),
             Some(object::SectionKind::Text),
             Pattern::new("48 89 3D | ?? ?? ?? ?? 48 85 FF 75 ?? E8 ?? ?? ?? ?? 48 8B 3D ?? ?? ?? ?? 48 8B 07")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
 
         //===============================[AllowCheats]=============================================================================================
@@ -1360,14 +1362,14 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "UUU4_Alternative0".to_string(),
             None,
             Pattern::new("48 8D 15 | ?? ?? ?? ?? EB 16 48 8D 0D ?? ?? ?? ?? E8")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::NamePoolData,
             "UUU4_Alternative1".to_string(),
             None,
             Pattern::new("48 8D 05 | ?? ?? ?? ?? EB 27 48 8D 05 ?? ?? ?? ?? 48")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::NamePoolData,
@@ -1381,14 +1383,14 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             "UUU4_Alternative3".to_string(),
             None,
             Pattern::new("E8 ?? ?? ?? ?? 48 89 D8 48 89 1D | ?? ?? ?? ?? 48 8B 5C 24 20 48 83 C4 28 C3 31 DB 48 89 1D")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
         PatternConfig::new(
             Sig::NamePoolData,
             "UUU4_Alternative4".to_string(),
             None,
             Pattern::new("E8 ?? ?? ?? ?? 48 89 D8 48 89 1D | ?? ?? ?? ?? 48 8B 5C 24 20 48 83 C4 28 C3 48 8B 5C")?,
-            rip::resolve_rip_offset::<4>,
+            resolve_rip_offset::<4>,
         ),
 
         //===============================[FPakPlatformFile]=============================================================================================
@@ -1564,20 +1566,6 @@ impl<'data> Matchable<'data> for Memory<'data> {
     }
 }
 
-/// do nothing, return address of pattern
-pub fn resolve_self(ctx: ResolveContext, _stages: &mut ResolveStages) -> ResolutionAction {
-    ResolutionType::Address(ctx.match_address).into()
-}
-
-/// return containing function via exception table lookup
-pub fn resolve_function(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
-    stages.0.push(ctx.match_address);
-    ctx.exe
-        .get_root_function(ctx.match_address)
-        .map(|f| f.range.start)
-        .into()
-}
-
 /// do nothing, but return a constant so it's squashing all multiple matches to 1 value: 0x12345678
 pub fn resolve_multi_self(_ctx: ResolveContext, _stages: &mut ResolveStages) -> ResolutionAction {
     ResolutionType::Count.into()
@@ -1600,42 +1588,12 @@ pub fn resolve_engine_version(ctx: ResolveContext, stages: &mut ResolveStages) -
     ResolutionType::String(format!("{}.{}", version_major, version_minor)).into()
 }
 
-pub mod rip {
-    use super::*;
-
-    pub fn calc_rip(ctx: &ResolveContext, address: usize) -> Option<usize> {
-        address
-            .checked_add_signed(i32::from_le_bytes(
-                ctx.memory[address..address + 4].try_into().unwrap(),
-            ) as isize)
-            .map(|a| a + 4)
-    }
-
-    fn resolve_rip(
-        memory: &Memory,
-        match_address: usize,
-        next_opcode_offset: usize,
-        stages: &mut ResolveStages,
-    ) -> ResolutionAction {
-        stages.0.push(match_address);
-        let rip_relative_value_address = match_address;
-        // calculate the absolute address from the RIP relative value.
-        let address = rip_relative_value_address
-            .checked_add_signed(i32::from_le_bytes(
-                memory[rip_relative_value_address..rip_relative_value_address + 4]
-                    .try_into()
-                    .unwrap(),
-            ) as isize)
-            .map(|a| a + next_opcode_offset);
-        address.into()
-    }
-
-    pub fn resolve_rip_offset<const N: usize>(
-        ctx: ResolveContext,
-        stages: &mut ResolveStages,
-    ) -> ResolutionAction {
-        resolve_rip(ctx.memory, ctx.match_address, N, stages)
-    }
+fn calc_rip(ctx: &ResolveContext, address: usize) -> Option<usize> {
+    address
+        .checked_add_signed(
+            i32::from_le_bytes(ctx.memory[address..address + 4].try_into().unwrap()) as isize,
+        )
+        .map(|a| a + 4)
 }
 
 #[allow(non_snake_case)]
@@ -1942,7 +1900,7 @@ mod signing_key {
         {
             let addr = addr + 4 + 39 + 3;
             stages.0.push(addr);
-            if let Some(rip) = rip::calc_rip(&ctx, addr) {
+            if let Some(rip) = calc_rip(&ctx, addr) {
                 rip.into()
             } else {
                 ResolutionType::Failed.into()
@@ -1966,7 +1924,7 @@ mod signing_key {
         {
             let addr = addr + 4 + 39 + 3;
             stages.0.push(addr);
-            if let Some(rip) = rip::calc_rip(&ctx, addr) {
+            if let Some(rip) = calc_rip(&ctx, addr) {
                 ResolutionAction::Continue(Scan {
                     section: Some(object::SectionKind::Text),
                     scan_type: Xref(rip + 0x10).into(),
@@ -1994,7 +1952,7 @@ mod signing_key {
         {
             let addr = addr + 4 + 39 + 3;
             stages.0.push(addr);
-            if let Some(rip) = rip::calc_rip(&ctx, addr) {
+            if let Some(rip) = calc_rip(&ctx, addr) {
                 ResolutionAction::Continue(Scan {
                     section: Some(object::SectionKind::Text),
                     scan_type: Xref(rip + 0x10).into(),

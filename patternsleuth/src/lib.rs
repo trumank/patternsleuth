@@ -1,7 +1,9 @@
 #![feature(portable_simd, str_split_whitespace_remainder)]
 
+#[cfg(feature = "patterns")]
 pub mod patterns;
 pub mod process;
+pub mod resolvers;
 pub mod symbols;
 
 pub mod scanner {
@@ -769,7 +771,9 @@ impl<'data> Memory<'data> {
                 .collect::<Result<Vec<_>>>()?,
         })
     }
-    pub fn new_internal_data(sections: Vec<(object::Section<'_, '_>, &'data [u8])>) -> Result<Self> {
+    pub fn new_internal_data(
+        sections: Vec<(object::Section<'_, '_>, &'data [u8])>,
+    ) -> Result<Self> {
         Ok(Self {
             sections: sections
                 .into_iter()

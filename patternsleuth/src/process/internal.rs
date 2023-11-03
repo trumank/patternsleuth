@@ -19,21 +19,21 @@ pub use windows::*;
 mod windows {
     use anyhow::{Context, Result};
     use object::{Object, ObjectSection};
-    use windows::
-        Win32::System::{
-            LibraryLoader::GetModuleHandleA,
-            ProcessStatus::{GetModuleInformation, MODULEINFO},
-            Threading::GetCurrentProcess,
+    use windows::Win32::System::{
+        LibraryLoader::GetModuleHandleA,
+        ProcessStatus::{GetModuleInformation, MODULEINFO},
+        Threading::GetCurrentProcess,
     };
 
     use crate::{Image, Memory};
 
     pub fn read_image<'data>() -> Result<Image<'data>> {
-        let main_module = unsafe { GetModuleHandleA(None) }.context("could not find main module")?;
+        let main_module =
+            unsafe { GetModuleHandleA(None) }.context("could not find main module")?;
         let process = unsafe { GetCurrentProcess() };
 
         let mut mod_info = MODULEINFO::default();
-            unsafe {
+        unsafe {
             GetModuleInformation(
                 process,
                 main_module,

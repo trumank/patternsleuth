@@ -8,7 +8,7 @@ use clap::Parser;
 use indicatif::ProgressBar;
 use itertools::Itertools;
 use patricia_tree::StringPatriciaMap;
-use patternsleuth::patterns::resolve_self;
+use patternsleuth::resolvers::resolve_self;
 use patternsleuth::Image;
 
 use patternsleuth::scanner::Xref;
