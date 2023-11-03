@@ -525,6 +525,7 @@ fn scan(command: CommandScan) -> Result<()> {
     };
 
     for game in iter {
+        #[allow(unused_assignments)]
         let mut bin_data = None;
 
         let (name, exe) = match game {
