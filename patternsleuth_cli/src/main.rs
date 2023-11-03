@@ -342,10 +342,6 @@ mod disassemble {
         output.buffer
     }
 
-    pub(crate) fn disassemble_bytes(address: usize, data: &[u8]) -> String {
-        disassemble_bytes_with_symbols(address, data, |_| None)
-    }
-
     pub(crate) fn disassemble_bytes_with_symbols<F>(
         address: usize,
         data: &[u8],
