@@ -493,7 +493,6 @@ fn scan(command: CommandScan) -> Result<()> {
     use prettytable::{format, row, Cell, Row, Table};
 
     enum Output {
-        None,
         Stdout,
         Progress(ProgressBar),
     }
@@ -501,7 +500,6 @@ fn scan(command: CommandScan) -> Result<()> {
     impl Output {
         fn println<M: AsRef<str>>(&self, msg: M) {
             match self {
-                Output::None => {}
                 Output::Stdout => println!("{}", msg.as_ref()),
                 Output::Progress(progress) => progress.println(msg),
             }
