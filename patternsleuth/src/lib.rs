@@ -4,6 +4,7 @@
 pub mod patterns;
 pub mod process;
 pub mod resolvers;
+#[cfg(feature = "symbols")]
 pub mod symbols;
 
 pub mod scanner {
@@ -241,6 +242,33 @@ impl<'a, S: std::fmt::Debug + PartialEq> ScanResult<'a, S> {
     }
 }
 
+pub struct ImageBuilder<P: AsRef<Path>> {
+    symbols: Option<P>,
+    functions: bool,
+}
+impl<P: AsRef<Path>> Default for ImageBuilder<P> {
+    fn default() -> Self {
+        Self {
+            symbols: None,
+            functions: false,
+        }
+    }
+}
+impl<P: AsRef<Path>> ImageBuilder<P> {
+    pub fn functions(mut self, functions: bool) -> Self {
+        self.functions = functions;
+        self
+    }
+    #[cfg(feature = "symbols")]
+    pub fn symbols(mut self, exe_path: P) -> Self {
+        self.symbols = Some(exe_path);
+        self
+    }
+    pub fn build(self, data: &[u8]) -> Result<Image<'_>> {
+        Image::read(data, self.symbols, self.functions)
+    }
+}
+
 pub struct Image<'data> {
     pub base_address: usize,
     pub exception_directory_range: Range<usize>,
@@ -249,10 +277,12 @@ pub struct Image<'data> {
     pub symbols: Option<HashMap<usize, String>>,
 }
 impl<'data> Image<'data> {
-    pub fn read<P: AsRef<Path>>(
+    pub fn builder<P: AsRef<Path>>() -> ImageBuilder<P> {
+        Default::default()
+    }
+    fn read<P: AsRef<Path>>(
         data: &'data [u8],
-        exe_path: P,
-        load_symbols: bool,
+        exe_path: Option<P>,
         load_functions: bool,
     ) -> Result<Image<'data>> {
         let object = object::File::parse(data)?;
@@ -260,10 +290,21 @@ impl<'data> Image<'data> {
 
         let base_address = object.relative_address_base() as usize;
 
-        let pdb_path = exe_path.as_ref().with_extension("pdb");
-        let symbols = (load_symbols && pdb_path.exists())
-            .then(|| symbols::dump_pdb_symbols(pdb_path, base_address))
-            .transpose()?;
+        #[allow(unused_variables)]
+        let symbols = if let Some(exe_path) = exe_path {
+            #[cfg(not(feature = "symbols"))]
+            unreachable!();
+            #[cfg(feature = "symbols")]
+            {
+                let pdb_path = exe_path.as_ref().with_extension("pdb");
+                pdb_path
+                    .exists()
+                    .then(|| symbols::dump_pdb_symbols(pdb_path, base_address))
+                    .transpose()?
+            }
+        } else {
+            None
+        };
 
         let exception_directory_range = match object {
             object::File::Pe64(ref inner) => {

@@ -10,11 +10,11 @@ edition.workspace = true
 patternsleuth_scanner = { path = "../patternsleuth_scanner" }
 anyhow = { workspace = true }
 memchr = { workspace = true }
-msvc-demangler = { workspace = true }
 object = { workspace = true }
-pdb = { workspace = true }
 rayon = { workspace = true }
 strum = { workspace = true }
+pdb = { workspace = true, optional = true }
+msvc-demangler = { workspace = true, optional = true}
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2.147", optional = true }
@@ -29,5 +29,6 @@ windows = { version = "0.48.0", optional = true, features = [
 
 [features]
 patterns = []
+symbols = ["dep:pdb", "dep:msvc-demangler"]
 process-external = ["dep:libc", "dep:windows"]
 process-internal = ["dep:libc", "dep:windows"]

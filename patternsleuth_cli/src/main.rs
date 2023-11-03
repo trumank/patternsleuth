@@ -530,21 +530,19 @@ fn scan(command: CommandScan) -> Result<()> {
 
                 bin_data = Some(fs::read(exe_path)?);
 
-                (
-                    Cow::Borrowed(name),
-                    match Image::read(
-                        bin_data.as_ref().unwrap(),
-                        exe_path,
-                        command.symbols,
-                        !command.skip_exceptions,
-                    ) {
+                (Cow::Borrowed(name), {
+                    let mut builder = Image::builder().functions(!command.skip_exceptions);
+                    if command.symbols {
+                        builder = builder.symbols(exe_path);
+                    }
+                    match builder.build(bin_data.as_ref().unwrap()) {
                         Ok(exe) => exe,
                         Err(err) => {
                             output.println(format!("err reading {}: {}", exe_path.display(), err));
                             continue;
                         }
-                    },
-                )
+                    }
+                })
             }
             GameEntry::Process(GameProcessEntry { pid }) => {
                 output.println(format!("PID={pid}"));
@@ -893,7 +891,11 @@ fn symbols(command: CommandSymbols) -> Result<()> {
 
         println!("{:?} {:?}", name, exe_path.display());
         let bin_data = fs::read(&exe_path)?;
-        let exe = match Image::read(&bin_data, &exe_path, true, true) {
+        let exe = match Image::builder()
+            .functions(true)
+            .symbols(&exe_path)
+            .build(&bin_data)
+        {
             Ok(exe) => exe,
             Err(err) => {
                 println!("err reading {}: {}", exe_path.display(), err);
@@ -1293,10 +1295,11 @@ mod index {
                     pb.set_message("total");
 
                     let bin_data = fs::read(exe_path)?;
-                    let exe = match Image::read(
-                        &bin_data, exe_path, true, // symbols
-                        true, // exceptions
-                    ) {
+                    let exe = match Image::builder()
+                        .functions(true)
+                        .symbols(exe_path)
+                        .build(&bin_data)
+                    {
                         Ok(exe) => exe,
                         Err(err) => {
                             println!("err reading {}: {}", exe_path.display(), err);
