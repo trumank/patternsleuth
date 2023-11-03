@@ -18,8 +18,6 @@ use patternsleuth::{
     PatternConfig, Resolution, ResolutionType,
 };
 
-mod sift4;
-
 #[derive(Parser)]
 enum Commands {
     Scan(CommandScan),
