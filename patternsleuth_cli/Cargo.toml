@@ -27,7 +27,7 @@ rayon.workspace = true
 regex = { workspace = true }
 strum = { workspace = true }
 indicatif = { version = "0.17.6", features = ["rayon"] }
-rusqlite = "0.29.0"
+rusqlite = { version = "0.29.0", features = ["bundled"] }
 crossbeam = "0.8.2"
 patricia_tree = "0.6.2"
 libc = "0.2.149"
