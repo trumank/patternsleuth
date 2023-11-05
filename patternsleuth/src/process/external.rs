@@ -112,3 +112,17 @@ mod unix {
         })
     }
 }
+
+#[cfg(windows)]
+pub use windows::*;
+
+#[cfg(windows)]
+mod windows {
+    use anyhow::Result;
+
+    use crate::Image;
+
+    pub fn read_image_from_pid<'data>(pid: i32) -> Result<Image<'data>> {
+        todo!()
+    }
+}
