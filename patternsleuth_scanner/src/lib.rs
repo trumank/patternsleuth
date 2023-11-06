@@ -20,7 +20,7 @@ pub struct Capture<'data> {
 impl TryFrom<String> for Pattern {
     type Error = Error;
     fn try_from(string: String) -> Result<Self, <Self as TryFrom<String>>::Error> {
-        Self::new(&string)
+        Self::new(string)
     }
 }
 impl TryFrom<&str> for Pattern {
@@ -80,7 +80,7 @@ impl Pattern {
             .unwrap_or_else(|| s.parse())?)
     }
 
-    pub fn new(s: &str) -> Result<Self> {
+    pub fn new<S: AsRef<str>>(s: S) -> Result<Self> {
         let mut sig = vec![];
         let mut mask = vec![];
         let mut custom_offset = 0;
@@ -90,7 +90,7 @@ impl Pattern {
         let mut xrefs = vec![];
 
         let mut i = 0;
-        for w in s.split_whitespace() {
+        for w in s.as_ref().split_whitespace() {
             if let Some((s, m)) =
                 Self::parse_hex_pattern(w).or_else(|| Self::parse_binary_patern(w))
             {

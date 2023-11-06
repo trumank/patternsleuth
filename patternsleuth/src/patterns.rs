@@ -1975,7 +1975,7 @@ mod fparseparam {
 
         ResolutionAction::Continue(Scan {
             section: Some(object::SectionKind::Text),
-            scan_type: Pattern::new(&format!(
+            scan_type: Pattern::new(format!(
                 "48 8d 15 [ ?? ?? ?? ?? ] e8 X0x{:x}",
                 ctx.match_address
             ))
@@ -2008,7 +2008,7 @@ mod uevr {
 
         ResolutionAction::Continue(Scan {
             section: Some(object::SectionKind::Text),
-            scan_type: Pattern::new(&format!("48 8d 15 X0x{:x}", ctx.match_address))
+            scan_type: Pattern::new(format!("48 8d 15 X0x{:x}", ctx.match_address))
                 .unwrap()
                 .into(),
             resolve: resolve_console_manager_stage2,
