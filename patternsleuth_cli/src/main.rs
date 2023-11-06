@@ -1384,6 +1384,10 @@ mod index {
             (),
         )?;
         conn.execute(
+            "CREATE INDEX IF NOT EXISTS symbols_symbol_game_address_idx ON symbols (symbol, game, address)",
+            (),
+        )?;
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS symbols_symbol_idx ON symbols (symbol)",
             (),
         )?;
