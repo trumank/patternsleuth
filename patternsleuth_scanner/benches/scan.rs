@@ -26,16 +26,62 @@ fn gig(c: &mut Criterion) {
     c.bench_function("gig scan_memchr", |b| {
         b.iter(|| scan_memchr(&[(&(), &pattern)], 0, &data))
     });
+    c.bench_function("gig scan_memchr_lookup", |b| {
+        b.iter(|| scan_memchr_lookup(&[(&(), &pattern)], 0, &data))
+    });
+    c.bench_function("gig scan_memchr_lookup_many", |b| {
+        b.iter(|| scan_memchr_lookup_many(&[(&(), &pattern)], 0, &data))
+    });
+}
+
+fn many(c: &mut Criterion) {
+    use object::Object;
+    use object::ObjectSection;
+
+    let bin_data = std::fs::read("../games/FSD/FSD-Win64-Shipping.exe").unwrap();
+    let obj_file = object::File::parse(&*bin_data).unwrap();
+    let section = obj_file.section_by_name(".text").unwrap();
+    let data = section.data().unwrap();
+
+    let patterns = include_str!("patterns.txt")
+        .lines()
+        .map(|l| Pattern::new(l).unwrap())
+        .collect::<Vec<_>>();
+
+    let indexed_patterns = patterns.iter().map(|p| (&(), p)).collect::<Vec<_>>();
+
+    let mut reference = scan(&indexed_patterns, 0, data);
+    reference.sort();
+
+    let mut next = scan_memchr(&indexed_patterns, 0, data);
+    next.sort();
+    assert_eq!(&next, &reference);
+
+    let mut next = scan_memchr_lookup(&indexed_patterns, 0, data);
+    next.sort();
+    assert_eq!(&next, &reference);
+
+    let mut next = scan_memchr_lookup_many(&indexed_patterns, 0, data);
+    next.sort();
+    assert_eq!(&next, &reference);
+
+    c.bench_function("many scan", |b| b.iter(|| scan(&indexed_patterns, 0, data)));
+    c.bench_function("many scan_memchr", |b| {
+        b.iter(|| scan_memchr(&indexed_patterns, 0, data))
+    });
+    c.bench_function("many scan_memchr_lookup", |b| {
+        b.iter(|| scan_memchr_lookup(&indexed_patterns, 0, data))
+    });
+    c.bench_function("many scan_memchr_lookup_many", |b| {
+        b.iter(|| scan_memchr_lookup_many(&indexed_patterns, 0, data))
+    });
 }
 
 fn xref(c: &mut Criterion) {
     use object::Object;
     use object::ObjectSection;
 
-    //let bin_data = std::fs::read("games/FSD/FSD-Win64-Shipping.exe").unwrap();
-    let bin_data =
-        std::fs::read("../../remnant/Windows/Remnant2/Binaries/Win64/Remnant2-Win64-Shipping.exe")
-            .unwrap();
+    let bin_data = std::fs::read("../games/FSD/FSD-Win64-Shipping.exe").unwrap();
     let obj_file = object::File::parse(&*bin_data).unwrap();
     let section = obj_file.section_by_name(".text").unwrap();
     let base_address = section.address() as usize;
@@ -196,5 +242,6 @@ criterion_group! {
     targets = gig
 }
 criterion_group!(bench2, xref);
+criterion_group!(bench3, many);
 
-criterion_main!(bench1, bench2);
+criterion_main!(bench1, bench2, bench3);

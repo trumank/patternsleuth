@@ -520,9 +520,10 @@ impl<'data> Image<'data> {
                     })
                     .collect::<Vec<_>>();
 
-                let scan_results = scanner::scan_memchr_lookup(&pattern_scans, base_address, data)
-                    .into_iter()
-                    .chain(scanner::scan_xref_binary(&xref_scans, base_address, data));
+                let scan_results =
+                    scanner::scan_memchr_lookup_many(&pattern_scans, base_address, data)
+                        .into_iter()
+                        .chain(scanner::scan_xref_binary(&xref_scans, base_address, data));
 
                 for (scan, address) in scan_results {
                     let mut stages = scan.stages.clone();

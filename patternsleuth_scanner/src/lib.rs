@@ -217,7 +217,7 @@ impl std::fmt::Debug for Pattern {
 pub struct Xref(pub usize);
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Display,
     simd::{SimdPartialEq, ToBitMask},
 };
@@ -385,6 +385,96 @@ pub fn scan_memchr_lookup<'id, ID: Sync>(
                         for (id, p) in patterns {
                             if p.is_match(data, base_address, j) {
                                 matches.push((*id, p.compute_result(data, base_address, j)));
+                            }
+                        }
+                    }
+                }
+                matches
+            })
+            .flatten()
+            .collect(),
+    );
+
+    // suffix
+    let start = middle.len();
+    for (id, p) in patterns {
+        for i in start..start + (data.len() - middle.len()).saturating_sub(p.sig.len() - 1) {
+            if p.is_match(data, base_address, i) {
+                matches.push((*id, base_address + i));
+            }
+        }
+    }
+
+    matches
+}
+
+pub fn scan_memchr_lookup_many<'id, ID: Sync>(
+    patterns: &[(&'id ID, &Pattern)],
+    base_address: usize,
+    data: &[u8],
+) -> Vec<(&'id ID, usize)> {
+    use rayon::prelude::*;
+
+    if patterns.is_empty() {
+        return vec![];
+    }
+
+    const WIDE: usize = 4;
+
+    let mut all_bins = HashSet::new();
+    let mut short_bins: HashMap<u8, Vec<_>> = Default::default();
+    let mut wide_bins: HashMap<[u8; WIDE], Vec<_>> = Default::default();
+    for p in patterns {
+        all_bins.insert(p.1.sig[0]);
+        if p.1.mask.iter().take(WIDE).filter(|m| **m == 0xff).count() == WIDE {
+            let mut buf = [0; WIDE];
+            buf.copy_from_slice(&p.1.sig[0..WIDE]);
+            wide_bins.entry(buf).or_default().push(p);
+        } else {
+            short_bins.entry(p.1.sig[0]).or_default().push(p);
+        }
+    }
+    let all_bins = Vec::from_iter(all_bins);
+
+    let max = patterns.iter().map(|(_id, p)| p.sig.len()).max().unwrap();
+
+    // cut middle short such that even the longest pattern doesn't have to bounds check
+    let middle = &data[0..data.len().saturating_sub(max)];
+
+    let mut matches = vec![];
+
+    // middle
+    let chunk_size = (middle.len()
+        / std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
+    .max(1);
+    let chunks: Vec<_> = middle.chunks(chunk_size).enumerate().collect();
+    matches.append(
+        &mut chunks
+            .par_iter()
+            .map(|(index, chunk)| {
+                let mut matches = vec![];
+                let offset = index * chunk_size;
+
+                for first in &all_bins {
+                    for i in memchr::memchr_iter(*first, chunk) {
+                        let j = offset + i;
+                        if let Some(patterns) = short_bins.get(first) {
+                            for (id, p) in patterns {
+                                if p.is_match(data, base_address, j) {
+                                    matches.push((*id, p.compute_result(data, base_address, j)));
+                                }
+                            }
+                        }
+                        if !wide_bins.is_empty() {
+                            let mut buf = [0; WIDE];
+                            buf.copy_from_slice(&data[j..j + WIDE]);
+                            if let Some(patterns) = wide_bins.get(&buf) {
+                                for (id, p) in patterns {
+                                    if p.is_match(data, base_address, j) {
+                                        matches
+                                            .push((*id, p.compute_result(data, base_address, j)));
+                                    }
+                                }
                             }
                         }
                     }
@@ -705,6 +795,16 @@ mod test {
     #[test]
     fn test_scan_memchr() {
         test_scan_algo(scan_memchr);
+    }
+
+    #[test]
+    fn test_scan_memchr_lookup() {
+        test_scan_algo(scan_memchr_lookup);
+    }
+
+    #[test]
+    fn test_scan_memchr_lookup_many() {
+        test_scan_algo(scan_memchr_lookup_many);
     }
 
     fn test_scan_algo(scan: PatternScanFn) {
