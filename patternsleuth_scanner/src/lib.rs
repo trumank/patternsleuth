@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Context, Error, Result};
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Pattern {
     pub sig: Vec<u8>,
     pub mask: Vec<u8>,
@@ -197,6 +197,7 @@ impl Display for Pattern {
         let mut buffer = String::new();
         buffer.push_str(&format!("{:02X}", self.sig[0]));
         for (sig, mask) in self.sig.iter().zip(&self.mask).skip(1) {
+            // TODO xrefs and bit masks
             if *mask == 0 {
                 buffer.push_str(" ??");
             } else {
@@ -204,6 +205,11 @@ impl Display for Pattern {
             }
         }
         write!(f, "{}", buffer)
+    }
+}
+impl std::fmt::Debug for Pattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Pattern(\"{self}\")")
     }
 }
 
