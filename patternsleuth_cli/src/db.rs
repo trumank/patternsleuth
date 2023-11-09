@@ -211,6 +211,16 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
 
     let mut conn = Connection::open("data.db")?;
 
+    let existing_games = {
+        let mut stmt = conn.prepare("SELECT DISTINCT game FROM functions")?;
+        let result = stmt
+            .query_map((), |row| {
+                Ok(std::path::PathBuf::from(row.get::<_, String>(0)?))
+            })?
+            .collect::<rusqlite::Result<HashSet<_>>>()?;
+        result
+    };
+
     conn.pragma_update(None, "synchronous", "OFF")?;
     conn.pragma_update(None, "journal_mode", "MEMORY")?;
 
@@ -282,7 +292,7 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
 
         let games_with_symbols = get_games(command.game)?
             .into_iter()
-            .filter(|g| g.exe_path.with_extension("pdb").exists())
+            .filter(|g| !existing_games.contains(&g.exe_path) && g.exe_path.with_extension("pdb").exists())
             .collect::<Vec<_>>();
 
         use indicatif::ParallelProgressIterator;
