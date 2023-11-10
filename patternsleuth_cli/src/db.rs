@@ -51,15 +51,7 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
     }
 
     if !functions.is_empty() {
-        println!("{} total functions", functions.len());
-
-        for function in &functions {
-            println!(
-                "{:2} {:08X} {}",
-                function.index, function.sql.address, function.sql.game
-            );
-        }
-
+        /*
         let mut table = Table::new();
         table.add_row(Row::new(
             [Cell::new("")]
@@ -72,6 +64,7 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
                 )
                 .collect(),
         ));
+        */
         let max = 100;
 
         let mut distances = HashMap::new();
@@ -83,7 +76,7 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
             },
         ) in functions.iter().enumerate()
         {
-            let mut cells = vec![Cell::new(&a_i.to_string())];
+            //let mut cells = vec![Cell::new(&a_i.to_string())];
             for (
                 b_i,
                 Function {
@@ -95,11 +88,13 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
                 let distance = count_unequal(&a[..a.len().min(max)], &b[..b.len().min(max)]);
                 distances.insert((a_i, b_i), distance);
                 distances.insert((b_i, a_i), distance);
-                cells.push(Cell::new(&distance.to_string()));
+                //cells.push(Cell::new(&distance.to_string()));
             }
-            table.add_row(Row::new(cells));
+            //table.add_row(Row::new(cells));
         }
-        table.printstd();
+        //table.printstd();
+
+        let function_count = functions.len();
 
         let groups = if let Some(last) = functions.pop() {
             let mut groups = vec![vec![last]];
@@ -131,6 +126,19 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
 
         let mut patterns = vec![];
 
+        println!(
+            "{} total functions in {} group",
+            function_count,
+            groups.len()
+        );
+
+        for function in &functions {
+            println!(
+                "{:2} {:08X} {}",
+                function.index, function.sql.address, function.sql.game
+            );
+        }
+
         for group in &groups {
             let pattern = build_common_pattern(
                 group
@@ -152,11 +160,11 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
         }
 
         println!("./run.sh scan --skip-exceptions --summary \\");
-        for pattern in patterns {
+        for pattern in &patterns {
             println!("  -p '{}' \\", pattern);
         }
 
-        for group in &groups {
+        for (group, pattern) in groups.iter().zip(patterns) {
             let mut table = Table::new();
             table.set_titles(group.iter().map(|f| &f.sql.game).collect());
             table.add_row(Row::new(
