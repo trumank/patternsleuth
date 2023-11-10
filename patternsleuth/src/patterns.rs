@@ -1516,9 +1516,23 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
 
         PatternConfig::new(
             Sig::CasePreserving,
-            "CasePreserving".to_string(),
+            "FLinkerLoad::IsImportNative".to_string(),
             None,
             Pattern::new("48 83 EC 38 ?? 8B C1 48 63 ?? 48 ?? ?? ?? ?? 03 48 08 48 83 79 ?? 00 0F 85 ?? 00 00 00 8B 51 ?? 85 D2 74 0E F7 D2 ?? 8B C8 48 83 C4 38 E9 CE FF FF FF 48 8D 54 24 20 48 89 5C 24 30 E8 [ ?? ?? ?? ?? ] 83 78 08 00 74 05 48 8B 18 EB 07 48 8D 1D")?,
+            resolve_case_preserving,
+        ),
+        PatternConfig::new(
+            Sig::CasePreserving,
+            "FPackageName::GetShortName 0".to_string(),
+            None,
+            Pattern::new("40 53 48 83 EC 30 48 8B C2 48 8B D9 48 8B C8 48 8D 54 24 20 E8 [ ?? ?? ?? ?? ] 4C 8B 00 48 63 50 08 49 8D 14 50 49 3B D0 74 16 0F 1F 80 00 00 00 00 48 83 EA 02 66 83 3A 2F 74 31 49 3B D0 75 F1 BA FF FF FF FF 44 8D 42 01 48 8B C8 48 8B D3 E8 ?? ?? ?? FF 48 8B 4C 24 20 48 85 C9 74 05 E8 ?? ?? ?? FF 48 8B")?,
+            resolve_case_preserving,
+        ),
+        PatternConfig::new(
+            Sig::CasePreserving,
+            "FPackageName::GetShortName 1".to_string(),
+            None,
+            Pattern::new("40 53 48 83 EC 30 48 8B C2 48 8B D9 48 ?? ?? ?? ?? ?? ?? ?? E8 [ ?? ?? ?? ?? ] 48 8B ?? 48 8B ?? E8 ?? FE FF FF 48 8B 4C 24 20 48 85 C9 74 05 E8 ?? ?? ?? FF 48 8B C3 48 83 C4 30 5B C3")?,
             resolve_case_preserving,
         ),
 
