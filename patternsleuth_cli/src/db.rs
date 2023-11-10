@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::Result;
 use itertools::Itertools;
-use patternsleuth::Image;
+use patternsleuth::{Image, scanner::Pattern};
 use prettytable::{Cell, Row, Table};
 use rayon::prelude::*;
 use rusqlite::{Connection, OptionalExtension};
@@ -174,6 +174,7 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
                         Cell::new(&disassemble::disassemble_bytes_with_symbols(
                             f.sql.address,
                             &f.sql.data,
+                            Some(&Pattern::new(&pattern).unwrap()),
                             |address| -> Option<String> {
                                 command.show_symbols.then(||
                                 conn

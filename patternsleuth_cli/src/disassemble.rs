@@ -211,7 +211,12 @@ pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
     output.buffer
 }
 
-pub(crate) fn disassemble_bytes_with_symbols<F>(address: usize, data: &[u8], symbols: F) -> String
+pub(crate) fn disassemble_bytes_with_symbols<F>(
+    address: usize,
+    data: &[u8],
+    pattern: Option<&Pattern>,
+    symbols: F,
+) -> String
 where
     F: Fn(usize) -> Option<String>,
 {
@@ -233,10 +238,31 @@ where
         output.buffer.push_str(":  ");
 
         let index = instruction.ip() as usize - address;
-        for b in data[index..index + instruction.len()].iter() {
+        for (i, b) in data[index..index + instruction.len()].iter().enumerate() {
+            let highlight = pattern
+                .and_then(|p| -> Option<bool> {
+                    let offset = (instruction.ip() as usize) - address + i + p.custom_offset;
+                    Some(*p.mask.get(offset)? != 0)
+                })
+                .unwrap_or_default();
+
             let s = format!("{:02x}", b);
+            let mut colored = if highlight {
+                s.bright_white()
+            } else {
+                s.bright_black()
+            };
+
+            if instruction
+                .ip()
+                .checked_add(i as u64)
+                .map(|a| a == address as u64)
+                .unwrap_or_default()
+            {
+                colored = colored.reversed();
+            }
             #[allow(clippy::unnecessary_to_owned)]
-            output.buffer.push_str(&s.bright_white().to_string());
+            output.buffer.push_str(&colored.to_string());
             output.buffer.push(' ');
         }
 
