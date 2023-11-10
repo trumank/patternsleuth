@@ -15,6 +15,7 @@ rayon = { workspace = true }
 strum = { workspace = true }
 pdb = { workspace = true, optional = true }
 msvc-demangler = { workspace = true, optional = true}
+iced-x86.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2.147", optional = true }

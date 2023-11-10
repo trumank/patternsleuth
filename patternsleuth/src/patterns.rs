@@ -1,6 +1,9 @@
 use anyhow::Result;
 
-use crate::resolvers::{resolve_function, resolve_rip_offset, resolve_self};
+use crate::{
+    resolvers::{resolve_function, resolve_rip_offset, resolve_self},
+    MemoryTrait,
+};
 
 use super::{
     Memory, MemoryAccessorTrait, Pattern, PatternConfig, ResolutionAction, ResolutionType,
@@ -80,6 +83,8 @@ pub enum Sig {
     FParseParam,
 
     UEVRConsoleManager,
+
+    CasePreserving,
 
     ClassInitializers,
     StaticClass,
@@ -1509,6 +1514,14 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             uevr::resolve_console_manager,
         ),
 
+        PatternConfig::new(
+            Sig::CasePreserving,
+            "CasePreserving".to_string(),
+            None,
+            Pattern::new("48 83 EC 38 ?? 8B C1 48 63 ?? 48 ?? ?? ?? ?? 03 48 08 48 83 79 ?? 00 0F 85 ?? 00 00 00 8B 51 ?? 85 D2 74 0E F7 D2 ?? 8B C8 48 83 C4 38 E9 CE FF FF FF 48 8D 54 24 20 48 89 5C 24 30 E8 [ ?? ?? ?? ?? ] 83 78 08 00 74 05 48 8B 18 EB 07 48 8D 1D")?,
+            resolve_case_preserving,
+        ),
+
         /* disabled for now because they spam the log and often crash
         PatternConfig::new(
             Sig::ClassInitializers,
@@ -1965,6 +1978,46 @@ mod signing_key {
             ResolutionType::Failed.into()
         }
     }
+}
+
+pub fn resolve_case_preserving(
+    ctx: ResolveContext,
+    stages: &mut ResolveStages,
+) -> ResolutionAction {
+    use iced_x86::{Decoder, DecoderOptions, InstructionInfoFactory, OpAccess, Register};
+
+    stages.0.push(ctx.match_address);
+
+    let addr = ctx
+        .memory
+        .captures(ctx.scan.scan_type.get_pattern().unwrap(), ctx.match_address)
+        .unwrap()[0]
+        .rip();
+
+    stages.0.push(addr);
+
+    let data = ctx.memory.range_from(addr..);
+
+    let mut decoder = Decoder::with_ip(64, data, addr as u64, DecoderOptions::NONE);
+    let mut info_factory = InstructionInfoFactory::new();
+    for inst in decoder.iter().take(20) {
+        let info = info_factory.info(&inst);
+        for mem in info.used_memory() {
+            if mem.access() == OpAccess::Read && mem.base() == Register::RCX {
+                match mem.displacement() {
+                    4 => {
+                        return "NO".to_string().into();
+                    }
+                    8 => {
+                        return "YES".to_string().into();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    ResolutionType::Failed.into()
 }
 
 mod fparseparam {
