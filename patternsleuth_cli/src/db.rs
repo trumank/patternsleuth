@@ -140,23 +140,23 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
         }
 
         for group in &groups {
-            let pattern = build_common_pattern(
+            if let Some(pattern) = build_common_pattern(
                 group
                     .iter()
                     .map(|f| &f.sql.data[..f.sql.data.len().min(max)])
                     .collect::<Vec<_>>(),
-            )
-            .unwrap();
-            println!("{}", pattern);
-            patterns.push(pattern);
-            println!(
-                "{:#?}",
-                group
-                    .iter()
-                    .map(|f| &f.sql.game)
-                    .sorted()
-                    .collect::<Vec<_>>()
-            );
+            ) {
+                println!("{}", pattern);
+                patterns.push(pattern);
+                println!(
+                    "{:#?}",
+                    group
+                        .iter()
+                        .map(|f| &f.sql.game)
+                        .sorted()
+                        .collect::<Vec<_>>()
+                );
+            }
         }
 
         println!("./run.sh scan --skip-exceptions --summary \\");
