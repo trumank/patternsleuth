@@ -86,6 +86,8 @@ pub enum Sig {
 
     CasePreserving,
 
+    KismetSystemLibrary,
+
     ClassInitializers,
     StaticClass,
 }
@@ -1536,6 +1538,14 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
             resolve_case_preserving,
         ),
 
+        PatternConfig::new(
+            Sig::KismetSystemLibrary,
+            "KismetSystemLibrary".to_string(),
+            None,
+            Pattern::from_bytes("KismetSystemLibrary\x00".encode_utf16().flat_map(u16::to_le_bytes).collect())?,
+            kismet_system_library::resolve,
+        ),
+
         /* disabled for now because they spam the log and often crash
         PatternConfig::new(
             Sig::ClassInitializers,
@@ -2032,6 +2042,61 @@ pub fn resolve_case_preserving(
     }
 
     ResolutionType::Failed.into()
+}
+
+mod kismet_system_library {
+    use super::*;
+
+    pub fn resolve(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
+        ResolutionAction::Continue(Scan {
+            section: Some(object::SectionKind::Text),
+            scan_type: Pattern::new(format!(
+                // fragile (only 4.25-4.27 most likely)
+                "4c 8d 0d [ ?? ?? ?? ?? ] 88 4c 24 70 4c 8d 05 ?? ?? ?? ?? 49 89 43 e0 48 8d 15 X0x{:x}",
+                ctx.match_address
+            )).unwrap().into(),
+            resolve: resolve2,
+        })
+    }
+
+    pub fn resolve2(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
+        stages.0.push(ctx.match_address);
+
+        let register_natives_addr = ctx
+            .memory
+            .captures(ctx.scan.scan_type.get_pattern().unwrap(), ctx.match_address)
+            .unwrap()[0]
+            .rip();
+
+        stages.0.push(register_natives_addr);
+
+        let register_natives = Pattern::new("48 83 ec 28 e8 ?? ?? ?? ?? 41 b8 [ ?? ?? ?? ?? ] 48 8d 15 [ ?? ?? ?? ?? ] 48 8b c8 48 83 c4 28 e9 ?? ?? ?? ??").unwrap();
+
+        let captures = ctx
+            .memory
+            .captures(&register_natives, register_natives_addr);
+
+        if let Some([num, data]) = captures.as_deref() {
+            use std::fmt::Write;
+
+            let ptr = data.rip();
+            let mut buf = String::new();
+            for i in 0..(num.u32() as usize) {
+                let a = ptr + i * 0x10;
+                writeln!(
+                    &mut buf,
+                    "{i} {:x} {:?}",
+                    ctx.memory.ptr(a + 8),
+                    ctx.memory.read_string(ctx.memory.ptr(a))
+                )
+                .unwrap();
+            }
+            buf.into()
+        } else {
+            ResolutionAction::Finish(ResolutionType::Failed)
+        }
+    }
 }
 
 mod fparseparam {
