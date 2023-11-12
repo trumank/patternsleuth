@@ -337,7 +337,8 @@ impl<'data> Image<'data> {
             self.exception_children_cache.insert(f.range.start, vec![]);
 
             let Some(section) = self.memory.get_section_containing(f.unwind) else {
-                println!("invalid unwind info addr {:x}", f.unwind);
+                // TODO disabled cause spammy
+                //println!("invalid unwind info addr {:x}", f.unwind);
                 continue;
             };
 
