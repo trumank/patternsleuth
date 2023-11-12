@@ -441,6 +441,9 @@ fn build_common_pattern<B: AsRef<[u8]>>(function_bodies: impl AsRef<[B]>) -> Opt
                 sig.push(function_bodies[0].as_ref()[i]);
                 mask.push(0xff);
                 last_eq = i + 1;
+            } else if i == 0 {
+                // first byte cannot be wildcard
+                return None;
             } else {
                 sig.push(0);
                 mask.push(0);
