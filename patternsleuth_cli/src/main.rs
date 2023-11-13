@@ -27,6 +27,7 @@ enum Commands {
     Symbols(CommandSymbols),
     BuildIndex(CommandBuildIndex),
     ViewSymbol(CommandViewSymbol),
+    AutoGen(CommandAutoGen),
 }
 
 fn parse_maybe_hex(s: &str) -> Result<usize> {
@@ -62,6 +63,10 @@ struct CommandScan {
     /// A pattern to scan for (can be specified multiple times)
     #[arg(short, long, value_parser(|s: &_| Pattern::new(s)))]
     patterns: Vec<Pattern>,
+
+    /// A path to a JSON pattern config file
+    #[arg(long)]
+    pattern_config: Option<PathBuf>,
 
     /// An xref to scan for (can be specified multiple times)
     #[arg(short, long, value_parser(|s: &str| parse_maybe_hex(s).map(Xref)))]
@@ -123,10 +128,7 @@ struct CommandViewSymbol {
 }
 
 #[derive(Parser)]
-struct CommandListIndex {}
-
-#[derive(Parser)]
-struct CommandBruteForce {}
+struct CommandAutoGen {}
 
 fn find_ext<P: AsRef<Path>>(dir: P, ext: &str) -> Result<Option<PathBuf>> {
     for f in fs::read_dir(dir)? {
@@ -144,6 +146,7 @@ fn main() -> Result<()> {
         Commands::Symbols(command) => symbols(command),
         Commands::BuildIndex(command) => db::build(command),
         Commands::ViewSymbol(command) => db::view(command),
+        Commands::AutoGen(command) => db::auto_gen(command),
     }
 }
 
@@ -182,6 +185,22 @@ fn scan(command: CommandScan) -> Result<()> {
                     )
                 })),
         )
+        .chain(command.pattern_config.into_iter().flat_map(|path| {
+            let file = std::fs::read_to_string(path).unwrap();
+            let config: HashMap<String, Vec<String>> = serde_json::from_str(&file).unwrap();
+
+            config.into_iter().flat_map(|(symbol, patterns)| {
+                patterns.into_iter().enumerate().map(move |(i, p)| {
+                    PatternConfig::new(
+                        Sig::Custom(format!("file {symbol}")),
+                        format!("#{i} {symbol}"),
+                        None,
+                        Pattern::new(p).unwrap(),
+                        resolve_self,
+                    )
+                })
+            })
+        }))
         .collect_vec();
 
     let sigs = patterns

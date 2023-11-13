@@ -6,12 +6,251 @@ use std::{
 
 use anyhow::Result;
 use itertools::Itertools;
-use patternsleuth::{Image, scanner::Pattern};
+use patternsleuth::{
+    resolvers::resolve_self, scanner::Pattern, Image, PatternConfig, ResolutionType,
+};
 use prettytable::{Cell, Row, Table};
 use rayon::prelude::*;
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::{disassemble, get_games, CommandBuildIndex, CommandViewSymbol, GameFileEntry};
+use crate::{
+    disassemble, get_games, CommandAutoGen, CommandBuildIndex, CommandViewSymbol, GameFileEntry,
+};
+
+fn generate_patterns_for_symbol(symbol: &str) -> Result<Vec<Pattern>> {
+    let conn = Connection::open("data.db")?;
+
+    struct SqlFunction {
+        game: String,
+        address: usize,
+        data: Vec<u8>,
+    }
+
+    let mut stmt = conn.prepare("SELECT game, address, data FROM functions JOIN symbols USING(game, address) WHERE symbol = ?1")?;
+    let rows = stmt.query_map((symbol,), |row| {
+        Ok(SqlFunction {
+            game: row.get(0)?,
+            address: row.get(1)?,
+            data: row.get(2)?,
+        })
+    })?;
+
+    fn count_unequal<T: PartialEq>(a: &[T], b: &[T]) -> usize {
+        a.iter().zip(b).filter(|(a, b)| a != b).count() + a.len().abs_diff(b.len())
+    }
+
+    struct Function {
+        index: usize,
+        sql: SqlFunction,
+    }
+
+    let mut functions = vec![];
+
+    for row in rows {
+        let sql = row?;
+
+        let index = functions.len();
+        functions.push(Function { index, sql });
+    }
+
+    let max = 100;
+
+    let mut distances = HashMap::new();
+    for (
+        a_i,
+        Function {
+            sql: SqlFunction { data: a, .. },
+            ..
+        },
+    ) in functions.iter().enumerate()
+    {
+        let mut cells = vec![Cell::new(&a_i.to_string())];
+        for (
+            b_i,
+            Function {
+                sql: SqlFunction { data: b, .. },
+                ..
+            },
+        ) in functions.iter().enumerate()
+        {
+            let distance = count_unequal(&a[..a.len().min(max)], &b[..b.len().min(max)]);
+            distances.insert((a_i, b_i), distance);
+            distances.insert((b_i, a_i), distance);
+            cells.push(Cell::new(&distance.to_string()));
+        }
+    }
+
+    let groups = if let Some(last) = functions.pop() {
+        let mut groups = vec![vec![last]];
+        while let Some(b) = functions.pop() {
+            let (d, group) = groups
+                .iter_mut()
+                .map(|group| {
+                    (
+                        group
+                            .iter()
+                            .map(|a| distances.get(&(a.index, b.index)).unwrap())
+                            .max()
+                            .unwrap(),
+                        group,
+                    )
+                })
+                .min_by_key(|(d, _)| *d)
+                .unwrap();
+            if *d < 50 {
+                group.push(b);
+            } else {
+                groups.push(vec![b]);
+            }
+        }
+        groups
+    } else {
+        vec![]
+    };
+
+    let patterns = groups
+        .iter()
+        .flat_map(|g| {
+            build_common_pattern(
+                g.iter()
+                    .map(|f| &f.sql.data[..f.sql.data.len().min(max)])
+                    .collect::<Vec<_>>(),
+            )
+            .map(|s| Pattern::new(s).unwrap())
+        })
+        .collect::<Vec<_>>();
+
+    Ok(patterns)
+}
+
+pub(crate) fn auto_gen(command: CommandAutoGen) -> Result<()> {
+    let conn = Connection::open("data.db")?;
+
+    #[derive(Debug)]
+    struct QueryResult {
+        count: usize,
+        symbol: String,
+    }
+
+    //let mut stmt = conn.prepare("SELECT COUNT(*) AS count, symbol FROM symbols JOIN functions USING(game, address) GROUP BY symbol HAVING count > 20 ORDER BY count DESC")?;
+    //let mut stmt = conn.prepare("SELECT COUNT(*) AS count, symbol FROM symbols JOIN functions USING(game, address) WHERE symbol LIKE '% %' GROUP BY symbol HAVING count > 20")?;
+    let mut stmt = conn.prepare("SELECT COUNT(*) AS count, symbol FROM symbols JOIN functions USING(game, address) WHERE symbol LIKE '% %' GROUP BY symbol HAVING count > 20")?;
+    let rows = stmt.query_map((), |row| {
+        Ok(QueryResult {
+            count: row.get(0)?,
+            symbol: row.get(1)?,
+        })
+    })?;
+
+    let mut pattern_map: HashMap<String, Vec<Pattern>> = Default::default();
+
+    for row in rows {
+        let row = row?;
+        dbg!(&row);
+        let patterns = generate_patterns_for_symbol(&row.symbol)?;
+        pattern_map
+            .entry(row.symbol)
+            .or_default()
+            .extend(patterns.into_iter());
+    }
+    println!("testing {} symbols", pattern_map.len());
+
+    let mut scan_patterns = vec![];
+
+    for (symbol, patterns) in &pattern_map {
+        for (i, pattern) in patterns.iter().enumerate() {
+            scan_patterns.push(PatternConfig::new(
+                (i, symbol.as_str()),
+                "".into(),
+                None,
+                pattern.clone(),
+                resolve_self,
+            ))
+        }
+    }
+
+    let mut matches: HashMap<&str, usize> = Default::default();
+    let mut bad = HashSet::new();
+
+    let games_vec = get_games([])?;
+    for GameFileEntry { name, exe_path } in games_vec {
+        println!("{:?} {:?}", name, exe_path.display());
+
+        let bin_data = fs::read(&exe_path)?;
+
+        let exe = match Image::builder::<&str>().build(&bin_data) {
+            Ok(exe) => exe,
+            Err(err) => {
+                println!("err reading {}: {}", exe_path.display(), err);
+                continue;
+            }
+        };
+
+        let scan = exe.scan(&scan_patterns)?;
+
+        // group results by Sig
+        let folded_scans = scan
+            .results
+            .iter()
+            .map(|(config, m)| {
+                (
+                    &config.sig.1,
+                    (
+                        config.sig.0,
+                        match m.res {
+                            ResolutionType::Address(addr) => addr,
+                            _ => unreachable!(),
+                        },
+                    ),
+                )
+            })
+            .fold(
+                HashMap::new(),
+                |mut map: HashMap<_, HashMap<usize, Vec<_>>>, (k, (i, v))| {
+                    map.entry(k).or_default().entry(i).or_default().push(v);
+                    map
+                },
+            );
+
+        let mut to_remove = HashSet::new();
+
+        for (symbol, results) in folded_scans {
+            let mut any_match = false;
+            for (pattern_index, addresses) in results {
+                if addresses.len() > 1 {
+                    let sig = (pattern_index, *symbol);
+                    println!("\t{:?} matched multiple, removing", sig);
+                    to_remove.insert(sig);
+                    bad.insert(sig);
+                } else {
+                    println!("\t{:?}: {addresses:x?}", (pattern_index, symbol));
+                    any_match = true;
+                }
+            }
+            if any_match {
+                *matches.entry(symbol).or_default() += 1;
+            }
+        }
+        drop(scan);
+        scan_patterns.retain(|p| !to_remove.contains(&p.sig));
+    }
+
+    let mut output: HashMap<_, Vec<_>> = Default::default();
+
+    for (symbol, count) in matches.iter().sorted_by_key(|(_, v)| *v) {
+        println!("{count}: {symbol}");
+        for (index, pattern) in pattern_map.get(*symbol).unwrap().iter().enumerate() {
+            if !bad.contains(&(index, *symbol)) {
+                println!("\t{pattern}");
+                output.entry(symbol).or_default().push(format!("{pattern}"));
+            }
+        }
+    }
+
+    std::fs::write("patterns.json", serde_json::to_string(&output)?)?;
+
+    Ok(())
+}
 
 pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
     println!("{:?}", command.symbol);
