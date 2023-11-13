@@ -459,6 +459,13 @@ impl<'data> Image<'data> {
         all_children
     }
 
+    pub fn resolve<T: Send + Sync>(
+        &self,
+        resolver: &'static resolvers::Resolver<T>,
+    ) -> resolvers::Result<T> {
+        resolvers::resolve(self, resolver)
+    }
+
     pub fn scan<'patterns, S>(
         &self,
         pattern_configs: &'patterns [PatternConfig<S>],
@@ -884,5 +891,43 @@ impl<'data> Index<Range<usize>> for Memory<'data> {
                 }
             })
             .unwrap()
+    }
+}
+
+pub trait Addressable {
+    fn rip(&self) -> usize;
+    fn ptr(&self) -> usize;
+    fn u32(&self) -> u32;
+}
+impl Addressable for patternsleuth_scanner::Capture<'_> {
+    fn rip(&self) -> usize {
+        (self.address + 4)
+            .checked_add_signed(i32::from_le_bytes(self.data.try_into().unwrap()) as isize)
+            .unwrap()
+    }
+    fn ptr(&self) -> usize {
+        usize::from_le_bytes(self.data.try_into().unwrap())
+    }
+    fn u32(&self) -> u32 {
+        u32::from_le_bytes(self.data.try_into().unwrap())
+    }
+}
+
+pub trait Matchable<'data> {
+    fn captures(
+        &'data self,
+        pattern: &Pattern,
+        address: usize,
+    ) -> Option<Vec<patternsleuth_scanner::Capture<'data>>>;
+}
+
+impl<'data> Matchable<'data> for Memory<'data> {
+    fn captures(
+        &'data self,
+        pattern: &Pattern,
+        address: usize,
+    ) -> Option<Vec<patternsleuth_scanner::Capture<'data>>> {
+        self.get_section_containing(address)
+            .and_then(move |s| pattern.captures(s.data(), s.address(), address - s.address()))
     }
 }

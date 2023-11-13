@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::{
     resolvers::{resolve_function, resolve_rip_offset, resolve_self},
-    MemoryTrait,
+    Addressable, Matchable, MemoryTrait,
 };
 
 use super::{
@@ -1563,44 +1563,6 @@ pub fn get_patterns() -> Result<Vec<PatternConfig<Sig>>> {
         ),
         */
     ])
-}
-
-trait Addressable {
-    fn rip(&self) -> usize;
-    fn ptr(&self) -> usize;
-    fn u32(&self) -> u32;
-}
-impl Addressable for patternsleuth_scanner::Capture<'_> {
-    fn rip(&self) -> usize {
-        (self.address + 4)
-            .checked_add_signed(i32::from_le_bytes(self.data.try_into().unwrap()) as isize)
-            .unwrap()
-    }
-    fn ptr(&self) -> usize {
-        usize::from_le_bytes(self.data.try_into().unwrap())
-    }
-    fn u32(&self) -> u32 {
-        u32::from_le_bytes(self.data.try_into().unwrap())
-    }
-}
-
-trait Matchable<'data> {
-    fn captures(
-        &'data self,
-        pattern: &Pattern,
-        address: usize,
-    ) -> Option<Vec<patternsleuth_scanner::Capture<'data>>>;
-}
-
-impl<'data> Matchable<'data> for Memory<'data> {
-    fn captures(
-        &'data self,
-        pattern: &Pattern,
-        address: usize,
-    ) -> Option<Vec<patternsleuth_scanner::Capture<'data>>> {
-        self.get_section_containing(address)
-            .and_then(move |s| pattern.captures(s.data(), s.address(), address - s.address()))
-    }
 }
 
 /// do nothing, but return a constant so it's squashing all multiple matches to 1 value: 0x12345678
