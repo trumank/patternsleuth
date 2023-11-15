@@ -1,6 +1,23 @@
 pub mod unreal;
 
 use crate::{Image, Memory, ResolutionAction, ResolutionType, ResolveContext, ResolveStages};
+use futures::{
+    channel::oneshot,
+    executor::LocalPool,
+    future::{join_all, BoxFuture},
+};
+use futures_scopes::{
+    relay::{new_relay_scope, RelayScopeLocalSpawning},
+    ScopedSpawnExt, SpawnScope,
+};
+use patternsleuth_scanner::Pattern;
+use std::{
+    any::{Any, TypeId},
+    borrow::Cow,
+    collections::HashMap,
+    error::Error,
+    sync::{Arc, Mutex},
+};
 
 /// Simply return address of match
 pub fn resolve_self(ctx: ResolveContext, _stages: &mut ResolveStages) -> ResolutionAction {
@@ -43,20 +60,6 @@ pub fn resolve_rip_offset<const N: usize>(
     resolve_rip(ctx.memory, ctx.match_address, N, stages)
 }
 
-use futures::{channel::oneshot, executor::LocalPool, future::BoxFuture};
-use futures_scopes::{
-    relay::{new_relay_scope, RelayScopeLocalSpawning},
-    ScopedSpawnExt, SpawnScope,
-};
-use patternsleuth_scanner::Pattern;
-use std::{
-    any::{Any, TypeId},
-    borrow::Cow,
-    collections::HashMap,
-    error::Error,
-    sync::{Arc, Mutex},
-};
-
 pub type Result<T> = std::result::Result<T, ResolveError>;
 #[derive(Debug, Clone)]
 pub enum ResolveError {
@@ -93,7 +96,13 @@ impl<T> Context<T> for Option<T> {
     }
 }
 
-pub struct Resolver<T> {
+pub trait Resolution: std::fmt::Debug + Send + Sync {}
+impl<T: std::fmt::Debug + Send + Sync> Resolution for T {}
+pub struct DynResolverFactory {
+    factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, Result<Arc<dyn Resolution>>>,
+}
+
+pub struct ResolverFactory<T> {
     factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, Result<T>>,
 }
 
@@ -101,12 +110,23 @@ pub struct Resolver<T> {
 macro_rules! impl_resolver {
     ( $name:ident, |$ctx:ident| async $x:block ) => {
         impl $name {
-            pub fn resolver() -> &'static $crate::resolvers::Resolver<$name> {
-                static GLOBAL: ::std::sync::OnceLock<&$crate::resolvers::Resolver<$name>> = ::std::sync::OnceLock::new();
+            pub fn resolver() -> &'static $crate::resolvers::ResolverFactory<$name> {
+                static GLOBAL: ::std::sync::OnceLock<&$crate::resolvers::ResolverFactory<$name>> = ::std::sync::OnceLock::new();
 
-                GLOBAL.get_or_init(|| &$crate::resolvers::Resolver {
+                GLOBAL.get_or_init(|| &$crate::resolvers::ResolverFactory {
                     factory: |$ctx: &$crate::resolvers::AsyncContext| -> ::futures::future::BoxFuture<Result<$name>> {
                         Box::pin(async $x)
+                    },
+                })
+            }
+            pub fn dyn_resolver() -> &'static $crate::resolvers::DynResolverFactory {
+                static GLOBAL: ::std::sync::OnceLock<&$crate::resolvers::DynResolverFactory> = ::std::sync::OnceLock::new();
+
+                GLOBAL.get_or_init(|| &$crate::resolvers::DynResolverFactory {
+                    factory: |$ctx: &$crate::resolvers::AsyncContext| -> ::futures::future::BoxFuture<Result<Arc<dyn $crate::resolvers::Resolution>>> {
+                        Box::pin(async {
+                            $ctx.resolve(Self::resolver()).await.map(|ok| -> Arc<dyn $crate::resolvers::Resolution> { Arc::new(ok) })
+                        })
                     },
                 })
             }
@@ -158,7 +178,7 @@ impl<'data> AsyncContext<'data> {
     }
     async fn resolve<'ctx, T: Send + Sync + 'static>(
         &'ctx self,
-        resolver: &Resolver<T>,
+        resolver: &ResolverFactory<T>,
     ) -> Result<Arc<T>> {
         let t = TypeId::of::<T>();
         let rx = {
@@ -211,7 +231,10 @@ impl<'data> AsyncContext<'data> {
     }
 }
 
-pub fn resolve<T: Send + Sync>(image: &Image<'_>, resolver: &'static Resolver<T>) -> Result<T> {
+pub fn eval<F, T: Send + Sync>(image: &Image<'_>, f: F) -> T
+where
+    F: for<'ctx> FnOnce(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, T> + Send + Sync,
+{
     {
         let ctx = AsyncContext::new(image);
         let (rx, tx) = std::sync::mpsc::channel();
@@ -225,7 +248,7 @@ pub fn resolve<T: Send + Sync>(image: &Image<'_>, resolver: &'static Resolver<T>
             .spawn_scoped({
                 let ctx = ctx.clone();
                 async move {
-                    rx.send(ctx.resolve(resolver).await).unwrap();
+                    rx.send(f(&ctx).await).unwrap();
                 }
             })
             .unwrap();
@@ -260,5 +283,22 @@ pub fn resolve<T: Send + Sync>(image: &Image<'_>, resolver: &'static Resolver<T>
             }
         }
     }
-    .map(|ok| Arc::<T>::into_inner(ok).unwrap())
+}
+
+pub fn resolve<T: Send + Sync>(
+    image: &Image<'_>,
+    resolver: &'static ResolverFactory<T>,
+) -> Result<T> {
+    eval(image, |ctx| Box::pin(async { ctx.resolve(resolver).await }))
+        .map(|ok| Arc::<T>::into_inner(ok).unwrap())
+}
+
+pub fn resolve_many(
+    image: &Image<'_>,
+    resolvers: &[fn() -> &'static DynResolverFactory],
+) -> Vec<Result<Arc<dyn Resolution>>> {
+    let fns = resolvers.iter().map(|r| r().factory).collect::<Vec<_>>();
+    eval(image, |ctx| {
+        Box::pin(async { join_all(fns.into_iter().map(|f| f(ctx))).await })
+    })
 }

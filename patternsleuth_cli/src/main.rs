@@ -6,12 +6,12 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::ProgressBar;
 use itertools::Itertools;
 use patricia_tree::StringPatriciaMap;
-use patternsleuth::resolvers::resolve_self;
+use patternsleuth::resolvers::{resolve_self, unreal, DynResolverFactory};
 use patternsleuth::Image;
 
 use patternsleuth::scanner::Xref;
@@ -36,6 +36,16 @@ fn parse_maybe_hex(s: &str) -> Result<usize> {
         .unwrap_or_else(|| s.parse())?)
 }
 
+type NamedResolver = (&'static str, fn() -> &'static DynResolverFactory);
+
+fn parse_resolver(s: &str) -> Result<NamedResolver> {
+    unreal::all()
+        .into_iter()
+        .find(|(name, _r)| s == *name)
+        .copied()
+        .context("Resolver not found")
+}
+
 #[derive(Parser)]
 struct CommandScan {
     /// A game to scan (can be specified multiple times). Scans everything if omitted. Supports
@@ -50,6 +60,10 @@ struct CommandScan {
     /// A signature to scan for (can be specified multiple times). Scans for all signatures if omitted
     #[arg(short, long)]
     signature: Vec<Sig>,
+
+    /// A resolver to scan for (can be specified multiple times)
+    #[arg(short, long, value_parser(|s: &_| parse_resolver(s)))]
+    resolver: Vec<NamedResolver>,
 
     /// Show disassembly context for each stage of every match (I recommend only using with
     /// aggressive filters)
@@ -156,10 +170,11 @@ fn scan(command: CommandScan) -> Result<()> {
     let patterns = get_patterns()?
         .into_iter()
         .filter(|p| {
-            sig_filter
-                .is_empty()
-                .then_some(include_default)
-                .unwrap_or_else(|| sig_filter.contains(&p.sig))
+            command.resolver.is_empty()
+                && sig_filter
+                    .is_empty()
+                    .then_some(include_default)
+                    .unwrap_or_else(|| sig_filter.contains(&p.sig))
         })
         .chain(
             command
@@ -202,6 +217,12 @@ fn scan(command: CommandScan) -> Result<()> {
             })
         }))
         .collect_vec();
+
+    let resolvers = command
+        .resolver
+        .into_iter()
+        .map(|(_name, r)| r)
+        .collect::<Vec<_>>();
 
     let sigs = patterns
         .iter()
@@ -284,6 +305,9 @@ fn scan(command: CommandScan) -> Result<()> {
         };
 
         games.insert(name.to_string());
+
+        let resolution = exe.resolve_many(&resolvers);
+        println!("{resolution:#x?}");
 
         let scan = exe.scan(&patterns)?;
 

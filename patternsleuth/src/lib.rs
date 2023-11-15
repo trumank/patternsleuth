@@ -461,9 +461,16 @@ impl<'data> Image<'data> {
 
     pub fn resolve<T: Send + Sync>(
         &self,
-        resolver: &'static resolvers::Resolver<T>,
+        resolver: &'static resolvers::ResolverFactory<T>,
     ) -> resolvers::Result<T> {
         resolvers::resolve(self, resolver)
+    }
+
+    pub fn resolve_many(
+        &self,
+        resolvers: &[fn() -> &'static resolvers::DynResolverFactory],
+    ) -> Vec<resolvers::Result<std::sync::Arc<dyn resolvers::Resolution>>> {
+        resolvers::resolve_many(self, resolvers)
     }
 
     pub fn scan<'patterns, S>(

@@ -4,9 +4,19 @@ use futures::{future::join_all, join, try_join, FutureExt};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    bail_out, impl_resolver, resolvers::Context, resolvers::Result, Addressable, Matchable,
-    MemoryAccessorTrait,
+    bail_out, impl_resolver,
+    resolvers::{Context, DynResolverFactory, Result},
+    Addressable, Matchable, MemoryAccessorTrait,
 };
+
+pub fn all() -> &'static [(&'static str, fn() -> &'static DynResolverFactory)] {
+    macro_rules! inc {
+        ( $( $name:ident , )* ) => {
+            &[$( ( stringify!($name), $name::dyn_resolver ), )*]
+        };
+    }
+    inc!(KismetSystemLibrary, ConsoleManagerSingleton,)
+}
 
 #[derive(Debug)]
 pub struct KismetSystemLibrary(HashMap<String, usize>);
