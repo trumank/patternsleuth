@@ -219,204 +219,17 @@ pub struct Xref(pub usize);
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
-    simd::{SimdPartialEq, ToBitMask},
 };
 
-pub fn scan<'id, ID: Sync>(
-    patterns: &[(&'id ID, &Pattern)],
-    base_address: usize,
-    data: &[u8],
-) -> Vec<(&'id ID, usize)> {
+pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> Vec<Vec<usize>> {
     use rayon::prelude::*;
+
+    let patterns = patterns.as_ref();
+
+    let mut bins = patterns.iter().map(|_| vec![]).collect::<Vec<_>>();
 
     if patterns.is_empty() {
-        return vec![];
-    }
-
-    const LANES: usize = 16;
-
-    let max = patterns.iter().map(|(_id, p)| p.sig.len()).max().unwrap();
-
-    let first: Vec<_> = patterns
-        .iter()
-        .map(|p| (p, std::simd::Simd::splat(p.1.sig[0])))
-        .collect();
-
-    // split data for simd
-    // cut middle short such that even the longest pattern doesn't have to bounds check
-    let (prefix, middle, _suffix) = data[0..data.len().saturating_sub(max)].as_simd::<LANES>();
-    let suffix = &data[prefix.len() + middle.len() * LANES..data.len()];
-
-    let mut matches = vec![];
-
-    // prefix
-    for (id, p) in patterns {
-        for i in 0..prefix.len().min(data.len().saturating_sub(p.sig.len() - 1)) {
-            if p.is_match(data, base_address, i) {
-                matches.push((*id, base_address + i));
-            }
-        }
-    }
-
-    // middle
-    let batch_size = (middle.len()
-        / std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
-    .max(1);
-    let batches: Vec<_> = middle.chunks(batch_size).enumerate().collect();
-    matches.append(
-        &mut batches
-            .par_iter()
-            .map(|(index, batch)| {
-                let mut matches = vec![];
-                let offset = index * batch_size;
-
-                for (i, chunk) in batch.iter().enumerate() {
-                    for ((id, p), f) in &first {
-                        let mut mask = f.simd_eq(*chunk).to_bitmask();
-
-                        while mask != 0 {
-                            let next = mask.trailing_zeros();
-                            mask ^= 1 << next;
-
-                            let j = prefix.len() + (offset + i) * LANES + next as usize;
-
-                            if p.is_match(data, base_address, j) {
-                                matches.push((*id, p.compute_result(data, base_address, j)));
-                            }
-                        }
-                    }
-                }
-                matches
-            })
-            .flatten()
-            .collect(),
-    );
-
-    // suffix
-    let start = prefix.len() + middle.len() * LANES;
-    for (id, p) in patterns {
-        for i in start..start + suffix.len().saturating_sub(p.sig.len() - 1) {
-            if p.is_match(data, base_address, i) {
-                matches.push((*id, base_address + i));
-            }
-        }
-    }
-
-    matches
-}
-
-pub fn scan_memchr<'id, ID: Sync>(
-    patterns: &[(&'id ID, &Pattern)],
-    base_address: usize,
-    data: &[u8],
-) -> Vec<(&'id ID, usize)> {
-    use rayon::prelude::*;
-
-    let mut matches = vec![];
-
-    for (id, pattern) in patterns {
-        let first_byte_data = &data[0..data.len().saturating_sub(pattern.sig.len() - 1)];
-        let chunk_size = (first_byte_data.len()
-            / std::thread::available_parallelism()
-                .unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
-        .max(1);
-
-        let chunks: Vec<_> = first_byte_data.chunks(chunk_size).enumerate().collect();
-        matches.append(
-            &mut chunks
-                .par_iter()
-                .map(|(chunk_index, chunk)| {
-                    let mut matches = vec![];
-                    let offset = chunk_index * chunk_size;
-
-                    for i in memchr::memchr_iter(pattern.sig[0], chunk) {
-                        let j = offset + i;
-                        if pattern.is_match(data, base_address, j) {
-                            matches.push((*id, pattern.compute_result(data, base_address, j)));
-                        }
-                    }
-                    matches
-                })
-                .flatten()
-                .collect::<Vec<_>>(),
-        );
-    }
-    matches
-}
-
-pub fn scan_memchr_lookup<'id, ID: Sync>(
-    patterns: &[(&'id ID, &Pattern)],
-    base_address: usize,
-    data: &[u8],
-) -> Vec<(&'id ID, usize)> {
-    use rayon::prelude::*;
-
-    if patterns.is_empty() {
-        return vec![];
-    }
-
-    let mut bins: HashMap<u8, Vec<_>> = Default::default();
-    for p in patterns {
-        bins.entry(p.1.sig[0]).or_default().push(p);
-    }
-
-    let max = patterns.iter().map(|(_id, p)| p.sig.len()).max().unwrap();
-
-    // cut middle short such that even the longest pattern doesn't have to bounds check
-    let middle = &data[0..data.len().saturating_sub(max)];
-
-    let mut matches = vec![];
-
-    // middle
-    let chunk_size = (middle.len()
-        / std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
-    .max(1);
-    let chunks: Vec<_> = middle.chunks(chunk_size).enumerate().collect();
-    matches.append(
-        &mut chunks
-            .par_iter()
-            .map(|(index, chunk)| {
-                let mut matches = vec![];
-                let offset = index * chunk_size;
-
-                for (first, patterns) in &bins {
-                    for i in memchr::memchr_iter(*first, chunk) {
-                        let j = offset + i;
-                        for (id, p) in patterns {
-                            if p.is_match(data, base_address, j) {
-                                matches.push((*id, p.compute_result(data, base_address, j)));
-                            }
-                        }
-                    }
-                }
-                matches
-            })
-            .flatten()
-            .collect(),
-    );
-
-    // suffix
-    let start = middle.len();
-    for (id, p) in patterns {
-        for i in start..start + (data.len() - middle.len()).saturating_sub(p.sig.len() - 1) {
-            if p.is_match(data, base_address, i) {
-                matches.push((*id, base_address + i));
-            }
-        }
-    }
-
-    matches
-}
-
-pub fn scan_memchr_lookup_many<'id, ID: Sync>(
-    patterns: &[(&'id ID, &Pattern)],
-    base_address: usize,
-    data: &[u8],
-) -> Vec<(&'id ID, usize)> {
-    use rayon::prelude::*;
-
-    if patterns.is_empty() {
-        return vec![];
+        return bins;
     }
 
     const WIDE: usize = 4;
@@ -424,19 +237,19 @@ pub fn scan_memchr_lookup_many<'id, ID: Sync>(
     let mut all_bins = HashSet::new();
     let mut short_bins: HashMap<u8, Vec<_>> = Default::default();
     let mut wide_bins: HashMap<[u8; WIDE], Vec<_>> = Default::default();
-    for p in patterns {
-        all_bins.insert(p.1.sig[0]);
-        if p.1.mask.iter().take(WIDE).filter(|m| **m == 0xff).count() == WIDE {
+    for (pi, p) in patterns.iter().enumerate() {
+        all_bins.insert(p.sig[0]);
+        if p.mask.iter().take(WIDE).filter(|m| **m == 0xff).count() == WIDE {
             let mut buf = [0; WIDE];
-            buf.copy_from_slice(&p.1.sig[0..WIDE]);
-            wide_bins.entry(buf).or_default().push(p);
+            buf.copy_from_slice(&p.sig[0..WIDE]);
+            wide_bins.entry(buf).or_default().push((pi, p));
         } else {
-            short_bins.entry(p.1.sig[0]).or_default().push(p);
+            short_bins.entry(p.sig[0]).or_default().push((pi, p));
         }
     }
     let all_bins = Vec::from_iter(all_bins);
 
-    let max = patterns.iter().map(|(_id, p)| p.sig.len()).max().unwrap();
+    let max = patterns.iter().map(|p| p.sig.len()).max().unwrap();
 
     // cut middle short such that even the longest pattern doesn't have to bounds check
     let middle = &data[0..data.len().saturating_sub(max)];
@@ -459,9 +272,9 @@ pub fn scan_memchr_lookup_many<'id, ID: Sync>(
                     for i in memchr::memchr_iter(*first, chunk) {
                         let j = offset + i;
                         if let Some(patterns) = short_bins.get(first) {
-                            for (id, p) in patterns {
+                            for (pi, p) in patterns.iter() {
                                 if p.is_match(data, base_address, j) {
-                                    matches.push((*id, p.compute_result(data, base_address, j)));
+                                    matches.push((*pi, p.compute_result(data, base_address, j)));
                                 }
                             }
                         }
@@ -469,10 +282,10 @@ pub fn scan_memchr_lookup_many<'id, ID: Sync>(
                             let mut buf = [0; WIDE];
                             buf.copy_from_slice(&data[j..j + WIDE]);
                             if let Some(patterns) = wide_bins.get(&buf) {
-                                for (id, p) in patterns {
+                                for (pi, p) in patterns.iter() {
                                     if p.is_match(data, base_address, j) {
                                         matches
-                                            .push((*id, p.compute_result(data, base_address, j)));
+                                            .push((*pi, p.compute_result(data, base_address, j)));
                                     }
                                 }
                             }
@@ -487,79 +300,32 @@ pub fn scan_memchr_lookup_many<'id, ID: Sync>(
 
     // suffix
     let start = middle.len();
-    for (id, p) in patterns {
+    for (pi, p) in patterns.iter().enumerate() {
         for i in start..start + (data.len() - middle.len()).saturating_sub(p.sig.len() - 1) {
             if p.is_match(data, base_address, i) {
-                matches.push((*id, base_address + i));
+                matches.push((pi, base_address + i));
             }
         }
     }
 
-    matches
-}
-
-pub fn scan_xref<'id, ID: Sync>(
-    patterns: &[(&'id ID, &Xref)],
-    base_address: usize,
-    data: &[u8],
-) -> Vec<(&'id ID, usize)> {
-    use rayon::prelude::*;
-
-    if patterns.is_empty() {
-        return vec![];
+    for (pi, addr) in matches {
+        bins[pi].push(addr);
     }
 
-    let mut matches = vec![];
-
-    let width = 4;
-
-    let first_byte_data = &data[0..data.len().saturating_sub(width - 1)];
-    let chunk_size = (first_byte_data.len()
-        / std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
-    .max(1);
-
-    let chunks: Vec<_> = first_byte_data.chunks(chunk_size).enumerate().collect();
-    matches.append(
-        &mut chunks
-            .par_iter()
-            .map(|(chunk_index, chunk)| {
-                let mut matches = vec![];
-                let offset = chunk_index * chunk_size;
-
-                for j in offset..offset + chunk.len() {
-                    if let Some(address) = (base_address + width + j).checked_add_signed(
-                        i32::from_le_bytes(data[j..j + width].try_into().unwrap())
-                            .try_into()
-                            .unwrap(),
-                    ) {
-                        for (id, p) in patterns {
-                            if p.0 == address {
-                                matches.push((*id, base_address + j));
-                            }
-                        }
-                    }
-                }
-                matches
-            })
-            .flatten()
-            .collect::<Vec<_>>(),
-    );
-    matches
+    bins
 }
 
-pub fn scan_xref_binary<'id, ID: Sync>(
-    patterns: &[(&'id ID, &Xref)],
-    base_address: usize,
-    data: &[u8],
-) -> Vec<(&'id ID, usize)> {
+pub fn scan_xref(patterns: &[&Xref], base_address: usize, data: &[u8]) -> Vec<Vec<usize>> {
     use rayon::prelude::*;
 
+    let mut bins = patterns.iter().map(|_| vec![]).collect::<Vec<_>>();
+
     if patterns.is_empty() {
-        return vec![];
+        return bins;
     }
 
     let mut patterns = patterns.to_vec();
-    patterns.sort_by_key(|p| p.1);
+    patterns.sort();
 
     let mut matches = vec![];
 
@@ -584,17 +350,17 @@ pub fn scan_xref_binary<'id, ID: Sync>(
                             .try_into()
                             .unwrap(),
                     ) {
-                        if let Ok(i) = patterns.binary_search_by_key(&address, |p| p.1 .0) {
+                        if let Ok(i) = patterns.binary_search_by_key(&address, |p| p.0) {
                             // match found
                             let addr = base_address + j;
                             {
                                 // walk backwards until unequal
                                 let mut i = i - 1;
                                 while let Some(prev) = patterns.get(i) {
-                                    if prev.1 .0 != address {
+                                    if prev.0 != address {
                                         break;
                                     }
-                                    matches.push((prev.0, addr));
+                                    matches.push((i, addr));
                                     i -= 1;
                                 }
                             }
@@ -602,10 +368,10 @@ pub fn scan_xref_binary<'id, ID: Sync>(
                                 // walk forwards until unequal
                                 let mut i = i;
                                 while let Some(next) = patterns.get(i) {
-                                    if next.1 .0 != address {
+                                    if next.0 != address {
                                         break;
                                     }
-                                    matches.push((next.0, addr));
+                                    matches.push((i, addr));
                                     i += 1;
                                 }
                             }
@@ -617,59 +383,12 @@ pub fn scan_xref_binary<'id, ID: Sync>(
             .flatten()
             .collect::<Vec<_>>(),
     );
-    matches
-}
 
-pub fn scan_xref_hash<'id, ID: Sync>(
-    patterns: &[(&'id ID, &Xref)],
-    base_address: usize,
-    data: &[u8],
-) -> Vec<(&'id ID, usize)> {
-    use rayon::prelude::*;
-
-    if patterns.is_empty() {
-        return vec![];
+    for (pi, addr) in matches {
+        bins[pi].push(addr);
     }
 
-    let patterns = patterns
-        .iter()
-        .map(|(id, p)| (p.0, *id))
-        .collect::<HashMap<_, _>>();
-
-    let mut matches = vec![];
-
-    let width = 4;
-
-    let first_byte_data = &data[0..data.len().saturating_sub(width - 1)];
-    let chunk_size = (first_byte_data.len()
-        / std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
-    .max(1);
-
-    let chunks: Vec<_> = first_byte_data.chunks(chunk_size).enumerate().collect();
-    matches.append(
-        &mut chunks
-            .par_iter()
-            .map(|(chunk_index, chunk)| {
-                let mut matches = vec![];
-                let offset = chunk_index * chunk_size;
-
-                for j in offset..offset + chunk.len() {
-                    if let Some(address) = (base_address + width + j).checked_add_signed(
-                        i32::from_le_bytes(data[j..j + width].try_into().unwrap())
-                            .try_into()
-                            .unwrap(),
-                    ) {
-                        if let Some(id) = patterns.get(&address) {
-                            matches.push((*id, base_address + j));
-                        }
-                    }
-                }
-                matches
-            })
-            .flatten()
-            .collect::<Vec<_>>(),
-    );
-    matches
+    bins
 }
 
 #[cfg(test)]
@@ -775,40 +494,18 @@ mod test {
         );
     }
 
-    type PatternScanFn<'id> = fn(
-        patterns: &[(&'id (), &Pattern)],
-        base_address: usize,
-        data: &[u8],
-    ) -> Vec<(&'id (), usize)>;
+    type PatternScanFn =
+        fn(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> Vec<Vec<usize>>;
 
-    type XrefScanFn<'id, ID> = fn(
-        patterns: &[(&'id ID, &Xref)],
-        base_address: usize,
-        data: &[u8],
-    ) -> Vec<(&'id ID, usize)>;
+    type XrefScanFn = fn(patterns: &[&Xref], base_address: usize, data: &[u8]) -> Vec<Vec<usize>>;
 
     #[test]
-    fn test_scan() {
-        test_scan_algo(scan);
-    }
-
-    #[test]
-    fn test_scan_memchr() {
-        test_scan_algo(scan_memchr);
-    }
-
-    #[test]
-    fn test_scan_memchr_lookup() {
-        test_scan_algo(scan_memchr_lookup);
-    }
-
-    #[test]
-    fn test_scan_memchr_lookup_many() {
-        test_scan_algo(scan_memchr_lookup_many);
+    fn test_scan_pattern() {
+        test_scan_algo(scan_pattern);
     }
 
     fn test_scan_algo(scan: PatternScanFn) {
-        let patterns = [(&(), &Pattern::new("01").unwrap())];
+        let patterns = [&Pattern::new("01").unwrap()];
 
         let len = 64;
         let lanes = 32;
@@ -818,16 +515,10 @@ mod test {
 
         for i in 0..lanes {
             let slice = &data[i..i + len];
-            assert_eq!(
-                matches,
-                scan(&patterns, 0, slice)
-                    .into_iter()
-                    .map(|(_id, addr)| addr)
-                    .collect::<Vec<_>>()
-            );
+            assert_eq!(vec![matches.clone()], scan(&patterns, 0, slice));
         }
 
-        let patterns = [(&(), &Pattern::new("01 02").unwrap())];
+        let patterns = [&Pattern::new("01 02").unwrap()];
 
         // obtuse generator to test every combination of chunk boundaries
         let data: Vec<_> = std::iter::repeat([1, 2, 3]).take(32).flatten().collect();
@@ -837,32 +528,26 @@ mod test {
 
         for i in 0..(len - lanes) {
             let slice = &data[i..i + len];
-            let res = scan(&patterns, 0, slice)
-                .into_iter()
-                .map(|(_id, addr)| addr)
-                .collect::<Vec<_>>();
-            assert_eq!(matches[(3 - (i % 3)) % 3], res);
+            let res = scan(&patterns, 0, slice);
+            assert_eq!(vec![matches[(3 - (i % 3)) % 3].clone()], res);
         }
     }
 
     #[test]
     fn test_scan_xref() {
-        test_scan_xref_algo(scan_xref_binary);
+        test_scan_xref_algo(scan_xref);
     }
 
-    fn test_scan_xref_algo(scan: XrefScanFn<char>) {
+    fn test_scan_xref_algo(scan: XrefScanFn) {
         let scans = [
-            (&'a', &Xref(0x504030a)),
-            (&'b', &Xref(0x504030a)),
-            (&'c', &Xref(0x504030a)),
-            (&'d', &Xref(0x504030a)),
+            &Xref(0x504030a),
+            &Xref(0x504030a),
+            &Xref(0x504030a),
+            &Xref(0x504030a),
         ];
 
         let mut res = scan(&scans, 3, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         res.sort();
-        assert_eq!(
-            &[(&'a', 4), (&'b', 4), (&'c', 4), (&'d', 4)],
-            res.as_slice()
-        );
+        assert_eq!(vec![vec![4], vec![4], vec![4], vec![4]], res);
     }
 }

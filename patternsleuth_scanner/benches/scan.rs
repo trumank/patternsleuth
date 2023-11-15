@@ -14,66 +14,11 @@ fn gig(c: &mut Criterion) {
 
     let pattern = Pattern::new("f9 82 db db 2d ?? 6f 15 ?? 44 54 f4 c8 aa d1 72 53 ?? a5 7b 22 24 94 7f ec 28 ?? e0 5e d4 ae 39").unwrap();
 
-    let result = scan(&[(&(), &pattern)], 0, &data);
-    assert_eq!(result, [(&(), size - needle.len())]);
-
-    let result = scan_memchr(&[(&(), &pattern)], 0, &data);
-    assert_eq!(result, [(&(), size - needle.len())]);
+    let result = scan_pattern(&[&pattern], 0, &data);
+    assert_eq!(result, vec![vec![size - needle.len()]]);
 
     c.bench_function("gig scan", |b| {
-        b.iter(|| scan(&[(&(), &pattern)], 0, &data))
-    });
-    c.bench_function("gig scan_memchr", |b| {
-        b.iter(|| scan_memchr(&[(&(), &pattern)], 0, &data))
-    });
-    c.bench_function("gig scan_memchr_lookup", |b| {
-        b.iter(|| scan_memchr_lookup(&[(&(), &pattern)], 0, &data))
-    });
-    c.bench_function("gig scan_memchr_lookup_many", |b| {
-        b.iter(|| scan_memchr_lookup_many(&[(&(), &pattern)], 0, &data))
-    });
-}
-
-fn many(c: &mut Criterion) {
-    use object::Object;
-    use object::ObjectSection;
-
-    let bin_data = std::fs::read("../games/FSD/FSD-Win64-Shipping.exe").unwrap();
-    let obj_file = object::File::parse(&*bin_data).unwrap();
-    let section = obj_file.section_by_name(".text").unwrap();
-    let data = section.data().unwrap();
-
-    let patterns = include_str!("patterns.txt")
-        .lines()
-        .map(|l| Pattern::new(l).unwrap())
-        .collect::<Vec<_>>();
-
-    let indexed_patterns = patterns.iter().map(|p| (&(), p)).collect::<Vec<_>>();
-
-    let mut reference = scan(&indexed_patterns, 0, data);
-    reference.sort();
-
-    let mut next = scan_memchr(&indexed_patterns, 0, data);
-    next.sort();
-    assert_eq!(&next, &reference);
-
-    let mut next = scan_memchr_lookup(&indexed_patterns, 0, data);
-    next.sort();
-    assert_eq!(&next, &reference);
-
-    let mut next = scan_memchr_lookup_many(&indexed_patterns, 0, data);
-    next.sort();
-    assert_eq!(&next, &reference);
-
-    c.bench_function("many scan", |b| b.iter(|| scan(&indexed_patterns, 0, data)));
-    c.bench_function("many scan_memchr", |b| {
-        b.iter(|| scan_memchr(&indexed_patterns, 0, data))
-    });
-    c.bench_function("many scan_memchr_lookup", |b| {
-        b.iter(|| scan_memchr_lookup(&indexed_patterns, 0, data))
-    });
-    c.bench_function("many scan_memchr_lookup_many", |b| {
-        b.iter(|| scan_memchr_lookup_many(&indexed_patterns, 0, data))
+        b.iter(|| scan_pattern(&[&pattern], 0, &data))
     });
 }
 
@@ -214,7 +159,7 @@ fn xref(c: &mut Criterion) {
         Xref(0x144F4D6D8),
     ];
 
-    let id_patterns = raw_patterns.iter().map(|p| (&(), p)).collect::<Vec<_>>();
+    let id_patterns = raw_patterns.iter().collect::<Vec<_>>();
 
     let mut group = c.benchmark_group("xref");
 
@@ -222,14 +167,8 @@ fn xref(c: &mut Criterion) {
     for f in 0..t {
         let size = (raw_patterns.len() as f64 * f as f64 / t as f64).round() as usize;
         let p = &id_patterns[0..size];
-        group.bench_with_input(BenchmarkId::new("xref_linear", size), &size, |b, _size| {
+        group.bench_with_input(BenchmarkId::new("xref", size), &size, |b, _size| {
             b.iter(|| scan_xref(p, base_address, data))
-        });
-        group.bench_with_input(BenchmarkId::new("xref_binary", size), &size, |b, _size| {
-            b.iter(|| scan_xref_binary(p, base_address, data))
-        });
-        group.bench_with_input(BenchmarkId::new("xref_hash", size), &size, |b, _size| {
-            b.iter(|| scan_xref_hash(p, base_address, data))
         });
     }
 
@@ -242,6 +181,5 @@ criterion_group! {
     targets = gig
 }
 criterion_group!(bench2, xref);
-criterion_group!(bench3, many);
 
-criterion_main!(bench1, bench2, bench3);
+criterion_main!(bench1, bench2);

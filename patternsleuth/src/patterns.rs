@@ -1760,23 +1760,20 @@ mod FPakPlatformFile {
         stages.0.push(ctx.match_address);
 
         let patterns = [
-            Pattern::new("48 8d 15 | ?? ?? ?? ?? 48 8b cf ff 50 40 eb 3e 39 1d ?? ?? ?? ?? 74 36 48 8b 0d ?? ?? ?? ??").unwrap(),
-            Pattern::new("39 1d ?? ?? ?? ?? 74 36 48 8b 0d | ?? ?? ?? ??").unwrap(),
-            Pattern::new("83 3d ?? ?? ?? ?? 00 74 37 48 8b 0d | ?? ?? ?? ??").unwrap(),
+            &Pattern::new("48 8d 15 | ?? ?? ?? ?? 48 8b cf ff 50 40 eb 3e 39 1d ?? ?? ?? ?? 74 36 48 8b 0d ?? ?? ?? ??").unwrap(),
+            &Pattern::new("39 1d ?? ?? ?? ?? 74 36 48 8b 0d | ?? ?? ?? ??").unwrap(),
+            &Pattern::new("83 3d ?? ?? ?? ?? 00 74 37 48 8b 0d | ?? ?? ?? ??").unwrap(),
         ];
 
         let addresses = ctx
             .memory
             .get_section_containing(ctx.match_address)
             .map(|section| {
-                let res = patternsleuth_scanner::scan_memchr(
-                    &patterns.iter().map(|p| (&(), p)).collect::<Vec<_>>(),
-                    0,
-                    section.data(),
-                );
+                let res = patternsleuth_scanner::scan_pattern(&patterns, 0, section.data());
                 let mut addresses = res
                     .into_iter()
-                    .map(|(_, address)| {
+                    .flatten()
+                    .map(|address| {
                         // TODO allow passing sub-patterns to stages?
                         // TODO rename 'stages' to 'addresses_of_interest' or similar and give them names
                         stages.0.push(section.address() + address);
@@ -1798,21 +1795,22 @@ mod FPakPlatformFile {
     pub fn resolve_dtor(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
         stages.0.push(ctx.match_address);
 
-        let patterns = [Pattern::new("48 8b 0d | ").unwrap()];
+        let patterns = [&Pattern::new("48 8b 0d | ").unwrap()];
 
         let addresses = ctx
             .memory
             .get_section_containing(ctx.match_address)
             .map(|section| {
                 let start = ctx.match_address - section.address();
-                let res = patternsleuth_scanner::scan_memchr(
-                    &patterns.iter().map(|p| (&(), p)).collect::<Vec<_>>(),
+                let res = patternsleuth_scanner::scan_pattern(
+                    &patterns,
                     start,
                     &section.data()[start..start + 400],
                 );
                 let mut addresses = res
                     .into_iter()
-                    .map(|(_, address)| {
+                    .flatten()
+                    .map(|address| {
                         stages.0.push(section.address() + address);
                         section.address()
                             + (address + 4)
