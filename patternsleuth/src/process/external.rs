@@ -1,8 +1,8 @@
-#[cfg(unix)]
-pub use unix::*;
+#[cfg(target_os = "linux")]
+pub use linux::*;
 
-#[cfg(unix)]
-mod unix {
+#[cfg(target_os = "linux")]
+mod linux {
     use std::ops::Range;
 
     use anyhow::{bail, Context, Result};
@@ -110,6 +110,20 @@ mod unix {
             memory,
             symbols: Default::default(),
         })
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub use macos::*;
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use anyhow::Result;
+
+    use crate::Image;
+
+    pub fn read_image_from_pid<'data>(pid: i32) -> Result<Image<'data>> {
+        todo!()
     }
 }
 

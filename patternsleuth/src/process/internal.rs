@@ -1,8 +1,8 @@
-#[cfg(unix)]
-pub use unix::*;
+#[cfg(target_os = "linux")]
+pub use linux::*;
 
-#[cfg(unix)]
-mod unix {
+#[cfg(target_os = "linux")]
+mod linux {
     use anyhow::Result;
 
     use crate::Image;
