@@ -21,19 +21,13 @@ fn generate_patterns_for_symbol(symbol: &str) -> Result<Vec<Pattern>> {
     let conn = Connection::open("data.db")?;
 
     struct SqlFunction {
-        game: String,
-        address: usize,
         data: Vec<u8>,
     }
 
-    let mut stmt = conn.prepare("SELECT game, address, data FROM functions JOIN symbols USING(game, address) WHERE symbol = ?1")?;
-    let rows = stmt.query_map((symbol,), |row| {
-        Ok(SqlFunction {
-            game: row.get(0)?,
-            address: row.get(1)?,
-            data: row.get(2)?,
-        })
-    })?;
+    let mut stmt = conn.prepare(
+        "SELECT data FROM functions JOIN symbols USING(game, address) WHERE symbol = ?1",
+    )?;
+    let rows = stmt.query_map((symbol,), |row| Ok(SqlFunction { data: row.get(0)? }))?;
 
     fn count_unequal<T: PartialEq>(a: &[T], b: &[T]) -> usize {
         a.iter().zip(b).filter(|(a, b)| a != b).count() + a.len().abs_diff(b.len())
@@ -123,21 +117,17 @@ fn generate_patterns_for_symbol(symbol: &str) -> Result<Vec<Pattern>> {
     Ok(patterns)
 }
 
-pub(crate) fn auto_gen(command: CommandAutoGen) -> Result<()> {
+pub(crate) fn auto_gen(_command: CommandAutoGen) -> Result<()> {
     let conn = Connection::open("data.db")?;
 
     #[derive(Debug)]
     struct QueryResult {
-        count: usize,
         symbol: String,
     }
 
-    //let mut stmt = conn.prepare("SELECT COUNT(*) AS count, symbol FROM symbols JOIN functions USING(game, address) GROUP BY symbol HAVING count > 20 ORDER BY count DESC")?;
-    //let mut stmt = conn.prepare("SELECT COUNT(*) AS count, symbol FROM symbols JOIN functions USING(game, address) WHERE symbol LIKE '% %' GROUP BY symbol HAVING count > 20")?;
     let mut stmt = conn.prepare("SELECT COUNT(*) AS count, symbol FROM symbols JOIN functions USING(game, address) WHERE symbol LIKE '% %' GROUP BY symbol HAVING count > 20")?;
     let rows = stmt.query_map((), |row| {
         Ok(QueryResult {
-            count: row.get(0)?,
             symbol: row.get(1)?,
         })
     })?;
@@ -461,6 +451,7 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
 
     let existing_games = {
         let mut stmt = conn.prepare("SELECT DISTINCT game FROM functions")?;
+        #[warn(clippy::let_and_return)]
         let result = stmt
             .query_map((), |row| {
                 Ok(std::path::PathBuf::from(row.get::<_, String>(0)?))

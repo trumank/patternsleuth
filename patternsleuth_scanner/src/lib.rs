@@ -224,8 +224,6 @@ use std::{
 pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> Vec<Vec<usize>> {
     use rayon::prelude::*;
 
-    let patterns = patterns.as_ref();
-
     let mut bins = patterns.iter().map(|_| vec![]).collect::<Vec<_>>();
 
     if patterns.is_empty() {
