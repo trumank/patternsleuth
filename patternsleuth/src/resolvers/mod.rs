@@ -60,6 +60,18 @@ pub fn resolve_rip_offset<const N: usize>(
     resolve_rip(ctx.memory, ctx.match_address, N, stages)
 }
 
+/// Given an iterator of values, returns Ok(value) if all values are equal or Err
+pub fn ensure_one<T: PartialEq>(data: impl IntoIterator<Item = T>) -> Result<T> {
+    let mut iter = data.into_iter();
+    let first = iter.next().context("expected at least one value")?;
+    for value in iter {
+        if value != first {
+            bail_out!("iter returned multiple unique values");
+        }
+    }
+    Ok(first)
+}
+
 pub type Result<T> = std::result::Result<T, ResolveError>;
 #[derive(Debug, Clone)]
 pub enum ResolveError {
@@ -97,15 +109,19 @@ impl<T> Context<T> for Option<T> {
     }
 }
 
+type DynResolverFactoryGetter = (&'static str, fn() -> &'static DynResolverFactory);
+
+type DynResolver<'ctx> = BoxFuture<'ctx, Result<Arc<dyn Resolution>>>;
+type Resolver<'ctx, T> = BoxFuture<'ctx, Result<T>>;
+
 pub trait Resolution: std::fmt::Debug + Send + Sync {}
 impl<T: std::fmt::Debug + Send + Sync> Resolution for T {}
 pub struct DynResolverFactory {
-    pub factory:
-        for<'ctx> fn(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, Result<Arc<dyn Resolution>>>,
+    pub factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> DynResolver<'ctx>,
 }
 
 pub struct ResolverFactory<T> {
-    pub factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, Result<T>>,
+    pub factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> Resolver<'ctx, T>,
 }
 
 pub use ::futures;

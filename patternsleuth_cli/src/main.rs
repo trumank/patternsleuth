@@ -40,7 +40,7 @@ type NamedResolver = (&'static str, fn() -> &'static DynResolverFactory);
 
 fn parse_resolver(s: &str) -> Result<NamedResolver> {
     unreal::all()
-        .into_iter()
+        .iter()
         .find(|(name, _r)| s == *name)
         .copied()
         .context("Resolver not found")
