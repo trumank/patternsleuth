@@ -3,8 +3,10 @@ resolver = "2"
 members = [
     "patternsleuth",
     "patternsleuth_cli",
-    "patternsleuth_scanner"
+    "patternsleuth_scanner",
+    "examples/*",
 ]
+default-members = ["patternsleuth_*"]
 
 [workspace.package]
 repository = "https://github.com/trumank/patternsleuth"

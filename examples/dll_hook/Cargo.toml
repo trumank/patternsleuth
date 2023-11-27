@@ -1,0 +1,29 @@
+[package]
+name = "dll_hook"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+eframe = "0.24.0"
+egui-winit = { version = "0.24.0", default-features = false }
+itertools.workspace = true
+patternsleuth = { path = "../../patternsleuth", features = ["process-internal"] }
+simple-log = "1.6.0"
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_SystemServices",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_Threading",
+  "Win32_Security",
+  "Win32_System_ProcessStatus",
+] }
