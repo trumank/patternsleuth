@@ -17,18 +17,53 @@ pub fn all() -> &'static [(&'static str, fn() -> &'static DynResolverFactory)] {
     inc!(KismetSystemLibrary, ConsoleManagerSingleton,)
 }
 
+/// Given an iterator of values, returns Ok(value) if all values are equal or Err
+pub fn ensure_one<T: PartialEq>(data: impl IntoIterator<Item = T>) -> Result<T> {
+    let mut iter = data.into_iter();
+    let first = iter.next().context("expected at least one value")?;
+    for value in iter {
+        if value != first {
+            bail_out!("iter returned multiple unique values");
+        }
+    }
+    Ok(first)
+}
+
+#[derive(Debug)]
+pub struct GUObjectArray(pub usize);
+impl_resolver!(GUObjectArray, |ctx| async {
+    let patterns = [
+        "74 ?? 48 8D 0D | ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01",
+        "75 ?? 48 ?? ?? 48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 45 33 C9 4C 89 74 24",
+    ];
+
+    let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+    Ok(GUObjectArray(ensure_one(
+        res.iter().flatten().map(|a| ctx.image().memory.rip4(*a)),
+    )?))
+});
+
+#[derive(Debug)]
+pub struct FNameToString(pub usize);
+impl_resolver!(FNameToString, |ctx| async {
+    let patterns = [
+        "E8 | ?? ?? ?? ?? ?? 01 00 00 00 ?? 39 ?? 48 0F 8E",
+        "E8 | ?? ?? ?? ?? BD 01 00 00 00 41 39 6E ?? 0F 8E",
+        "E8 | ?? ?? ?? ?? 48 8B 4C 24 ?? 8B FD 48 85 C9",
+    ];
+
+    let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+    Ok(FNameToString(ensure_one(
+        res.iter().flatten().map(|a| ctx.image().memory.rip4(*a)),
+    )?))
+});
+
 #[derive(Debug)]
 pub struct KismetSystemLibrary(HashMap<String, usize>);
 
 impl_resolver!(KismetSystemLibrary, |ctx| async {
-    fn ensure_one<T>(mut data: impl Iterator<Item = T>) -> Result<T> {
-        let next = data.next().context("expected at least one value")?;
-        if data.next().is_some() {
-            bail_out!("iter returned more than one value");
-        }
-        Ok(next)
-    }
-
     let mem = &ctx.image().memory;
 
     let s = Pattern::from_bytes(
