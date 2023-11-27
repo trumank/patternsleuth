@@ -75,11 +75,12 @@ impl std::fmt::Display for ResolveError {
 impl Error for ResolveError {}
 
 #[macro_export]
-macro_rules! bail_out {
+macro_rules! _bail_out {
     ($msg:literal) => {
         return Err($crate::resolvers::ResolveError::Msg($msg.into()));
     };
 }
+pub use _bail_out as bail_out;
 
 pub trait Context<T>
 where
@@ -99,22 +100,25 @@ impl<T> Context<T> for Option<T> {
 pub trait Resolution: std::fmt::Debug + Send + Sync {}
 impl<T: std::fmt::Debug + Send + Sync> Resolution for T {}
 pub struct DynResolverFactory {
-    factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, Result<Arc<dyn Resolution>>>,
+    pub factory:
+        for<'ctx> fn(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, Result<Arc<dyn Resolution>>>,
 }
 
 pub struct ResolverFactory<T> {
-    factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, Result<T>>,
+    pub factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, Result<T>>,
 }
 
+pub use ::futures;
+
 #[macro_export]
-macro_rules! impl_resolver {
+macro_rules! _impl_resolver {
     ( $name:ident, |$ctx:ident| async $x:block ) => {
         impl $name {
             pub fn resolver() -> &'static $crate::resolvers::ResolverFactory<$name> {
                 static GLOBAL: ::std::sync::OnceLock<&$crate::resolvers::ResolverFactory<$name>> = ::std::sync::OnceLock::new();
 
                 GLOBAL.get_or_init(|| &$crate::resolvers::ResolverFactory {
-                    factory: |$ctx: &$crate::resolvers::AsyncContext| -> ::futures::future::BoxFuture<Result<$name>> {
+                    factory: |$ctx: &$crate::resolvers::AsyncContext| -> $crate::resolvers::futures::future::BoxFuture<$crate::resolvers::Result<$name>> {
                         Box::pin(async $x)
                     },
                 })
@@ -123,9 +127,9 @@ macro_rules! impl_resolver {
                 static GLOBAL: ::std::sync::OnceLock<&$crate::resolvers::DynResolverFactory> = ::std::sync::OnceLock::new();
 
                 GLOBAL.get_or_init(|| &$crate::resolvers::DynResolverFactory {
-                    factory: |$ctx: &$crate::resolvers::AsyncContext| -> ::futures::future::BoxFuture<Result<Arc<dyn $crate::resolvers::Resolution>>> {
+                    factory: |$ctx: &$crate::resolvers::AsyncContext| -> $crate::resolvers::futures::future::BoxFuture<$crate::resolvers::Result<::std::sync::Arc<dyn $crate::resolvers::Resolution>>> {
                         Box::pin(async {
-                            $ctx.resolve(Self::resolver()).await.map(|ok| -> Arc<dyn $crate::resolvers::Resolution> { Arc::new(ok) })
+                            $ctx.resolve(Self::resolver()).await.map(|ok| -> ::std::sync::Arc<dyn $crate::resolvers::Resolution> { ::std::sync::Arc::new(ok) })
                         })
                     },
                 })
@@ -133,6 +137,7 @@ macro_rules! impl_resolver {
         }
     };
 }
+pub use _impl_resolver as impl_resolver;
 
 type AnyValue = Result<Arc<dyn Any + Send + Sync>>;
 
@@ -176,7 +181,7 @@ impl<'data> AsyncContext<'data> {
         }
         (tag, rx.await.unwrap())
     }
-    async fn resolve<'ctx, T: Send + Sync + 'static>(
+    pub async fn resolve<'ctx, T: Send + Sync + 'static>(
         &'ctx self,
         resolver: &ResolverFactory<T>,
     ) -> Result<Arc<T>> {

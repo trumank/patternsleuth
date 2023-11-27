@@ -4,8 +4,7 @@ use futures::{future::join_all, join, try_join, FutureExt};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    bail_out, impl_resolver,
-    resolvers::{Context, DynResolverFactory, Result},
+    resolvers::{bail_out, impl_resolver, Context, DynResolverFactory, Result},
     Addressable, Matchable, MemoryAccessorTrait,
 };
 
