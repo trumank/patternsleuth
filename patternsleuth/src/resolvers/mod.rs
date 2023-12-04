@@ -186,10 +186,10 @@ impl<'data> AsyncContext<'data> {
     pub fn image(&self) -> &Image<'_> {
         self.read.image
     }
-    async fn scan(&self, pattern: Pattern) -> Vec<usize> {
+    pub async fn scan(&self, pattern: Pattern) -> Vec<usize> {
         self.scan_tagged((), pattern).await.1
     }
-    async fn scan_tagged<T>(&self, tag: T, pattern: Pattern) -> (T, Vec<usize>) {
+    pub async fn scan_tagged<T>(&self, tag: T, pattern: Pattern) -> (T, Vec<usize>) {
         let (tx, rx) = oneshot::channel::<Vec<usize>>();
         {
             let mut lock = self.read.write.lock().unwrap();

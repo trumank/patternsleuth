@@ -133,8 +133,6 @@ impl_resolver!(ConsoleManagerSingleton, |ctx| async {
     ])
     .await;
 
-    dbg!(&strings);
-
     let refs = join_all(
         strings
             .into_iter()
