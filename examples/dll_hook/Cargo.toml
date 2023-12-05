@@ -12,6 +12,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = { workspace = true }
+bitflags = "2.4.1"
 eframe = "0.24.0"
 egui-winit = { version = "0.24.0", default-features = false }
 itertools.workspace = true

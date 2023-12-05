@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use std::sync::Arc;
+use std::{ffi::c_void, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use patternsleuth::resolvers::unreal::{ConsoleManagerSingleton, FNameToString, GUObjectArray};
@@ -81,31 +81,86 @@ fn setup() -> Result<PathBuf> {
 }
 
 #[derive(Debug)]
+pub struct StartRecordingReplay(usize);
+type FnStartRecordingReplay = unsafe extern "system" fn(
+    this: *const ue::UObject, // game instance
+    name: &ue::FString,
+    friendly_name: &ue::FString,
+    additional_options: &ue::TArray<ue::FString>,
+    analytics_provider: ue::TSharedPtr<c_void>,
+);
+impl StartRecordingReplay {
+    fn get(&self) -> FnStartRecordingReplay {
+        unsafe { std::mem::transmute(self.0) }
+    }
+}
+
+#[derive(Debug)]
+pub struct StopRecordingReplay(usize);
+type FnStopRecordingReplay = unsafe extern "system" fn(
+    this: *const ue::UObject, // game instance
+);
+impl StopRecordingReplay {
+    fn get(&self) -> FnStopRecordingReplay {
+        unsafe { std::mem::transmute(self.0) }
+    }
+}
+
+#[derive(Debug)]
 pub struct DllHookResolution {
+    start_recording_replay: Arc<StartRecordingReplay>,
+    stop_recording_replay: Arc<StopRecordingReplay>,
     guobject_array: Arc<GUObjectArray>,
     fnametostring: Arc<FNameToString>,
-    console_manager_singleton: Arc<ConsoleManagerSingleton>,
 }
 
 mod resolvers {
-    use super::DllHookResolution;
+    use crate::{DllHookResolution, StartRecordingReplay, StopRecordingReplay};
 
-    use patternsleuth::resolvers::{
-        futures::try_join,
-        unreal::{ConsoleManagerSingleton, FNameToString, GUObjectArray},
-        *,
+    use patternsleuth::{
+        resolvers::{
+            futures::{future::join_all, try_join},
+            unreal::{FNameToString, GUObjectArray},
+            *,
+        },
+        scanner::Pattern,
+        MemoryAccessorTrait,
     };
 
+    impl_resolver!(StartRecordingReplay, |ctx| async {
+        // public: virtual void __cdecl UGameInstance::StartRecordingReplay(class FString const &, class FString const &, class TArray<class FString, class TSizedDefaultAllocator<32> > const &, class TSharedPtr<class IAnalyticsProvider, 0>)
+        let patterns = [
+            "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56 48 83 EC 40 49 8B F1 49 8B E8 4C 8B F2 48 8B F9 E8 ?? ?? ?? 00 48 8B D8 48 85 C0 74 24 E8 ?? ?? ?? 00 48 85 C0 74 1A 4C 8D 48 ?? 48 63 40 ?? 3B 43 ?? 7F 0D 48 8B C8 48 8B 43 ?? 4C 39 0C C8 74 02 33 DB 48 8D 8F ?? 00 00 00 48 8B D3 E8"
+        ];
+
+        let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+        Ok(StartRecordingReplay(ensure_one(res.into_iter().flatten())?))
+    });
+
+    impl_resolver!(StopRecordingReplay, |ctx| async {
+        // public: virtual void __cdecl UGameInstance::StopRecordingReplay(void)
+        let patterns = [
+            "48 89 5C 24 08 57 48 83 EC 20 48 8B F9 E8 ?? ?? ?? 00 48 8B D8 48 85 C0 74 24 E8 ?? ?? ?? 00 48 85 C0 74 1A 48 8D 50 ?? 48 63 40 ?? 3B 43 ?? 7F 0D 48 8B C8 48 8B 43 ?? 48 39 14 C8 74 02 33 DB 48 8D 8F ?? 00 00 00 48 8B D3 E8 ?? ?? ?? 00 48 85 C0 74 08 48 8B C8 E8 ?? ?? ?? 00 48 8B 5C 24 30 48 83 C4"
+        ];
+
+        let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+        Ok(StopRecordingReplay(ensure_one(res.into_iter().flatten())?))
+    });
+
     impl_resolver!(DllHookResolution, |ctx| async {
-        let (guobject_array, fnametostring, console_manager_singleton) = try_join!(
+        let (start_recording_replay, stop_recording_replay, guobject_array, fnametostring) = try_join!(
+            ctx.resolve(StartRecordingReplay::resolver()),
+            ctx.resolve(StopRecordingReplay::resolver()),
             ctx.resolve(GUObjectArray::resolver()),
             ctx.resolve(FNameToString::resolver()),
-            ctx.resolve(ConsoleManagerSingleton::resolver()),
         )?;
         Ok(DllHookResolution {
+            start_recording_replay,
+            stop_recording_replay,
             guobject_array,
             fnametostring,
-            console_manager_singleton,
         })
     });
 }
@@ -121,9 +176,67 @@ unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
 
     info!("done executing");
 
-    std::thread::spawn(move || {
-        gui::main(resolution).unwrap();
-    });
+    if true {
+        std::thread::spawn(move || {
+            let guobjectarray = &*(resolution.guobject_array.0 as *const ue::FUObjectArray);
+            type FnFNameToString = unsafe extern "system" fn(&ue::FName, &mut ue::FString);
+
+            let fnametostring: FnFNameToString = std::mem::transmute(resolution.fnametostring.0);
+
+            loop {
+                info!("a");
+                let refs = guobjectarray
+                    .iter()
+                    .filter(|obj| {
+                        if let Some(obj) = obj {
+                            let mut name = ue::FString::default();
+                            fnametostring(&obj.NamePrivate, &mut name);
+                            name.to_os_string()
+                                .to_string_lossy()
+                                .to_ascii_lowercase()
+                                .contains(&"get")
+                        } else {
+                            false
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                for (i, obj) in refs.iter().enumerate() {
+                    if let Some(obj) = obj {
+                        let mut name = ue::FString::default();
+                        fnametostring(&obj.NamePrivate, &mut name);
+
+                        let mut class = ue::FString::default();
+                        fnametostring(
+                            &(&*obj.ClassPrivate)
+                                .UStruct
+                                .UField
+                                .UObject
+                                .UObjectBaseUtility
+                                .UObjectBase
+                                .NamePrivate,
+                            &mut class,
+                        );
+                        let class_os = class.to_os_string();
+                        let class = class_os.to_string_lossy();
+
+                        if class == "Function" {
+                            // TODO safe casting
+                            let s = &*((*obj as *const _) as *const ue::UStruct);
+                            if s.Script.num > 0 {
+                                info!("{:x?}", s.Script);
+                                info!("{i:10} {} {}", class, name.to_os_string().to_string_lossy(),);
+                            }
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        });
+    } else {
+        std::thread::spawn(move || {
+            gui::main(resolution).unwrap();
+        });
+    }
 
     Ok(())
 }
@@ -181,6 +294,121 @@ mod gui {
 
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.heading("My egui Application");
+
+                    ui.horizontal(|ui| {
+                        if ui.button("start record").clicked() {
+                            /*
+                            TArray<FString> Options;
+                            Options.Add("ReplayStreamerOverride=InMemoryNetworkReplayStreaming");
+                            StartRecordingReplay(NewName, NewName, Options);
+                            */
+
+                            let start_recording_replay =
+                                self.resolution.start_recording_replay.get();
+
+                            //std::thread::spawn(move || {
+                            let game_instance = guobjectarray
+                                .iter()
+                                .find_map(|obj| {
+                                    if let Some(obj) = obj.filter(|obj| {
+                                        obj.ObjectFlags.contains(ue::EObjectFlags::RF_Transient)
+                                    }) {
+                                        let mut name = ue::FString::default();
+                                        fnametostring(&obj.NamePrivate, &mut name);
+                                        name.to_os_string()
+                                            .to_string_lossy()
+                                            .contains("BP_GameInstance")
+                                            .then_some(obj)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap();
+                            info!("game_instance = {:?}", game_instance);
+
+                            let name = "test-demo".encode_utf16().collect::<Vec<u16>>();
+                            let fstr_name = ue::FString {
+                                data: name.as_ptr(),
+                                num: name.len() as i32,
+                                max: name.len() as i32,
+                            };
+
+                            let option1 = "ReplayStreamerOverride=LocalFileNetworkReplayStreaming"
+                                .encode_utf16()
+                                .collect::<Vec<u16>>();
+                            let fstr_option1 = ue::FString {
+                                data: option1.as_ptr(),
+                                num: option1.len() as i32,
+                                max: option1.len() as i32,
+                            };
+
+                            //let options = [fstr_option1];
+                            let options = [fstr_option1];
+                            // TODO BAD cause it gets mutated by UE
+                            let tarray_options = ue::TArray::<ue::FString> {
+                                data: options.as_ptr(),
+                                num: options.len() as i32,
+                                max: options.len() as i32,
+                            };
+
+                            let tarray_options = ue::TArray::<ue::FString> {
+                                data: std::ptr::null(),
+                                num: 0,
+                                max: 0,
+                            };
+
+                            let reference_controller = ue::FReferenceControllerBase {
+                                shared_reference_count: 0,
+                                weak_reference_count: 0,
+                            };
+
+                            info!("calling record {:?}", start_recording_replay);
+                            start_recording_replay(
+                                game_instance as *const ue::UObjectBase as *const ue::UObject,
+                                &fstr_name,
+                                &fstr_name,
+                                &tarray_options,
+                                ue::TSharedPtr {
+                                    object: std::ptr::null(),
+                                    reference_controller: &reference_controller,
+                                },
+                            );
+                            info!("done calling record");
+                            //});
+                        }
+
+                        if ui.button("stop record").clicked() {
+                            let stop_recording_replay = self.resolution.stop_recording_replay.get();
+
+                            //std::thread::spawn(move || {
+                            let game_instance = guobjectarray
+                                .iter()
+                                .find_map(|obj| {
+                                    if let Some(obj) = obj.filter(|obj| {
+                                        obj.ObjectFlags.contains(ue::EObjectFlags::RF_Transient)
+                                    }) {
+                                        let mut name = ue::FString::default();
+                                        fnametostring(&obj.NamePrivate, &mut name);
+                                        name.to_os_string()
+                                            .to_string_lossy()
+                                            .contains("BP_GameInstance")
+                                            .then_some(obj)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap();
+                            info!("game_instance = {:?}", game_instance);
+
+                            info!("calling stop {:?}", stop_recording_replay);
+                            stop_recording_replay(
+                                game_instance as *const ue::UObjectBase as *const ue::UObject,
+                            );
+                            info!("done calling stop");
+                            //});
+                        }
+                    });
+
                     ui.horizontal(|ui| {
                         let name_label = ui.label("Search: ");
                         ui.text_edit_singleline(&mut self.search)
@@ -229,7 +457,8 @@ mod gui {
                                     let mut name = ue::FString::default();
                                     fnametostring(&obj.NamePrivate, &mut name);
                                     ui.label(format!(
-                                        "{i:10} {}",
+                                        "{i:10} {:?} {}",
+                                        obj.ObjectFlags,
                                         name.to_os_string().to_string_lossy()
                                     ));
                                 } else {
@@ -246,7 +475,7 @@ mod gui {
 }
 
 mod ue {
-    use std::ffi::OsString;
+    use std::ffi::{c_void, OsString};
 
     #[derive(Debug)]
     #[repr(C)]
@@ -264,6 +493,8 @@ mod ue {
         /* offset 0x0088 */ //FWindowsCriticalSection UObjectDeleteListenersCritical;
         /* offset 0x00b0 */ //FThreadSafeCounter MasterSerialNumber;
     }
+    unsafe impl Send for FUObjectArray {}
+    unsafe impl Sync for FUObjectArray {}
     impl FUObjectArray {
         pub fn iter(&self) -> ObjectIterator<'_> {
             ObjectIterator {
@@ -332,9 +563,40 @@ mod ue {
         /* offset 0x0010 */ pub SerialNumber: i32,
     }
 
-    pub type EObjectFlags = u32; // TODO
-    pub type UClass = (); // TODO
-    pub type UObject = (); // TODO
+    bitflags::bitflags! {
+        #[derive(Debug, Clone)]
+        pub struct EObjectFlags: u32 {
+            const RF_NoFlags = 0x0000;
+            const RF_Public = 0x0001;
+            const RF_Standalone = 0x0002;
+            const RF_MarkAsNative = 0x0004;
+            const RF_Transactional = 0x0008;
+            const RF_ClassDefaultObject = 0x0010;
+            const RF_ArchetypeObject = 0x0020;
+            const RF_Transient = 0x0040;
+            const RF_MarkAsRootSet = 0x0080;
+            const RF_TagGarbageTemp = 0x0100;
+            const RF_NeedInitialization = 0x0200;
+            const RF_NeedLoad = 0x0400;
+            const RF_KeepForCooker = 0x0800;
+            const RF_NeedPostLoad = 0x1000;
+            const RF_NeedPostLoadSubobjects = 0x2000;
+            const RF_NewerVersionExists = 0x4000;
+            const RF_BeginDestroyed = 0x8000;
+            const RF_FinishDestroyed = 0x00010000;
+            const RF_BeingRegenerated = 0x00020000;
+            const RF_DefaultSubObject = 0x00040000;
+            const RF_WasLoaded = 0x00080000;
+            const RF_TextExportTransient = 0x00100000;
+            const RF_LoadCompleted = 0x00200000;
+            const RF_InheritableComponentTemplate = 0x00400000;
+            const RF_DuplicateTransient = 0x00800000;
+            const RF_StrongRefOnFrame = 0x01000000;
+            const RF_NonPIEDuplicateTransient = 0x02000000;
+            const RF_Dynamic = 0x04000000;
+            const RF_WillBeLoaded = 0x08000000;
+        }
+    }
 
     #[derive(Debug)]
     #[repr(C)]
@@ -345,6 +607,88 @@ mod ue {
         /* offset 0x0010 */ pub ClassPrivate: *const UClass,
         /* offset 0x0018 */ pub NamePrivate: FName,
         /* offset 0x0020 */ pub OuterPrivate: *const UObject,
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct UObjectBaseUtility {
+        pub UObjectBase: UObjectBase,
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct UObject {
+        pub UObjectBaseUtility: UObjectBaseUtility,
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct UField {
+        pub UObject: UObject,
+        pub Next: *const UField,
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct FStructBaseChain {
+        /* offset 0x0000 */ pub StructBaseChainArray: *const *const FStructBaseChain,
+        /* offset 0x0008 */ pub NumStructBasesInChainMinusOne: i32,
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct FField {
+        // TODO
+        /* offset 0x0008 */ //FFieldClass* ClassPrivate;
+        /* offset 0x0010 */ //FFieldVariant Owner;
+        /* offset 0x0020 */ //FField* Next;
+        /* offset 0x0028 */ //FName NamePrivate;
+        /* offset 0x0030 */ //EObjectFlags FlagsPrivate;
+    }
+
+    pub struct FProperty {
+        // TODO
+        /* offset 0x0000 */ //pub FField: FField,
+        /* offset 0x0038 */ //pub ArrayDim: i32,
+        /* offset 0x003c */ //pub ElementSize: i32,
+        /* offset 0x0040 */ //EPropertyFlags PropertyFlags;
+        /* offset 0x0048 */ //unhandled_primitive.kind /* UShort */ RepIndex;
+        /* offset 0x004a */ //TEnumAsByte<enum ELifetimeCondition> BlueprintReplicationCondition;
+        /* offset 0x004c */ //int32_t Offset_Internal;
+        /* offset 0x0050 */ //FName RepNotifyFunc;
+        /* offset 0x0058 */ //FProperty* PropertyLinkNext;
+        /* offset 0x0060 */ //FProperty* NextRef;
+        /* offset 0x0068 */ //FProperty* DestructorLinkNext;
+        /* offset 0x0070 */ //FProperty* PostConstructLinkNext;
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct UStruct {
+        /* offset 0x0000 */ pub UField: UField,
+        /* offset 0x0030 */ pub FStructBaseChain: FStructBaseChain,
+        /* offset 0x0040 */ pub SuperStruct: *const UStruct,
+        /* offset 0x0048 */ pub Children: *const UField,
+        /* offset 0x0050 */ pub ChildProperties: *const FField,
+        /* offset 0x0058 */ pub PropertiesSize: i32,
+        /* offset 0x005c */ pub MinAlignment: i32,
+        /* offset 0x0060 */ pub Script: TArray<u8>,
+        /* offset 0x0070 */ pub PropertyLink: *const FProperty,
+        /* offset 0x0078 */ pub RefLink: *const FProperty,
+        /* offset 0x0080 */ pub DestructorLink: *const FProperty,
+        /* offset 0x0088 */ pub PostConstructLink: *const FProperty,
+        /* offset 0x0090 */
+        pub ScriptAndPropertyObjectReferences: TArray<*const UObject>,
+        /* offset 0x00a0 */
+        pub UnresolvedScriptProperties: *const (), //TODO pub TArray<TTuple<TFieldPath<FField>,int>,TSizedDefaultAllocator<32> >*
+        /* offset 0x00a8 */
+        pub UnversionedSchema: *const (), //TODO const FUnversionedStructSchema*
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct UClass {
+        /* offset 0x0000 */ pub UStruct: UStruct,
     }
 
     #[derive(Debug)]
@@ -360,14 +704,28 @@ mod ue {
         /* offset 0x0000 */ pub Value: u32,
     }
 
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct TSharedPtr<T> {
+        pub object: *const T,
+        pub reference_controller: *const FReferenceControllerBase,
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct FReferenceControllerBase {
+        pub shared_reference_count: i32,
+        pub weak_reference_count: i32,
+    }
+
     pub type FString = TArray<u16>;
 
     #[derive(Debug)]
     #[repr(C)]
     pub struct TArray<T> {
-        data: *const T,
-        num: i32,
-        max: i32,
+        pub data: *const T,
+        pub num: i32,
+        pub max: i32,
     }
     impl<T> Default for TArray<T> {
         fn default() -> Self {
@@ -380,10 +738,18 @@ mod ue {
     }
     impl<T> TArray<T> {
         pub fn as_slice(&self) -> &[T] {
-            unsafe { std::slice::from_raw_parts(self.data, self.num as usize) }
+            if self.num == 0 {
+                &[]
+            } else {
+                unsafe { std::slice::from_raw_parts(self.data, self.num as usize) }
+            }
         }
         pub fn as_slice_mut(&mut self) -> &mut [T] {
-            unsafe { std::slice::from_raw_parts_mut(self.data as *mut _, self.num as usize) }
+            if self.num == 0 {
+                &mut []
+            } else {
+                unsafe { std::slice::from_raw_parts_mut(self.data as *mut _, self.num as usize) }
+            }
         }
         pub fn from_slice(slice: &[T]) -> TArray<T> {
             TArray {
