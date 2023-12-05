@@ -16,7 +16,12 @@ pub fn all() -> &'static [DynResolverFactoryGetter] {
             &[$( ( stringify!($name), $name::dyn_resolver ), )*]
         };
     }
-    inc!(KismetSystemLibrary, ConsoleManagerSingleton, FNameToString,)
+    inc!(
+        KismetSystemLibrary,
+        ConsoleManagerSingleton,
+        FNameToString,
+        UGameEngineTick,
+    )
 }
 
 #[derive(Debug)]
@@ -105,6 +110,30 @@ impl_resolver!(KismetSystemLibrary, |ctx| async {
     } else {
         bail_out!("did not match");
     }
+});
+
+#[derive(Debug)]
+pub struct UGameEngineTick(usize);
+
+impl_resolver!(UGameEngineTick, |ctx| async {
+    let strings = ctx
+        .scan(Pattern::from_bytes(b"EngineTickMisc\x00".to_vec()).unwrap())
+        .await;
+
+    let refs = join_all(
+        strings
+            .iter()
+            // TODO maybe mask out specific register
+            .map(|s| ctx.scan(Pattern::new(format!("48 8d 0d X0x{s:X}")).unwrap())),
+    )
+    .await;
+
+    let fns = refs
+        .into_iter()
+        .flatten()
+        .flat_map(|r| ctx.image().get_root_function(r).map(|f| f.range.start));
+
+    Ok(UGameEngineTick(ensure_one(fns)?))
 });
 
 #[derive(Debug)]
