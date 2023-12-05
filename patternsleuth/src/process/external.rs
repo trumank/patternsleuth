@@ -41,22 +41,15 @@ mod linux {
         let maps = std::fs::read_to_string(format!("/proc/{pid}/maps"))
             .with_context(|| format!("could not read process maps (PID={pid})"))?;
         for line in maps.lines() {
-            let mut split = line.split_whitespace();
-            if let (
-                Some(range),
-                Some(_permissions),
-                Some(_offset),
-                Some(_device),
-                Some(_inode),
-                Some(path),
-            ) = (
+            let mut split = line.splitn(6, |c: char| c.is_whitespace());
+            if let [Some(range), Some(_permissions), Some(_offset), Some(_device), Some(_inode), Some(path)] = [
                 split.next(),
                 split.next(),
                 split.next(),
                 split.next(),
                 split.next(),
-                split.remainder(),
-            ) {
+                split.next(),
+            ] {
                 if path.ends_with(".exe") {
                     let (start, end) = range
                         .split_once('-')

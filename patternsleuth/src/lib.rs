@@ -1,5 +1,3 @@
-#![feature(portable_simd, str_split_whitespace_remainder)]
-
 #[cfg(feature = "patterns")]
 pub mod patterns;
 pub mod process;

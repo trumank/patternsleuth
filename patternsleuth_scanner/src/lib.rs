@@ -1,5 +1,3 @@
-#![feature(portable_simd)]
-
 use anyhow::{bail, Context, Error, Result};
 
 #[derive(Clone, Eq, PartialEq)]
