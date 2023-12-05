@@ -240,19 +240,31 @@ impl<'a, S: std::fmt::Debug + PartialEq> ScanResult<'a, S> {
     }
 }
 
-pub struct ImageBuilder<P: AsRef<Path>> {
+#[derive(Default)]
+pub struct ImageBuilder {
+    functions: bool,
+}
+pub struct ImageBuilderWithSymbols<P: AsRef<Path>> {
     symbols: Option<P>,
     functions: bool,
 }
-impl<P: AsRef<Path>> Default for ImageBuilder<P> {
-    fn default() -> Self {
-        Self {
-            symbols: None,
-            functions: false,
+impl ImageBuilder {
+    pub fn functions(mut self, functions: bool) -> Self {
+        self.functions = functions;
+        self
+    }
+    #[cfg(feature = "symbols")]
+    pub fn symbols<P: AsRef<Path>>(self, exe_path: P) -> ImageBuilderWithSymbols<P> {
+        ImageBuilderWithSymbols {
+            symbols: Some(exe_path),
+            functions: self.functions,
         }
     }
+    pub fn build(self, data: &[u8]) -> Result<Image<'_>> {
+        Image::read::<&str>(data, None, self.functions)
+    }
 }
-impl<P: AsRef<Path>> ImageBuilder<P> {
+impl<P: AsRef<Path>> ImageBuilderWithSymbols<P> {
     pub fn functions(mut self, functions: bool) -> Self {
         self.functions = functions;
         self
@@ -275,7 +287,7 @@ pub struct Image<'data> {
     pub symbols: Option<HashMap<usize, String>>,
 }
 impl<'data> Image<'data> {
-    pub fn builder<P: AsRef<Path>>() -> ImageBuilder<P> {
+    pub fn builder() -> ImageBuilder {
         Default::default()
     }
     fn read<P: AsRef<Path>>(

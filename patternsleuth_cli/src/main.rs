@@ -281,11 +281,14 @@ fn scan(command: CommandScan) -> Result<()> {
                 bin_data = Some(fs::read(exe_path)?);
 
                 (Cow::Borrowed(name), {
-                    let mut builder = Image::builder().functions(!command.skip_exceptions);
-                    if command.symbols {
-                        builder = builder.symbols(exe_path);
-                    }
-                    match builder.build(bin_data.as_ref().unwrap()) {
+                    let bin_data = bin_data.as_ref().unwrap();
+                    let builder = Image::builder().functions(!command.skip_exceptions);
+                    let exe = if command.symbols {
+                        builder.symbols(exe_path).build(bin_data)
+                    } else {
+                        builder.build(bin_data)
+                    };
+                    match exe {
                         Ok(exe) => exe,
                         Err(err) => {
                             output.println(format!("err reading {}: {}", exe_path.display(), err));

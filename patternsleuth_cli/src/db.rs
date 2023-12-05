@@ -168,7 +168,7 @@ pub(crate) fn auto_gen(_command: CommandAutoGen) -> Result<()> {
 
         let bin_data = fs::read(&exe_path)?;
 
-        let exe = match Image::builder::<&str>().build(&bin_data) {
+        let exe = match Image::builder().build(&bin_data) {
             Ok(exe) => exe,
             Err(err) => {
                 println!("err reading {}: {}", exe_path.display(), err);
