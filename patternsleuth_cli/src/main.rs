@@ -5,8 +5,9 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use indicatif::ProgressBar;
 use itertools::Itertools;
@@ -131,10 +132,38 @@ struct CommandSearchIndex {
     symbol: String,
 }
 
+#[derive(Debug, Clone)]
+struct FunctionSpec {
+    path: String,
+    start: usize,
+    end: usize,
+}
+impl FromStr for FunctionSpec {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let mut iter = s.split(':');
+        if let (Some(path), Some(start), Some(end), None) =
+            (iter.next(), iter.next(), iter.next(), iter.next())
+        {
+            Ok(FunctionSpec {
+                path: path.to_owned(),
+                start: parse_maybe_hex(start)?,
+                end: parse_maybe_hex(end)?,
+            })
+        } else {
+            bail!("failed to parse function definition: expected format <path.exe>:<start>:<end>")
+        }
+    }
+}
+
 #[derive(Parser)]
 struct CommandViewSymbol {
-    #[arg()]
-    symbol: String,
+    #[arg(short, long)]
+    symbol: Vec<String>,
+
+    #[arg(short, long)]
+    function: Vec<FunctionSpec>,
 
     /// Whether to show symbols in function disassembly
     #[arg(long)]

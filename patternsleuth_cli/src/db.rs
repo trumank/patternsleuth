@@ -243,40 +243,52 @@ pub(crate) fn auto_gen(_command: CommandAutoGen) -> Result<()> {
 }
 
 pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
-    println!("{:?}", command.symbol);
+    println!("symbols={:?}", command.symbol);
     let conn = Connection::open("data.db")?;
 
-    struct SqlFunction {
+    struct Function {
         game: String,
         address: usize,
         data: Vec<u8>,
     }
 
-    let mut stmt = conn.prepare("SELECT game, address, data FROM functions JOIN symbols USING(game, address) WHERE symbol = ?1")?;
-    let rows = stmt.query_map((&command.symbol,), |row| {
-        Ok(SqlFunction {
-            game: row.get(0)?,
-            address: row.get(1)?,
-            data: row.get(2)?,
-        })
-    })?;
-
-    fn count_unequal<T: PartialEq>(a: &[T], b: &[T]) -> usize {
-        a.iter().zip(b).filter(|(a, b)| a != b).count() + a.len().abs_diff(b.len())
-    }
-
-    struct Function {
+    struct IndexedFunction {
         index: usize,
-        sql: SqlFunction,
+        function: Function,
     }
 
     let mut functions = vec![];
+    for symbol in command.symbol {
+        let mut stmt = conn.prepare("SELECT game, address, data FROM functions JOIN symbols USING(game, address) WHERE symbol = ?1")?;
+        for row in stmt.query_map((&symbol,), |row| {
+            Ok(Function {
+                game: row.get(0)?,
+                address: row.get(1)?,
+                data: row.get(2)?,
+            })
+        })? {
+            functions.push(IndexedFunction {
+                index: functions.len(),
+                function: row?,
+            })
+        }
+    }
 
-    for row in rows {
-        let sql = row?;
+    for function in command.function {
+        let data = fs::read(&function.path)?;
+        let img = Image::builder().build(&data).unwrap();
+        functions.push(IndexedFunction {
+            index: functions.len(),
+            function: Function {
+                game: function.path,
+                address: function.start,
+                data: img.memory[function.start..function.end].to_vec(),
+            },
+        });
+    }
 
-        let index = functions.len();
-        functions.push(Function { index, sql });
+    fn count_unequal<T: PartialEq>(a: &[T], b: &[T]) -> usize {
+        a.iter().zip(b).filter(|(a, b)| a != b).count() + a.len().abs_diff(b.len())
     }
 
     if !functions.is_empty() {
@@ -299,8 +311,8 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
         let mut distances = HashMap::new();
         for (
             a_i,
-            Function {
-                sql: SqlFunction { data: a, .. },
+            IndexedFunction {
+                function: Function { data: a, .. },
                 ..
             },
         ) in functions.iter().enumerate()
@@ -308,8 +320,8 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
             //let mut cells = vec![Cell::new(&a_i.to_string())];
             for (
                 b_i,
-                Function {
-                    sql: SqlFunction { data: b, .. },
+                IndexedFunction {
+                    function: Function { data: b, .. },
                     ..
                 },
             ) in functions.iter().enumerate()
@@ -364,7 +376,7 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
         for function in &functions {
             println!(
                 "{:2} {:08X} {}",
-                function.index, function.sql.address, function.sql.game
+                function.index, function.function.address, function.function.game
             );
         }
 
@@ -372,7 +384,7 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
             if let Some(pattern) = build_common_pattern(
                 group
                     .iter()
-                    .map(|f| &f.sql.data[..f.sql.data.len().min(max)])
+                    .map(|f| &f.function.data[..f.function.data.len().min(max)])
                     .collect::<Vec<_>>(),
             ) {
                 println!("{}", pattern);
@@ -381,7 +393,7 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
                     "{:#?}",
                     group
                         .iter()
-                        .map(|f| &f.sql.game)
+                        .map(|f| &f.function.game)
                         .sorted()
                         .collect::<Vec<_>>()
                 );
@@ -395,21 +407,21 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
 
         for (group, pattern) in groups.iter().zip(patterns) {
             let mut table = Table::new();
-            table.set_titles(group.iter().map(|f| &f.sql.game).collect());
+            table.set_titles(group.iter().map(|f| &f.function.game).collect());
             table.add_row(Row::new(
                 group
                     .iter()
                     .map(|f| {
                         Cell::new(&disassemble::disassemble_bytes_with_symbols(
-                            f.sql.address,
-                            &f.sql.data,
+                            f.function.address,
+                            &f.function.data,
                             Some(&Pattern::new(&pattern).unwrap()),
                             |address| -> Option<String> {
                                 command.show_symbols.then(||
                                 conn
                                     .query_row_and_then(
                                         "SELECT symbol FROM symbols WHERE game = ?1 AND address = ?2",
-                                        (&f.sql.game, address),
+                                        (&f.function.game, address),
                                         |row| row.get(0).optional(),
                                     )
                                     .ok()
