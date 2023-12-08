@@ -113,7 +113,7 @@ impl_resolver!(KismetSystemLibrary, |ctx| async {
 });
 
 #[derive(Debug)]
-pub struct UGameEngineTick(usize);
+pub struct UGameEngineTick(pub usize);
 
 impl_resolver!(UGameEngineTick, |ctx| async {
     let strings = ctx
