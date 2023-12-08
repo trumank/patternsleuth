@@ -8,24 +8,6 @@ use crate::{
     Addressable, Matchable, MemoryAccessorTrait,
 };
 
-use super::DynResolverFactoryGetter;
-
-pub fn all() -> &'static [DynResolverFactoryGetter] {
-    macro_rules! inc {
-        ( $( $name:ident , )* ) => {
-            &[$( ( stringify!($name), $name::dyn_resolver ), )*]
-        };
-    }
-    inc!(
-        KismetSystemLibrary,
-        ConsoleManagerSingleton,
-        FNameToString,
-        UGameEngineTick,
-        FFrameStep,
-        FFrameStepExplicitProperty,
-    )
-}
-
 #[derive(Debug)]
 pub struct GUObjectArray(pub usize);
 impl_resolver!(GUObjectArray, |ctx| async {

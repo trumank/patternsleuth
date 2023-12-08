@@ -12,7 +12,7 @@ use clap::Parser;
 use indicatif::ProgressBar;
 use itertools::Itertools;
 use patricia_tree::StringPatriciaMap;
-use patternsleuth::resolvers::{resolve_self, unreal, DynResolverFactory};
+use patternsleuth::resolvers::{resolve_self, resolvers, NamedResolver};
 use patternsleuth::Image;
 
 use patternsleuth::scanner::Xref;
@@ -37,13 +37,9 @@ fn parse_maybe_hex(s: &str) -> Result<usize> {
         .unwrap_or_else(|| s.parse())?)
 }
 
-type NamedResolver = (&'static str, fn() -> &'static DynResolverFactory);
-
-fn parse_resolver(s: &str) -> Result<NamedResolver> {
-    unreal::all()
-        .iter()
-        .find(|(name, _r)| s == *name)
-        .copied()
+fn parse_resolver(s: &str) -> Result<&'static NamedResolver> {
+    resolvers()
+        .find(|res| s == res.name)
         .context("Resolver not found")
 }
 
@@ -64,7 +60,7 @@ struct CommandScan {
 
     /// A resolver to scan for (can be specified multiple times)
     #[arg(short, long, value_parser(|s: &_| parse_resolver(s)))]
-    resolver: Vec<NamedResolver>,
+    resolver: Vec<&'static NamedResolver>,
 
     /// Show disassembly context for each stage of every match (I recommend only using with
     /// aggressive filters)
@@ -250,7 +246,7 @@ fn scan(command: CommandScan) -> Result<()> {
     let resolvers = command
         .resolver
         .into_iter()
-        .map(|(_name, r)| r)
+        .map(|res| res.getter)
         .collect::<Vec<_>>();
 
     let sigs = patterns

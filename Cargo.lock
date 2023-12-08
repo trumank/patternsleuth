@@ -1877,6 +1877,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0508c56cfe9bfd5dfeb0c22ab9a6abfda2f27bdca422132e494266351ed8d83c"
+
+[[package]]
 name = "io-lifetimes"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2545,6 +2551,7 @@ dependencies = [
  "futures",
  "futures-scopes",
  "iced-x86",
+ "inventory",
  "libc",
  "memchr",
  "msvc-demangler",

@@ -109,7 +109,15 @@ impl<T> Context<T> for Option<T> {
     }
 }
 
-type DynResolverFactoryGetter = (&'static str, fn() -> &'static DynResolverFactory);
+pub struct NamedResolver {
+    pub name: &'static str,
+    pub getter: fn() -> &'static DynResolverFactory,
+}
+
+inventory::collect!(NamedResolver);
+pub fn resolvers() -> impl Iterator<Item = &'static NamedResolver> {
+    inventory::iter::<NamedResolver>()
+}
 
 type DynResolver<'ctx> = BoxFuture<'ctx, Result<Arc<dyn Resolution>>>;
 type Resolver<'ctx, T> = BoxFuture<'ctx, Result<T>>;
@@ -129,6 +137,10 @@ pub use ::futures;
 #[macro_export]
 macro_rules! _impl_resolver {
     ( $name:ident, |$ctx:ident| async $x:block ) => {
+        inventory::submit! {
+            $crate::resolvers::NamedResolver { name: stringify!($name), getter: $name::dyn_resolver }
+        }
+
         impl $name {
             pub fn resolver() -> &'static $crate::resolvers::ResolverFactory<$name> {
                 static GLOBAL: ::std::sync::OnceLock<&$crate::resolvers::ResolverFactory<$name>> = ::std::sync::OnceLock::new();
