@@ -109,6 +109,38 @@ impl_resolver!(FFrameStepExplicitProperty, |ctx| async {
     )?))
 });
 
+/// public: static void __cdecl UKismetStringLibrary::execLen(class UObject *, struct FFrame &, void *const)
+/// public: void __cdecl UKismetStringLibrary::execLen(struct FFrame &, void *const)
+#[derive(Debug, PartialEq)]
+struct FFrameStepViaExec {
+    pub step: usize,
+    pub step_explicit_property: usize,
+}
+impl_resolver!(FFrameStepViaExec, |ctx| async {
+    let patterns = [
+        "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC ?? 33 FF 33 C0 49 8B F0 48 8B DA 48 8B CA 48 89 7C 24 20 48 89 7C 24 28 48 39 42 20 74 10 48 8B 52 18 4C 8D 44 24 20 E8 [ ?? ?? ?? ?? ] EB 1C 4C 8B 82 80 00 00 00 49 8B 40 ?? 48 89 82 80 00 00 00 48 8D 54 24 20 E8 [ ?? ?? ?? ?? ] 48 8B 43 20 48 8D 4C 24 20 48 85 C0",
+        "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC ?? 33 FF 49 8B F0 48 8B DA 48 89 7C 24 20 48 ?? ?? ?? ?? ?? ?? ?? 48 39 7A 20 74 10 48 8B 52 18 4C 8D 44 24 20 E8 [ ?? ?? ?? ?? ] EB 1C 4C 8B 82 80 00 00 00 49 8B 40 ?? 48 89 82 80 00 00 00 48 8D 54 24 20 E8 [ ?? ?? ?? ?? ] 48 8B 43 20 48 8D 4C 24 20 48 85 C0 40 0F",
+        "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 30 33 ?? 49 8B F0 48 89 ?? 24 20 48 8B ?? 48 89 ?? 24 28 E8 [ ?? ?? ?? ?? ] 48 8B ?? 48 39 ?? 20 74 10 48 8B ?? 18 4C 8D 44 24 20 E8 ?? ?? ?? ?? EB 1C 4C 8B ?? ?? 00 00 00 48 8D 54 24 20 49 8B 40 20 48 89 ?? ?? 00 00 00 E8 [ ?? ?? ?? ?? ] 48 8B ?? 20 48",
+    ];
+
+    let res = join_all(
+        patterns
+            .iter()
+            .map(|p| ctx.scan_tagged((), Pattern::new(p).unwrap())),
+    )
+    .await;
+
+    ensure_one(res.into_iter().flat_map(|(_, pattern, addresses)| {
+        ensure_one(addresses.iter().map(|a| {
+            let caps = ctx.image().memory.captures(&pattern, *a).unwrap();
+            FFrameStepViaExec {
+                step: caps[0].rip(),
+                step_explicit_property: caps[1].rip(),
+            }
+        }))
+    }))
+});
+
 /// public: static bool __cdecl UGameplayStatics::SaveGameToSlot(class USaveGame *, class FString const &, int)
 #[derive(Debug)]
 pub struct UGameplayStaticsSaveGameToSlot(pub usize);
