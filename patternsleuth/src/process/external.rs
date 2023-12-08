@@ -125,11 +125,94 @@ pub use windows::*;
 
 #[cfg(windows)]
 mod windows {
-    use anyhow::Result;
+    use anyhow::{bail, Context, Result};
+    use object::{Object, ObjectSection};
 
-    use crate::Image;
+    use crate::{Image, Memory};
+
+    use windows::Win32::Foundation::HMODULE;
+    use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows::Win32::System::ProcessStatus::{
+        EnumProcessModules, GetModuleInformation, MODULEINFO,
+    };
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+    };
 
     pub fn read_image_from_pid<'data>(pid: i32) -> Result<Image<'data>> {
-        todo!()
+        let memory = unsafe {
+            let process = OpenProcess(
+                PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
+                false,
+                pid as u32,
+            )?;
+
+            let mut modules = [Default::default(); 1];
+            let mut out_len = 0;
+            EnumProcessModules(
+                process,
+                modules.as_mut_ptr(),
+                (modules.len() * std::mem::size_of::<HMODULE>()) as u32,
+                &mut out_len,
+            )?;
+
+            if out_len < 1 {
+                bail!("expected at least one module");
+            }
+
+            let mut info = MODULEINFO::default();
+            GetModuleInformation(
+                process,
+                modules[0],
+                &mut info,
+                std::mem::size_of::<MODULEINFO>() as u32,
+            )?;
+
+            let mut mem = vec![0u8; info.SizeOfImage as usize];
+            ReadProcessMemory(
+                process,
+                info.lpBaseOfDll,
+                mem.as_mut_ptr() as *mut std::ffi::c_void,
+                mem.len(),
+                None,
+            )?;
+
+            mem
+        };
+
+        let object = object::File::parse(memory.as_slice())?;
+
+        let base_address = object.relative_address_base() as usize;
+        let exception_directory_range = match object {
+            object::File::Pe64(ref inner) => {
+                let exception_directory = inner
+                    .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
+                    .context("no exception directory")?;
+
+                let (address, size) = exception_directory.address_range();
+                base_address + address as usize..base_address + (address + size) as usize
+            }
+            _ => 0..0,
+        };
+
+        let mut sections = vec![];
+        for section in object.sections() {
+            let mut data = vec![0; section.size() as usize];
+            let start = section.address() as usize - object.relative_address_base() as usize;
+            let end = section.size() as usize + start;
+            // TODO avoid this copy and re-allocation
+            data.copy_from_slice(&memory[start..end]);
+            sections.push((section, data));
+        }
+
+        let memory = Memory::new_external_data(sections)?;
+
+        Ok(Image {
+            base_address,
+            exception_directory_range,
+            exception_children_cache: Default::default(),
+            memory,
+            symbols: Default::default(),
+        })
     }
 }

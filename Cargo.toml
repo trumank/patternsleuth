@@ -32,3 +32,4 @@ prettytable-rs = "0.10.0"
 rayon = "1.7.0"
 regex = "1.9.3"
 strum = {version = "0.25.0", features = ["strum_macros", "derive"]}
+windows = { version = "0.52.0" }

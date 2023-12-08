@@ -39,7 +39,7 @@ mod windows {
                 main_module,
                 &mut mod_info as *mut _,
                 std::mem::size_of::<MODULEINFO>() as u32,
-            )
+            )?
         };
 
         let module_addr = mod_info.lpBaseOfDll as usize;
