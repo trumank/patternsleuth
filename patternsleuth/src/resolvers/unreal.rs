@@ -1,11 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
 use futures::{future::join_all, try_join};
+use iced_x86::{Code, Decoder, DecoderOptions, Instruction, Register};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
     resolvers::{bail_out, ensure_one, impl_resolver},
-    Addressable, Matchable, MemoryAccessorTrait,
+    Addressable, Matchable, MemoryAccessorTrait, MemoryTrait,
 };
 
 #[derive(Debug)]
@@ -37,6 +38,45 @@ impl_resolver!(FNameToString, |ctx| async {
     Ok(FNameToString(ensure_one(
         res.iter().flatten().map(|a| ctx.image().memory.rip4(*a)),
     )?))
+});
+
+/// public: void __cdecl UObject::SkipFunction(struct FFrame &, void *const, class UFunction *)
+#[derive(Debug)]
+pub struct UObjectSkipFunction(pub usize);
+impl_resolver!(UObjectSkipFunction, |ctx| async {
+    let patterns = [
+        "40 55 41 54 41 55 41 56 41 57 48 83 EC 30 48 8D 6C 24 20 48 89 5D 40 48 89 75 48 48 89 7D 50 48 8B 05 ?? ?? ?? ?? 48 33 C5 48 89 45 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 4D 8B ?? ?? 8B ?? 85 ?? 75 05 41 8B FC EB ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 ?? E0",
+    ];
+
+    let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+    Ok(UObjectSkipFunction(ensure_one(res.into_iter().flatten())?))
+});
+
+// GNatives
+#[derive(Debug)]
+pub struct GNatives(pub usize);
+impl_resolver!(GNatives, |ctx| async {
+    let skip_function = ctx.resolve(UObjectSkipFunction::resolver()).await?;
+    let bytes = ctx.image().memory.range_from(skip_function.0..);
+
+    let mut decoder = Decoder::with_ip(
+        64,
+        &bytes[0..bytes.len().min(500)],
+        skip_function.0 as u64,
+        DecoderOptions::NONE,
+    );
+
+    // TODO recursive decode candidate
+    let mut instruction = Instruction::default();
+    while decoder.can_decode() {
+        decoder.decode_out(&mut instruction);
+        if instruction.code() == Code::Lea_r64_m && instruction.memory_base() == Register::RIP {
+            return Ok(GNatives(instruction.memory_displacement64() as usize));
+        }
+    }
+
+    bail_out!("failed to not find LEA instruction");
 });
 
 /// public: void __cdecl FFrame::Step(class UObject *, void *const)
