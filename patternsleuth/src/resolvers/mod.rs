@@ -173,7 +173,7 @@ type AnyValue = Result<Arc<dyn Any + Send + Sync>>;
 struct AsyncContextInnerWrite {
     resolvers: HashMap<TypeId, AnyValue>,
     pending_resolvers: HashMap<TypeId, Vec<oneshot::Sender<AnyValue>>>,
-    queue: Vec<(Pattern, oneshot::Sender<Vec<usize>>)>,
+    queue: Vec<(Pattern, oneshot::Sender<(Pattern, Vec<usize>)>)>,
 }
 
 struct AsyncContextInnerRead<'data> {
@@ -199,15 +199,16 @@ impl<'data> AsyncContext<'data> {
         self.read.image
     }
     pub async fn scan(&self, pattern: Pattern) -> Vec<usize> {
-        self.scan_tagged((), pattern).await.1
+        self.scan_tagged((), pattern).await.2
     }
-    pub async fn scan_tagged<T>(&self, tag: T, pattern: Pattern) -> (T, Vec<usize>) {
-        let (tx, rx) = oneshot::channel::<Vec<usize>>();
+    pub async fn scan_tagged<T>(&self, tag: T, pattern: Pattern) -> (T, Pattern, Vec<usize>) {
+        let (tx, rx) = oneshot::channel::<(Pattern, Vec<usize>)>();
         {
             let mut lock = self.read.write.lock().unwrap();
             lock.queue.push((pattern, tx));
         }
-        (tag, rx.await.unwrap())
+        let (pattern, results) = rx.await.unwrap();
+        (tag, pattern, results)
     }
     pub async fn resolve<'ctx, T: Send + Sync + 'static>(
         &'ctx self,
@@ -310,8 +311,8 @@ where
                     }
                 }
 
-                for (rx, results) in all_results {
-                    rx.send(results).unwrap();
+                for ((rx, results), pattern) in all_results.into_iter().zip(patterns) {
+                    rx.send((pattern, results)).unwrap();
                 }
             }
         }
