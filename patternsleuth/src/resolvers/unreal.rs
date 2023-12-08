@@ -21,6 +21,8 @@ pub fn all() -> &'static [DynResolverFactoryGetter] {
         ConsoleManagerSingleton,
         FNameToString,
         UGameEngineTick,
+        FFrameStep,
+        FFrameStepExplicitProperty,
     )
 }
 
@@ -52,6 +54,36 @@ impl_resolver!(FNameToString, |ctx| async {
 
     Ok(FNameToString(ensure_one(
         res.iter().flatten().map(|a| ctx.image().memory.rip4(*a)),
+    )?))
+});
+
+/// public: void __cdecl FFrame::Step(class UObject *, void *const)
+#[derive(Debug)]
+pub struct FFrameStep(pub usize);
+impl_resolver!(FFrameStep, |ctx| async {
+    let patterns = [
+        "48 8B 41 20 4C 8B D2 48 8B D1 44 0F B6 08 48 FF C0 48 89 41 20 41 8B C1 4C 8D 0D ?? ?? ?? ?? 49 8B CA 49 FF 24 C1",
+    ];
+
+    let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+    Ok(FFrameStep(ensure_one(res.into_iter().flatten())?))
+});
+
+/// public: void __cdecl FFrame::StepExplicitProperty(void *const, class FProperty *)
+/// public: void __cdecl FFrame::StepExplicitProperty(void *const, class UProperty *)
+#[derive(Debug)]
+pub struct FFrameStepExplicitProperty(pub usize);
+impl_resolver!(FFrameStepExplicitProperty, |ctx| async {
+    let patterns = [
+         "41 8B 40 40 4D 8B C8 4C 8B D1 48 0F BA E0 08 73 ?? 48 8B ?? ?? ?? ?? 00 ?? ?? ?? ?? ?? ?? ?? 00 48 8B 40 10 4C 39 08 75 F7 48 8B 48 08 49 89 4A 38 ?? ?? ?? 40 ?? ?? ?? ?? ?? 4C ?? 41 ?? 49",
+         "48 89 5C 24 ?? 48 89 ?? 24 ?? 57 48 83 EC 20 41 8B 40 40 49 8B D8 48 8B ?? 48 8B F9 48 0F BA E0 08 73 ?? 48 8B ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 8B 40 10 48 39 18 75 F7 48 8B ?? 08 48 89 ?? 38 48",
+    ];
+
+    let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+    Ok(FFrameStepExplicitProperty(ensure_one(
+        res.into_iter().flatten(),
     )?))
 });
 
