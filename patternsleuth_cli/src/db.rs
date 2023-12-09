@@ -287,38 +287,40 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
         .map(|res| res.getter)
         .collect::<Vec<_>>();
 
-    let mut games: HashSet<String> = Default::default();
+    if !resolvers.is_empty() {
+        let mut games: HashSet<String> = Default::default();
 
-    for game in crate::get_games([])? {
-        #[allow(unused_assignments)]
-        let mut bin_data = None;
+        for game in crate::get_games([])? {
+            #[allow(unused_assignments)]
+            let mut bin_data = None;
 
-        let GameFileEntry { name, exe_path } = game;
+            let GameFileEntry { name, exe_path } = game;
 
-        bin_data = Some(fs::read(&exe_path)?);
+            bin_data = Some(fs::read(&exe_path)?);
 
-        let exe = {
-            let bin_data = bin_data.as_ref().unwrap();
-            match Image::builder().functions(false).build(bin_data) {
-                Ok(exe) => exe,
-                Err(err) => {
-                    println!("err reading {}: {err}", exe_path.display());
-                    continue;
+            let exe = {
+                let bin_data = bin_data.as_ref().unwrap();
+                match Image::builder().functions(false).build(bin_data) {
+                    Ok(exe) => exe,
+                    Err(err) => {
+                        println!("err reading {}: {err}", exe_path.display());
+                        continue;
+                    }
                 }
+            };
+
+            games.insert(name.to_string());
+
+            let resolution = exe.resolve_many(&resolvers);
+            println!("{resolution:#x?}");
+            for res in resolution.into_iter().flatten() {
+                let start = res.get().unwrap();
+                functions.push(Function {
+                    game: exe_path.to_string_lossy().to_string(),
+                    address: start,
+                    data: exe.memory[start..start + 100].to_vec(),
+                });
             }
-        };
-
-        games.insert(name.to_string());
-
-        let resolution = exe.resolve_many(&resolvers);
-        println!("{resolution:#x?}");
-        for res in resolution.into_iter().flatten() {
-            let start = res.get().unwrap();
-            functions.push(Function {
-                game: exe_path.to_string_lossy().to_string(),
-                address: start,
-                data: exe.memory[start..start + 100].to_vec(),
-            });
         }
     }
 
