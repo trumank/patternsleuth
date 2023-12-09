@@ -228,7 +228,14 @@ where
         address + data.len()
     ));
 
-    output.buffer.push('\n');
+    if let Some(symbol) = symbols(address) {
+        #[allow(clippy::unnecessary_to_owned)]
+        output
+            .buffer
+            .push_str(&format!("{}", symbol.bright_yellow().to_owned()));
+    }
+
+    output.buffer.push_str("\n\n");
 
     let mut formatter = IntelFormatter::new();
     formatter.options_mut().set_first_operand_char_index(8);

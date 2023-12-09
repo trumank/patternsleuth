@@ -267,25 +267,66 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
                 data: row.get(2)?,
             })
         })? {
-            functions.push(IndexedFunction {
-                index: functions.len(),
-                function: row?,
-            })
+            functions.push(row?)
         }
     }
 
     for function in command.function {
         let data = fs::read(&function.path)?;
         let img = Image::builder().build(&data).unwrap();
-        functions.push(IndexedFunction {
-            index: functions.len(),
-            function: Function {
-                game: function.path,
-                address: function.start,
-                data: img.memory[function.start..function.end].to_vec(),
-            },
+        functions.push(Function {
+            game: function.path,
+            address: function.start,
+            data: img.memory[function.start..function.end].to_vec(),
         });
     }
+
+    let resolvers = command
+        .resolver
+        .into_iter()
+        .map(|res| res.getter)
+        .collect::<Vec<_>>();
+
+    let mut games: HashSet<String> = Default::default();
+
+    for game in crate::get_games([])? {
+        #[allow(unused_assignments)]
+        let mut bin_data = None;
+
+        let GameFileEntry { name, exe_path } = game;
+
+        bin_data = Some(fs::read(&exe_path)?);
+
+        let exe = {
+            let bin_data = bin_data.as_ref().unwrap();
+            match Image::builder().functions(false).build(bin_data) {
+                Ok(exe) => exe,
+                Err(err) => {
+                    println!("err reading {}: {err}", exe_path.display());
+                    continue;
+                }
+            }
+        };
+
+        games.insert(name.to_string());
+
+        let resolution = exe.resolve_many(&resolvers);
+        println!("{resolution:#x?}");
+        for res in resolution.into_iter().flatten() {
+            let start = res.get().unwrap();
+            functions.push(Function {
+                game: exe_path.to_string_lossy().to_string(),
+                address: start,
+                data: exe.memory[start..start + 100].to_vec(),
+            });
+        }
+    }
+
+    let mut functions = functions
+        .into_iter()
+        .enumerate()
+        .map(|(index, function)| IndexedFunction { index, function })
+        .collect::<Vec<_>>();
 
     fn count_unequal<T: PartialEq>(a: &[T], b: &[T]) -> usize {
         a.iter().zip(b).filter(|(a, b)| a != b).count() + a.len().abs_diff(b.len())

@@ -122,8 +122,8 @@ pub fn resolvers() -> impl Iterator<Item = &'static NamedResolver> {
 type DynResolver<'ctx> = BoxFuture<'ctx, Result<Arc<dyn Resolution>>>;
 type Resolver<'ctx, T> = BoxFuture<'ctx, Result<T>>;
 
-pub trait Resolution: std::fmt::Debug + Send + Sync {}
-impl<T: std::fmt::Debug + Send + Sync> Resolution for T {}
+pub trait Resolution: std::fmt::Debug + std::any::Any + Send + Sync + Singleton {}
+impl<T: std::fmt::Debug + std::any::Any + Send + Sync + Singleton> Resolution for T {}
 pub struct DynResolverFactory {
     pub factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> DynResolver<'ctx>,
 }
@@ -137,6 +137,30 @@ pub use ::inventory;
 
 #[macro_export]
 macro_rules! _impl_resolver {
+    ( $name:ident, |$ctx:ident| async $x:block ) => {
+        $crate::_impl_resolver_inner!($name, |$ctx| async $x);
+
+        impl $crate::resolvers::Singleton for ::std::sync::Arc<$name> {
+            fn get(&self) -> Option<usize> {
+                None
+            }
+        }
+    };
+}
+#[macro_export]
+macro_rules! _impl_resolver_singleton {
+    ( $name:ident, |$ctx:ident| async $x:block ) => {
+        $crate::_impl_resolver_inner!($name, |$ctx| async $x);
+
+        impl $crate::resolvers::Singleton for ::std::sync::Arc<$name> {
+            fn get(&self) -> Option<usize> {
+                Some(self.0)
+            }
+        }
+    };
+}
+#[macro_export]
+macro_rules! _impl_resolver_inner {
     ( $name:ident, |$ctx:ident| async $x:block ) => {
         $crate::resolvers::inventory::submit! {
             $crate::resolvers::NamedResolver { name: stringify!($name), getter: $name::dyn_resolver }
@@ -167,6 +191,11 @@ macro_rules! _impl_resolver {
     };
 }
 pub use _impl_resolver as impl_resolver;
+pub use _impl_resolver_singleton as impl_resolver_singleton;
+
+pub trait Singleton {
+    fn get(&self) -> Option<usize>;
+}
 
 type AnyValue = Result<Arc<dyn Any + Send + Sync>>;
 

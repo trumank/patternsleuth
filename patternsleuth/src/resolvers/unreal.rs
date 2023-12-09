@@ -5,13 +5,13 @@ use iced_x86::{Code, Decoder, DecoderOptions, Instruction, Register};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{bail_out, ensure_one, impl_resolver},
+    resolvers::{bail_out, ensure_one, impl_resolver, impl_resolver_singleton},
     Addressable, Matchable, MemoryAccessorTrait, MemoryTrait,
 };
 
 #[derive(Debug)]
 pub struct GUObjectArray(pub usize);
-impl_resolver!(GUObjectArray, |ctx| async {
+impl_resolver_singleton!(GUObjectArray, |ctx| async {
     let patterns = [
         "74 ?? 48 8D 0D | ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01",
         "75 ?? 48 ?? ?? 48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 45 33 C9 4C 89 74 24",
@@ -24,9 +24,10 @@ impl_resolver!(GUObjectArray, |ctx| async {
     )?))
 });
 
+/// public: class FString __cdecl FName::ToString(void) const
 #[derive(Debug)]
-pub struct FNameToString(pub usize);
-impl_resolver!(FNameToString, |ctx| async {
+pub struct FNameToStringVoid(pub usize);
+impl_resolver_singleton!(FNameToStringVoid, |ctx| async {
     let patterns = [
         "E8 | ?? ?? ?? ?? ?? 01 00 00 00 ?? 39 ?? 48 0F 8E",
         "E8 | ?? ?? ?? ?? BD 01 00 00 00 41 39 6E ?? 0F 8E",
@@ -35,7 +36,21 @@ impl_resolver!(FNameToString, |ctx| async {
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
-    Ok(FNameToString(ensure_one(
+    Ok(FNameToStringVoid(ensure_one(
+        res.iter().flatten().map(|a| ctx.image().memory.rip4(*a)),
+    )?))
+});
+
+/// public: void __cdecl FName::ToString(class FString &) const
+#[derive(Debug)]
+pub struct FNameToStringFString(pub usize);
+impl_resolver_singleton!(FNameToStringFString, |ctx| async {
+    let patterns =
+        ["48 8b 48 ?? 48 89 4c 24 ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00 48 8d"];
+
+    let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+    Ok(FNameToStringFString(ensure_one(
         res.iter().flatten().map(|a| ctx.image().memory.rip4(*a)),
     )?))
 });

@@ -161,6 +161,9 @@ struct CommandViewSymbol {
     #[arg(short, long)]
     function: Vec<FunctionSpec>,
 
+    #[arg(short, long, value_parser(|s: &_| parse_resolver(s)))]
+    resolver: Vec<&'static NamedResolver>,
+
     /// Whether to show symbols in function disassembly
     #[arg(long)]
     show_symbols: bool,
