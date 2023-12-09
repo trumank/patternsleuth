@@ -133,11 +133,12 @@ pub struct ResolverFactory<T> {
 }
 
 pub use ::futures;
+pub use ::inventory;
 
 #[macro_export]
 macro_rules! _impl_resolver {
     ( $name:ident, |$ctx:ident| async $x:block ) => {
-        inventory::submit! {
+        $crate::resolvers::inventory::submit! {
             $crate::resolvers::NamedResolver { name: stringify!($name), getter: $name::dyn_resolver }
         }
 
