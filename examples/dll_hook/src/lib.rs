@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::{ffi::c_void, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
-use patternsleuth::resolvers::unreal::{ConsoleManagerSingleton, FNameToString, GUObjectArray};
+use patternsleuth::resolvers::unreal::{ConsoleManagerSingleton, FNameToStringVoid, GUObjectArray};
 use simple_log::{error, info, LogConfigBuilder};
 use windows::Win32::{
     Foundation::HMODULE,
@@ -111,7 +111,7 @@ pub struct DllHookResolution {
     start_recording_replay: Arc<StartRecordingReplay>,
     stop_recording_replay: Arc<StopRecordingReplay>,
     guobject_array: Arc<GUObjectArray>,
-    fnametostring: Arc<FNameToString>,
+    fnametostring: Arc<FNameToStringVoid>,
 }
 
 mod resolvers {
@@ -120,7 +120,7 @@ mod resolvers {
     use patternsleuth::{
         resolvers::{
             futures::{future::join_all, try_join},
-            unreal::{FNameToString, GUObjectArray},
+            unreal::{FNameToStringVoid, GUObjectArray},
             *,
         },
         scanner::Pattern,
@@ -154,7 +154,7 @@ mod resolvers {
             ctx.resolve(StartRecordingReplay::resolver()),
             ctx.resolve(StopRecordingReplay::resolver()),
             ctx.resolve(GUObjectArray::resolver()),
-            ctx.resolve(FNameToString::resolver()),
+            ctx.resolve(FNameToStringVoid::resolver()),
         )?;
         Ok(DllHookResolution {
             start_recording_replay,

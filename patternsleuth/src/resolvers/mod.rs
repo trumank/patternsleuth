@@ -140,7 +140,7 @@ macro_rules! _impl_resolver {
     ( $name:ident, |$ctx:ident| async $x:block ) => {
         $crate::_impl_resolver_inner!($name, |$ctx| async $x);
 
-        impl $crate::resolvers::Singleton for ::std::sync::Arc<$name> {
+        impl $crate::resolvers::Singleton for $name {
             fn get(&self) -> Option<usize> {
                 None
             }
@@ -152,7 +152,7 @@ macro_rules! _impl_resolver_singleton {
     ( $name:ident, |$ctx:ident| async $x:block ) => {
         $crate::_impl_resolver_inner!($name, |$ctx| async $x);
 
-        impl $crate::resolvers::Singleton for ::std::sync::Arc<$name> {
+        impl $crate::resolvers::Singleton for $name {
             fn get(&self) -> Option<usize> {
                 Some(self.0)
             }
@@ -182,7 +182,7 @@ macro_rules! _impl_resolver_inner {
                 GLOBAL.get_or_init(|| &$crate::resolvers::DynResolverFactory {
                     factory: |$ctx: &$crate::resolvers::AsyncContext| -> $crate::resolvers::futures::future::BoxFuture<$crate::resolvers::Result<::std::sync::Arc<dyn $crate::resolvers::Resolution>>> {
                         Box::pin(async {
-                            $ctx.resolve(Self::resolver()).await.map(|ok| -> ::std::sync::Arc<dyn $crate::resolvers::Resolution> { ::std::sync::Arc::new(ok) })
+                            $ctx.resolve(Self::resolver()).await.map(|ok| -> ::std::sync::Arc<dyn $crate::resolvers::Resolution> { ok })
                         })
                     },
                 })
