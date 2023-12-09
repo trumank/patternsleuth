@@ -335,7 +335,9 @@ fn scan(command: CommandScan) -> Result<()> {
         games.insert(name.to_string());
 
         let resolution = exe.resolve_many(&resolvers);
-        println!("{resolution:#x?}");
+        if !resolution.is_empty() {
+            println!("{resolution:#x?}");
+        }
 
         let scan = exe.scan(&patterns)?;
 
