@@ -24,6 +24,38 @@ impl_resolver_singleton!(GUObjectArray, |ctx| async {
     )?))
 });
 
+/// public: void __cdecl FUObjectArray::AllocateUObjectIndex(class UObjectBase *, bool)
+#[derive(Debug)]
+pub struct FUObjectArrayAllocatedUObjectIndex(pub usize);
+impl_resolver_singleton!(FUObjectArrayAllocatedUObjectIndex, |ctx| async {
+    let strings = ctx
+        .scan(
+            Pattern::from_bytes(
+                "Unable to add more objects to disregard for GC pool (Max: %d)\x00"
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes)
+                    .collect(),
+            )
+            .unwrap(),
+        )
+        .await;
+
+    let refs = join_all(strings.iter().flat_map(|s| {
+        [
+            ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
+            ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
+        ]
+    }))
+    .await;
+
+    let fns = refs
+        .into_iter()
+        .flatten()
+        .flat_map(|r| ctx.image().get_root_function(r).map(|f| f.range.start));
+
+    Ok(FUObjectArrayAllocatedUObjectIndex(ensure_one(fns)?))
+});
+
 /// public: class FString __cdecl FName::ToString(void) const
 #[derive(Debug)]
 pub struct FNameToStringVoid(pub usize);
