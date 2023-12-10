@@ -61,6 +61,42 @@ impl_resolver_singleton!(FUObjectArrayAllocatedUObjectIndex, |ctx| async {
     Ok(FUObjectArrayAllocatedUObjectIndex(ensure_one(fns)?))
 });
 
+/// void __cdecl UObjectBaseShutdown(void)
+/// could be used to determine object listener offsets, but only for recent UE versions
+#[derive(Debug)]
+pub struct UObjectBaseShutdown(pub usize);
+impl_resolver_singleton!(UObjectBaseShutdown, |ctx| async {
+    let strings = ctx
+        .scan(
+            Pattern::from_bytes(
+                "All UObject delete listeners should be unregistered when shutting down the UObject array\x00"
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes)
+                    .collect(),
+            )
+            .unwrap(),
+        )
+        .await;
+
+    let refs = join_all(strings.iter().flat_map(|s| {
+        [
+            ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
+            ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
+        ]
+    }))
+    .await;
+
+    let fns = refs
+        .into_iter()
+        .flatten()
+        .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
+        .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
+        .into_iter()
+        .flatten();
+
+    Ok(UObjectBaseShutdown(ensure_one(fns)?))
+});
+
 /// public: class FString __cdecl FName::ToString(void) const
 #[derive(Debug)]
 pub struct FNameToStringVoid(pub usize);
