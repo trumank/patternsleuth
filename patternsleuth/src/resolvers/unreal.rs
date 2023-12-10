@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use futures::{future::join_all, try_join};
 use iced_x86::{Code, Decoder, DecoderOptions, Instruction, Register};
@@ -10,6 +13,56 @@ use crate::{
     },
     Addressable, Matchable, MemoryAccessorTrait, MemoryTrait,
 };
+
+/// currently seems to be 4.22+
+#[derive(Debug)]
+pub struct EngineVersion {
+    pub branch_name: String,
+    pub build_date: String,
+    pub build_version: String,
+}
+impl_resolver!(EngineVersion, |ctx| async {
+    let patterns = [
+        "48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC 48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC 48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC",
+    ];
+
+    let res = join_all(
+        patterns
+            .iter()
+            .map(|p| ctx.scan_tagged((), Pattern::new(p).unwrap())),
+    )
+    .await;
+
+    let mem = &ctx.image().memory;
+
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+    .into_iter()
+    .map(|month| month.encode_utf16().flat_map(u16::to_le_bytes).collect())
+    .collect::<HashSet<Vec<u8>>>();
+
+    for (_, pattern, addresses) in res {
+        for a in addresses {
+            let caps = mem.captures(&pattern, a)?.unwrap();
+            let date = caps[1].rip();
+            if mem
+                .range(date..date + 6)
+                .ok()
+                .filter(|r| months.contains(&r.to_vec()))
+                .is_some()
+            {
+                return Ok(EngineVersion {
+                    branch_name: mem.read_wstring(caps[0].rip())?,
+                    build_date: mem.read_wstring(caps[1].rip())?,
+                    build_version: mem.read_wstring(caps[2].rip())?,
+                });
+            }
+        }
+    }
+
+    bail_out!("not found");
+});
 
 #[derive(Debug)]
 pub struct GUObjectArray(pub usize);
