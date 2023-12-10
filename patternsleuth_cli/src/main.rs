@@ -336,12 +336,6 @@ fn scan(command: CommandScan) -> Result<()> {
 
         games.insert(name.to_string());
 
-        let resolution = exe.resolve_many(&resolvers);
-        if !resolution.is_empty() {
-            println!("{resolution:#x?}");
-            all_resolutions.insert(name.to_string(), resolution);
-        }
-
         let scan = exe.scan(&patterns)?;
 
         // group results by Sig
@@ -528,6 +522,30 @@ fn scan(command: CommandScan) -> Result<()> {
 
             table.add_row(Row::new(cells));
         }
+
+        let resolution = exe.resolve_many(&resolvers);
+
+        for (resolver, resolution) in command.resolver.iter().zip(&resolution) {
+            table.add_row(Row::new(
+                [
+                    Cell::new(resolver.name),
+                    match resolution {
+                        Ok(res) => Cell::new(&format!("{:#x?}", res)),
+                        Err(err) =>
+                        {
+                            #[allow(clippy::unnecessary_to_owned)]
+                            Cell::new(&format!("{:x?}", err).red().to_string())
+                        }
+                    },
+                ]
+                .to_vec(),
+            ));
+        }
+
+        if !resolution.is_empty() {
+            all_resolutions.insert(name.to_string(), resolution);
+        }
+
         output.println(table.to_string());
 
         // fold current game scans into summary scans
