@@ -1712,7 +1712,7 @@ mod FPakPlatformFile {
                 format!("{:x?}", addresses)
             });
 
-        addresses.into()
+        addresses.unwrap().into()
     }
     pub fn resolve_dtor(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction {
         stages.0.push(ctx.match_address);
@@ -1746,7 +1746,7 @@ mod FPakPlatformFile {
                 format!("{:x?}", addresses)
             });
 
-        addresses.into()
+        addresses.unwrap().into()
     }
 }
 
@@ -1935,12 +1935,13 @@ pub fn resolve_case_preserving(
     let addr = ctx
         .memory
         .captures(ctx.scan.scan_type.get_pattern().unwrap(), ctx.match_address)
+        .unwrap()
         .unwrap()[0]
         .rip();
 
     stages.0.push(addr);
 
-    let data = ctx.memory.range_from(addr..);
+    let data = ctx.memory.range_from(addr..).unwrap();
 
     let mut decoder = Decoder::with_ip(64, data, addr as u64, DecoderOptions::NONE);
     let mut info_factory = InstructionInfoFactory::new();
@@ -1988,8 +1989,9 @@ mod fparseparam {
         let addr = ctx
             .memory
             .captures(ctx.scan.scan_type.get_pattern().unwrap(), ctx.match_address)
+            .unwrap()
             .unwrap()[0]
             .rip();
-        ctx.memory.read_wstring(addr).into()
+        ctx.memory.read_wstring(addr).unwrap().into()
     }
 }

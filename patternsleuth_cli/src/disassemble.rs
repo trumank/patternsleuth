@@ -24,7 +24,7 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
 
     let mut output = Output::default();
 
-    if let Some(section) = exe.memory.get_section_containing(address) {
+    if let Ok(section) = exe.memory.get_section_containing(address) {
         output.buffer.push_str(&format!(
             "{:016x}\n{:016x} - {:016x} = {}\n",
             address,
@@ -33,8 +33,8 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
             section.name(),
         ));
 
-        let (is_fn, data, start_address) = if let Some(f) = exe.get_root_function(address) {
-            let fns = exe.get_child_functions(f.range.start);
+        let (is_fn, data, start_address) = if let Ok(Some(f)) = exe.get_root_function(address) {
+            let fns = exe.get_child_functions(f.range.start).unwrap();
             let min = fns.iter().map(|f| f.range.start).min().unwrap();
             let max = fns.iter().map(|f| f.range.end).max().unwrap();
             let range = min..max;
@@ -52,7 +52,7 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
                 }
             }
             let start_address = range.start as u64;
-            let data = section.range(range);
+            let data = section.range(range).unwrap();
             (true, data, start_address)
         } else {
             output.buffer.push_str("no function");
@@ -147,8 +147,8 @@ pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
     let address = range.start;
     let mut output = Output::default();
 
-    if let Some(section) = exe.memory.get_section_containing(address) {
-        let data = &section.range(range);
+    if let Ok(section) = exe.memory.get_section_containing(address) {
+        let data = &section.range(range).unwrap();
 
         output.buffer.push_str(&format!(
             "{:016x}\n{:016x} - {:016x} = {}\n",
@@ -158,7 +158,7 @@ pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
             section.name(),
         ));
 
-        if let Some(f) = exe.get_root_function(address) {
+        if let Ok(Some(f)) = exe.get_root_function(address) {
             output.buffer.push_str(&format!(
                 "{:016x} - {:016x} = function\n",
                 f.range.start, f.range.end

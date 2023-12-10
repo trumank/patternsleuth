@@ -1,6 +1,9 @@
 pub mod unreal;
 
-use crate::{Image, Memory, ResolutionAction, ResolutionType, ResolveContext, ResolveStages};
+use crate::{
+    Image, Memory, MemoryOutOfBoundsError, ResolutionAction, ResolutionType, ResolveContext,
+    ResolveStages,
+};
 use futures::{
     channel::oneshot,
     executor::LocalPool,
@@ -29,6 +32,8 @@ pub fn resolve_function(ctx: ResolveContext, stages: &mut ResolveStages) -> Reso
     stages.0.push(ctx.match_address);
     ctx.exe
         .get_root_function(ctx.match_address)
+        .ok()
+        .flatten()
         .map(|f| f.range.start)
         .into()
 }
@@ -72,19 +77,39 @@ pub fn ensure_one<T: PartialEq>(data: impl IntoIterator<Item = T>) -> Result<T> 
     Ok(first)
 }
 
+/// Given an iterator of values, returns Ok(value) if all values are equal or Err
+pub fn try_ensure_one<T: PartialEq>(data: impl IntoIterator<Item = Result<T>>) -> Result<T> {
+    let mut iter = data.into_iter();
+    let first = iter.next().context("expected at least one value")??;
+    for value in iter {
+        if value? != first {
+            bail_out!("iter returned multiple unique values");
+        }
+    }
+    Ok(first)
+}
+
 pub type Result<T> = std::result::Result<T, ResolveError>;
 #[derive(Debug, Clone)]
 pub enum ResolveError {
     Msg(Cow<'static, str>),
+    MemoryAccessOutOfBounds(MemoryOutOfBoundsError),
 }
 impl std::fmt::Display for ResolveError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             ResolveError::Msg(msg) => write!(f, "{msg}"),
+            ResolveError::MemoryAccessOutOfBounds(err) => err.fmt(f),
         }
     }
 }
 impl Error for ResolveError {}
+
+impl From<MemoryOutOfBoundsError> for ResolveError {
+    fn from(value: MemoryOutOfBoundsError) -> Self {
+        Self::MemoryAccessOutOfBounds(value)
+    }
+}
 
 #[macro_export]
 macro_rules! _bail_out {

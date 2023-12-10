@@ -654,7 +654,7 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
 
                 functions.iter().progress_with(pb).try_for_each(
                     |function| -> Result<()> {
-                        let fns = exe.get_child_functions(exe.get_function(**function).unwrap().range.start);
+                        let fns = exe.get_child_functions(exe.get_function(**function).unwrap().unwrap().range.start).unwrap();
                         let min = fns.iter().map(|f| f.range.start).min().unwrap();
                         let max = fns.iter().map(|f| f.range.end).max().unwrap();
                         let range = min..max;

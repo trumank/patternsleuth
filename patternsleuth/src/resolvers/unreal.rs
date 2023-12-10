@@ -5,7 +5,9 @@ use iced_x86::{Code, Decoder, DecoderOptions, Instruction, Register};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{bail_out, ensure_one, impl_resolver, impl_resolver_singleton},
+    resolvers::{
+        bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, Result,
+    },
     Addressable, Matchable, MemoryAccessorTrait, MemoryTrait,
 };
 
@@ -19,9 +21,9 @@ impl_resolver_singleton!(GUObjectArray, |ctx| async {
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
-    Ok(GUObjectArray(ensure_one(
-        res.iter().flatten().map(|a| ctx.image().memory.rip4(*a)),
-    )?))
+    Ok(GUObjectArray(try_ensure_one(res.iter().flatten().map(
+        |a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) },
+    ))?))
 });
 
 /// public: void __cdecl FUObjectArray::AllocateUObjectIndex(class UObjectBase *, bool)
@@ -51,7 +53,14 @@ impl_resolver_singleton!(FUObjectArrayAllocatedUObjectIndex, |ctx| async {
     let fns = refs
         .into_iter()
         .flatten()
-        .flat_map(|r| ctx.image().get_root_function(r).map(|f| f.range.start));
+        .map(|r| {
+            ctx.image()
+                .get_root_function(r)
+                // TODO don't unwrap
+                .unwrap()
+                .map(|f| f.range.start)
+        })
+        .flatten();
 
     Ok(FUObjectArrayAllocatedUObjectIndex(ensure_one(fns)?))
 });
@@ -68,8 +77,10 @@ impl_resolver_singleton!(FNameToStringVoid, |ctx| async {
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
-    Ok(FNameToStringVoid(ensure_one(
-        res.iter().flatten().map(|a| ctx.image().memory.rip4(*a)),
+    Ok(FNameToStringVoid(try_ensure_one(
+        res.iter()
+            .flatten()
+            .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) }),
     )?))
 });
 
@@ -82,8 +93,10 @@ impl_resolver_singleton!(FNameToStringFString, |ctx| async {
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
-    Ok(FNameToStringFString(ensure_one(
-        res.iter().flatten().map(|a| ctx.image().memory.rip4(*a)),
+    Ok(FNameToStringFString(try_ensure_one(
+        res.iter()
+            .flatten()
+            .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) }),
     )?))
 });
 
@@ -105,7 +118,7 @@ impl_resolver!(UObjectSkipFunction, |ctx| async {
 pub struct GNatives(pub usize);
 impl_resolver!(GNatives, |ctx| async {
     let skip_function = ctx.resolve(UObjectSkipFunction::resolver()).await?;
-    let bytes = ctx.image().memory.range_from(skip_function.0..);
+    let bytes = ctx.image().memory.range_from(skip_function.0..)?;
 
     let mut decoder = Decoder::with_ip(
         64,
@@ -177,15 +190,18 @@ impl_resolver!(FFrameStepViaExec, |ctx| async {
     )
     .await;
 
-    ensure_one(res.into_iter().flat_map(|(_, pattern, addresses)| {
-        ensure_one(addresses.iter().map(|a| {
-            let caps = ctx.image().memory.captures(&pattern, *a).unwrap();
-            FFrameStepViaExec {
-                step: caps[0].rip(),
-                step_explicit_property: caps[1].rip(),
-            }
-        }))
-    }))
+    ensure_one(
+        res.into_iter()
+            .flat_map(|(_, pattern, addresses)| -> Result<_> {
+                try_ensure_one(addresses.iter().map(|a| -> Result<_> {
+                    let caps = ctx.image().memory.captures(&pattern, *a)?.unwrap();
+                    Ok(FFrameStepViaExec {
+                        step: caps[0].rip(),
+                        step_explicit_property: caps[1].rip(),
+                    })
+                }))
+            }),
+    )
 });
 
 /// public: static bool __cdecl UGameplayStatics::SaveGameToSlot(class USaveGame *, class FString const &, int)
@@ -290,11 +306,10 @@ impl_resolver!(KismetSystemLibrary, |ctx| async {
 
     let cap = Pattern::new("4c 8d 0d [ ?? ?? ?? ?? ]").unwrap();
 
-    let register_natives_addr = ensure_one(
-        refs.iter()
-            .flatten()
-            .map(|a| ctx.image().memory.captures(&cap, *a).unwrap()[0].rip()),
-    )?;
+    let register_natives_addr =
+        try_ensure_one(refs.iter().flatten().map(|a| -> Result<_> {
+            Ok(ctx.image().memory.captures(&cap, *a)?.unwrap()[0].rip())
+        }))?;
 
     let register_natives = Pattern::new("48 83 ec 28 e8 ?? ?? ?? ?? 41 b8 [ ?? ?? ?? ?? ] 48 8d 15 [ ?? ?? ?? ?? ] 48 8b c8 48 83 c4 28 e9 ?? ?? ?? ??").unwrap();
 
@@ -303,13 +318,13 @@ impl_resolver!(KismetSystemLibrary, |ctx| async {
         .memory
         .captures(&register_natives, register_natives_addr);
 
-    if let Some([num, data]) = captures.as_deref() {
+    if let Some([num, data]) = captures?.as_deref() {
         let mut res = HashMap::new();
 
         let ptr = data.rip();
         for i in 0..(num.u32() as usize) {
             let a = ptr + i * 0x10;
-            res.insert(mem.read_string(mem.ptr(a)), mem.ptr(a + 8));
+            res.insert(mem.read_string(mem.ptr(a)?)?, mem.ptr(a + 8)?);
         }
         Ok(KismetSystemLibrary(res))
     } else {
@@ -333,10 +348,11 @@ impl_resolver!(UGameEngineTick, |ctx| async {
     )
     .await;
 
-    let fns = refs
-        .into_iter()
-        .flatten()
-        .flat_map(|r| ctx.image().get_root_function(r).map(|f| f.range.start));
+    let fns = refs.into_iter().flatten().flat_map(|r| {
+        ctx.image()
+            .get_root_function(r)
+            .map(|f| f.unwrap().range.start)
+    });
 
     Ok(UGameEngineTick(ensure_one(fns)?))
 });
@@ -376,9 +392,14 @@ impl_resolver!(ConsoleManagerSingleton, |ctx| async {
     .await;
 
     Ok(ConsoleManagerSingleton(ensure_one(
-        refs.iter()
-            .flatten()
-            .map(|r| ctx.image().get_root_function(*r).unwrap().range().start),
+        refs.iter().flatten().map(|r| {
+            ctx.image()
+                .get_root_function(*r)
+                .unwrap()
+                .unwrap()
+                .range()
+                .start
+        }),
     )?))
 });
 

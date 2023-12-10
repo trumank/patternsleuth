@@ -691,8 +691,8 @@ fn symbols(command: CommandSymbols) -> Result<()> {
 
         for (address, name) in exe.symbols.as_ref().unwrap() {
             if filter(name) {
-                if let Some(exception) = exe.get_root_function(*address) {
-                    let fns = exe.get_child_functions(exception.range.start);
+                if let Ok(Some(exception)) = exe.get_root_function(*address) {
+                    let fns = exe.get_child_functions(exception.range.start).unwrap();
                     let min = fns.iter().map(|f| f.range.start).min().unwrap();
                     let max = fns.iter().map(|f| f.range.end).max().unwrap();
                     let full_range = min..max; // TODO does not handle sparse ranges

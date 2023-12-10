@@ -337,25 +337,25 @@ impl<'data> Image<'data> {
         };
 
         if load_functions {
-            new.populate_exception_cache();
+            new.populate_exception_cache()?;
         }
         Ok(new)
     }
-    fn populate_exception_cache(&mut self) {
+    fn populate_exception_cache(&mut self) -> Result<(), MemoryOutOfBoundsError> {
         for i in self.exception_directory_range.clone().step_by(12) {
-            let f = RuntimeFunction::read(&self.memory, self.base_address, i);
+            let f = RuntimeFunction::read(&self.memory, self.base_address, i)?;
             self.exception_children_cache.insert(f.range.start, vec![]);
 
-            let Some(section) = self.memory.get_section_containing(f.unwind) else {
+            let Ok(section) = self.memory.get_section_containing(f.unwind) else {
                 // TODO disabled cause spammy
                 //println!("invalid unwind info addr {:x}", f.unwind);
                 continue;
             };
 
             let mut unwind = f.unwind;
-            let has_chain_info = section.section.index(unwind) >> 3 == 0x4;
+            let has_chain_info = section.section.index(unwind)? >> 3 == 0x4;
             if has_chain_info {
-                let unwind_code_count = section.section.index(unwind + 2);
+                let unwind_code_count = section.section.index(unwind + 2)?;
 
                 unwind += 4 + 2 * unwind_code_count as usize;
                 if unwind % 4 != 0 {
@@ -364,7 +364,7 @@ impl<'data> Image<'data> {
                 }
 
                 if section.address() + section.data().len() > unwind + 12 {
-                    let chained = RuntimeFunction::read(section, self.base_address, unwind);
+                    let chained = RuntimeFunction::read(section, self.base_address, unwind)?;
 
                     // TODO disabled because it spams the log too much
                     //let referenced = self.get_function(chained.range.start);
@@ -385,9 +385,13 @@ impl<'data> Image<'data> {
         }
 
         //println!("{:#x?}", self.exception_children_cache);
+        Ok(())
     }
     /// Get function containing `address` from the exception directory
-    pub fn get_function(&self, address: usize) -> Option<RuntimeFunction> {
+    pub fn get_function(
+        &self,
+        address: usize,
+    ) -> Result<Option<RuntimeFunction>, MemoryOutOfBoundsError> {
         let size = 12;
         let mut min = 0;
         let mut max = self.exception_directory_range.len() / size - 1;
@@ -396,16 +400,16 @@ impl<'data> Image<'data> {
             let i = (max + min) / 2;
             let addr = i * size + self.exception_directory_range.start;
 
-            let addr_begin = self.base_address + self.memory.u32_le(addr) as usize;
+            let addr_begin = self.base_address + self.memory.u32_le(addr)? as usize;
             if addr_begin <= address {
-                let addr_end = self.base_address + self.memory.u32_le(addr + 4) as usize;
+                let addr_end = self.base_address + self.memory.u32_le(addr + 4)? as usize;
                 if addr_end > address {
-                    let unwind = self.base_address + self.memory.u32_le(addr + 8) as usize;
+                    let unwind = self.base_address + self.memory.u32_le(addr + 8)? as usize;
 
-                    return Some(RuntimeFunction {
+                    return Ok(Some(RuntimeFunction {
                         range: addr_begin..addr_end,
                         unwind,
-                    });
+                    }));
                 } else {
                     min = i + 1;
                 }
@@ -413,12 +417,15 @@ impl<'data> Image<'data> {
                 max = i - 1;
             }
         }
-        None
+        Ok(None)
     }
     /// Get root function containing `address` from the exception directory. This can be used to
     /// find the start address of a function given an address in the body.
-    pub fn get_root_function(&self, address: usize) -> Option<RuntimeFunction> {
-        if let Some(f) = self.get_function(address) {
+    pub fn get_root_function(
+        &self,
+        address: usize,
+    ) -> Result<Option<RuntimeFunction>, MemoryOutOfBoundsError> {
+        if let Some(f) = self.get_function(address)? {
             let mut f = RuntimeFunction {
                 range: f.range,
                 unwind: f.unwind,
@@ -427,14 +434,11 @@ impl<'data> Image<'data> {
             loop {
                 let mut unwind_addr = f.unwind;
 
-                let Some(section) = self.memory.get_section_containing(unwind_addr) else {
-                    dbg!("out of bounds reading unwind info");
-                    return None;
-                };
+                let section = self.memory.get_section_containing(unwind_addr)?;
 
-                let has_chain_info = section.section.index(unwind_addr) >> 3 == 0x4;
+                let has_chain_info = section.section.index(unwind_addr)? >> 3 == 0x4;
                 if has_chain_info {
-                    let unwind_code_count = section.section.index(unwind_addr + 2);
+                    let unwind_code_count = section.section.index(unwind_addr + 2)?;
 
                     unwind_addr += 4 + 2 * unwind_code_count as usize;
                     if unwind_addr % 4 != 0 {
@@ -443,23 +447,26 @@ impl<'data> Image<'data> {
                     }
 
                     if section.address() + section.data().len() > unwind_addr + 12 {
-                        f = RuntimeFunction::read(section, self.base_address, unwind_addr);
+                        f = RuntimeFunction::read(section, self.base_address, unwind_addr)?;
                     } else {
                         todo!("not adding chain info {unwind_addr}");
                     }
                 } else {
-                    return Some(f);
+                    return Ok(Some(f));
                 }
             }
         } else {
-            None
+            Ok(None)
         }
     }
     /// Recursively get all child functions of `address` (exact). This is pulled from
     /// `exception_children_cache` so will be empty if it has not been populated.
-    pub fn get_child_functions(&self, address: usize) -> Vec<RuntimeFunction> {
+    pub fn get_child_functions(
+        &self,
+        address: usize,
+    ) -> Result<Vec<RuntimeFunction>, MemoryOutOfBoundsError> {
         let mut queue = vec![address];
-        let mut all_children = vec![self.get_function(address).unwrap()];
+        let mut all_children = vec![self.get_function(address)?.unwrap()];
         while let Some(next) = queue.pop() {
             if let Some(children) = self.exception_children_cache.get(&next) {
                 for child in children {
@@ -468,7 +475,7 @@ impl<'data> Image<'data> {
                 }
             }
         }
-        all_children
+        Ok(all_children)
     }
 
     pub fn resolve<T: Send + Sync>(
@@ -599,15 +606,15 @@ impl RuntimeFunction {
         memory: &impl MemoryTrait<'data>,
         base_address: usize,
         address: usize,
-    ) -> Self {
-        let addr_begin = base_address + memory.u32_le(address) as usize;
-        let addr_end = base_address + memory.u32_le(address + 4) as usize;
-        let unwind = base_address + memory.u32_le(address + 8) as usize;
+    ) -> Result<Self, MemoryOutOfBoundsError> {
+        let addr_begin = base_address + memory.u32_le(address)? as usize;
+        let addr_end = base_address + memory.u32_le(address + 4)? as usize;
+        let unwind = base_address + memory.u32_le(address + 8)? as usize;
 
-        RuntimeFunction {
+        Ok(RuntimeFunction {
             range: addr_begin..addr_end,
             unwind,
-        }
+        })
     }
 }
 impl RuntimeFunction {
@@ -615,6 +622,15 @@ impl RuntimeFunction {
         self.range.clone()
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct MemoryOutOfBoundsError;
+impl std::fmt::Display for MemoryOutOfBoundsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MemoryOutOfBoundsError")
+    }
+}
+impl std::error::Error for MemoryOutOfBoundsError {}
 
 /// Continuous section of memory
 pub trait MemoryBlockTrait<'data> {
@@ -627,113 +643,111 @@ pub trait MemoryBlockTrait<'data> {
 /// Potentially sparse section of memory
 pub trait MemoryTrait<'data> {
     /// Return u8 at `address`
-    fn index(&self, address: usize) -> u8;
+    fn index(&self, address: usize) -> Result<u8, MemoryOutOfBoundsError>;
     /// Return slice of u8 at `range`
-    fn range(&self, range: Range<usize>) -> &[u8];
+    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryOutOfBoundsError>;
     /// Return slice of u8 from start of `range` to end of block
-    fn range_from(&self, range: RangeFrom<usize>) -> &[u8];
+    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryOutOfBoundsError>;
     /// Return slice of u8 from end of `range` to start of block (not useful because start of block
     /// is unknown to caller)
-    fn range_to(&self, range: RangeTo<usize>) -> &[u8];
+    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryOutOfBoundsError>;
 }
 
 /// Memory accessor helpers
 pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
     /// Return i32 at `address`
-    fn i32_le(&self, address: usize) -> i32 {
-        i32::from_le_bytes(
-            self.range(address..address + std::mem::size_of::<i32>())
+    fn i32_le(&self, address: usize) -> Result<i32, MemoryOutOfBoundsError> {
+        Ok(i32::from_le_bytes(
+            self.range(address..address + std::mem::size_of::<i32>())?
                 .try_into()
                 .unwrap(),
-        )
+        ))
     }
     /// Return u32 at `address`
-    fn u32_le(&self, address: usize) -> u32 {
-        u32::from_le_bytes(
-            self.range(address..address + std::mem::size_of::<u32>())
+    fn u32_le(&self, address: usize) -> Result<u32, MemoryOutOfBoundsError> {
+        Ok(u32::from_le_bytes(
+            self.range(address..address + std::mem::size_of::<u32>())?
                 .try_into()
                 .unwrap(),
-        )
+        ))
     }
     /// Return u64 at `address`
-    fn u64_le(&self, address: usize) -> u64 {
-        u64::from_le_bytes(
-            self.range(address..address + std::mem::size_of::<u64>())
+    fn u64_le(&self, address: usize) -> Result<u64, MemoryOutOfBoundsError> {
+        Ok(u64::from_le_bytes(
+            self.range(address..address + std::mem::size_of::<u64>())?
                 .try_into()
                 .unwrap(),
-        )
+        ))
     }
     /// Return ptr (usize) at `address`
-    fn ptr(&self, address: usize) -> usize {
-        self.u64_le(address) as usize
+    fn ptr(&self, address: usize) -> Result<usize, MemoryOutOfBoundsError> {
+        Ok(self.u64_le(address)? as usize)
     }
     /// Return instruction relative address at `address`
-    fn rip4(&self, address: usize) -> usize {
-        (address + 4)
-            .checked_add_signed(self.i32_le(address) as isize)
-            .unwrap()
+    fn rip4(&self, address: usize) -> Result<usize, MemoryOutOfBoundsError> {
+        Ok((address + 4)
+            .checked_add_signed(self.i32_le(address)? as isize)
+            .unwrap())
     }
 
     /// Read null terminated string from `address`
-    fn read_string(&self, address: usize) -> String {
+    fn read_string(&self, address: usize) -> Result<String, MemoryOutOfBoundsError> {
         let data = &self
-            .range_from(address..)
+            .range_from(address..)?
             .iter()
             .cloned()
             .take_while(|n| *n != 0)
             .collect::<Vec<u8>>();
 
-        std::str::from_utf8(data).unwrap().to_string()
+        Ok(std::str::from_utf8(data).unwrap().to_string())
     }
 
     /// Read null terminated wide string from `address`
-    fn read_wstring(&self, address: usize) -> String {
+    fn read_wstring(&self, address: usize) -> Result<String, MemoryOutOfBoundsError> {
         let data = &self
-            .range_from(address..)
+            .range_from(address..)?
             .chunks(2)
             .map(|chunk| ((chunk[1] as u16) << 8) + chunk[0] as u16)
             .take_while(|n| *n != 0)
             .collect::<Vec<u16>>();
 
-        String::from_utf16(data).unwrap()
+        Ok(String::from_utf16(data).unwrap())
     }
 }
 
 impl<'data, T: MemoryTrait<'data>> MemoryAccessorTrait<'data> for T {}
 
 impl<'data, T: MemoryBlockTrait<'data>> MemoryTrait<'data> for T {
-    fn index(&self, address: usize) -> u8 {
-        self.data()[address - self.address()]
+    fn index(&self, address: usize) -> Result<u8, MemoryOutOfBoundsError> {
+        // TODO bounds
+        Ok(self.data()[address - self.address()])
     }
-    fn range(&self, range: Range<usize>) -> &[u8] {
-        &self.data()[range.start - self.address()..range.end - self.address()]
+    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryOutOfBoundsError> {
+        // TODO bounds
+        Ok(&self.data()[range.start - self.address()..range.end - self.address()])
     }
-    fn range_from(&self, range: RangeFrom<usize>) -> &[u8] {
-        &self.data()[range.start - self.address()..]
+    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryOutOfBoundsError> {
+        // TODO bounds
+        Ok(&self.data()[range.start - self.address()..])
     }
-    fn range_to(&self, range: RangeTo<usize>) -> &[u8] {
-        &self.data()[..range.end - self.address()]
+    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryOutOfBoundsError> {
+        // TODO bounds
+        Ok(&self.data()[..range.end - self.address()])
     }
 }
 
 impl<'data> MemoryTrait<'data> for Memory<'data> {
-    fn index(&self, address: usize) -> u8 {
-        self.get_section_containing(address).unwrap().index(address)
+    fn index(&self, address: usize) -> Result<u8, MemoryOutOfBoundsError> {
+        self.get_section_containing(address)?.index(address)
     }
-    fn range(&self, range: Range<usize>) -> &[u8] {
-        self.get_section_containing(range.start)
-            .unwrap()
-            .range(range)
+    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryOutOfBoundsError> {
+        self.get_section_containing(range.start)?.range(range)
     }
-    fn range_from(&self, range: RangeFrom<usize>) -> &[u8] {
-        self.get_section_containing(range.start)
-            .unwrap()
-            .range_from(range)
+    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryOutOfBoundsError> {
+        self.get_section_containing(range.start)?.range_from(range)
     }
-    fn range_to(&self, range: RangeTo<usize>) -> &[u8] {
-        self.get_section_containing(range.end)
-            .unwrap()
-            .range_to(range)
+    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryOutOfBoundsError> {
+        self.get_section_containing(range.end)?.range_to(range)
     }
 }
 
@@ -857,11 +871,17 @@ impl<'data> Memory<'data> {
     pub fn sections(&self) -> &[NamedMemorySection] {
         &self.sections
     }
-    pub fn get_section_containing(&self, address: usize) -> Option<&NamedMemorySection<'data>> {
-        self.sections.iter().find(|section| {
-            address >= section.section.address
-                && address < section.section.address + section.section.data.len()
-        })
+    pub fn get_section_containing(
+        &self,
+        address: usize,
+    ) -> Result<&NamedMemorySection<'data>, MemoryOutOfBoundsError> {
+        self.sections
+            .iter()
+            .find(|section| {
+                address >= section.section.address
+                    && address < section.section.address + section.section.data.len()
+            })
+            .ok_or(MemoryOutOfBoundsError)
     }
     pub fn find<F>(&self, kind: object::SectionKind, filter: F) -> Option<usize>
     where
@@ -937,7 +957,7 @@ pub trait Matchable<'data> {
         &'data self,
         pattern: &Pattern,
         address: usize,
-    ) -> Option<Vec<patternsleuth_scanner::Capture<'data>>>;
+    ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'data>>>, MemoryOutOfBoundsError>;
 }
 
 impl<'data> Matchable<'data> for Memory<'data> {
@@ -945,8 +965,9 @@ impl<'data> Matchable<'data> for Memory<'data> {
         &'data self,
         pattern: &Pattern,
         address: usize,
-    ) -> Option<Vec<patternsleuth_scanner::Capture<'data>>> {
-        self.get_section_containing(address)
-            .and_then(move |s| pattern.captures(s.data(), s.address(), address - s.address()))
+    ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'data>>>, MemoryOutOfBoundsError> {
+        let s = self.get_section_containing(address)?;
+        // TODO bounds check data passed to captures
+        Ok(pattern.captures(s.data(), s.address(), address - s.address()))
     }
 }
