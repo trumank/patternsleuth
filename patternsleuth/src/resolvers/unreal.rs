@@ -98,8 +98,8 @@ impl_resolver_singleton!(GMalloc, |ctx| async {
 
 /// public: void __cdecl FUObjectArray::AllocateUObjectIndex(class UObjectBase *, bool)
 #[derive(Debug)]
-pub struct FUObjectArrayAllocatedUObjectIndex(pub usize);
-impl_resolver_singleton!(FUObjectArrayAllocatedUObjectIndex, |ctx| async {
+pub struct FUObjectArrayAllocateUObjectIndex(pub usize);
+impl_resolver_singleton!(FUObjectArrayAllocateUObjectIndex, |ctx| async {
     let strings = ctx
         .scan(
             Pattern::from_bytes(
@@ -112,12 +112,24 @@ impl_resolver_singleton!(FUObjectArrayAllocatedUObjectIndex, |ctx| async {
         )
         .await;
 
-    let refs = join_all(strings.iter().flat_map(|s| {
-        [
-            ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
-            ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
-        ]
-    }))
+    let refs_indirect = join_all(
+        strings
+            .iter()
+            .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
+    )
+    .await;
+
+    let refs = join_all(
+        strings
+            .iter()
+            .chain(refs_indirect.iter().flatten())
+            .flat_map(|s| {
+                [
+                    ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
+                    ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
+                ]
+            }),
+    )
     .await;
 
     let fns = refs
@@ -128,7 +140,7 @@ impl_resolver_singleton!(FUObjectArrayAllocatedUObjectIndex, |ctx| async {
         .into_iter()
         .flatten();
 
-    Ok(FUObjectArrayAllocatedUObjectIndex(ensure_one(fns)?))
+    Ok(FUObjectArrayAllocateUObjectIndex(ensure_one(fns)?))
 });
 
 /// public: void __cdecl FUObjectArray::FreeUObjectIndex(class UObjectBase *)
@@ -146,18 +158,32 @@ impl_resolver_singleton!(FUObjectFreeUObjectIndex, |ctx| async {
         ])
         .await;
 
-        Ok(join_all(strings.iter().flatten().flat_map(|s| {
-            [
-                ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
-                ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
-            ]
-        }))
+        let refs_indirect = join_all(
+            strings
+                .iter()
+                .flatten()
+                .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
+        )
+        .await;
+
+        Ok(join_all(
+            strings
+                .iter()
+                .flatten()
+                .chain(refs_indirect.iter().flatten())
+                .flat_map(|s| {
+                    [
+                        ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
+                        ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
+                    ]
+                }),
+        )
         .await)
     };
 
     // same string is present in both functions so resolve the other so we can filter it out
-    let (allocated_uobject, refs) = try_join!(
-        ctx.resolve(FUObjectArrayAllocatedUObjectIndex::resolver()),
+    let (allocate_uobject, refs) = try_join!(
+        ctx.resolve(FUObjectArrayAllocateUObjectIndex::resolver()),
         refs_future,
     )?;
 
@@ -168,7 +194,7 @@ impl_resolver_singleton!(FUObjectFreeUObjectIndex, |ctx| async {
         .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
         .into_iter()
         .flatten()
-        .filter(|f| *f != allocated_uobject.0);
+        .filter(|f| *f != allocate_uobject.0);
 
     Ok(FUObjectFreeUObjectIndex(ensure_one(fns)?))
 });
