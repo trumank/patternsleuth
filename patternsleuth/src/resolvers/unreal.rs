@@ -53,13 +53,9 @@ impl_resolver_singleton!(FUObjectArrayAllocatedUObjectIndex, |ctx| async {
     let fns = refs
         .into_iter()
         .flatten()
-        .map(|r| {
-            ctx.image()
-                .get_root_function(r)
-                // TODO don't unwrap
-                .unwrap()
-                .map(|f| f.range.start)
-        })
+        .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
+        .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
+        .into_iter()
         .flatten();
 
     Ok(FUObjectArrayAllocatedUObjectIndex(ensure_one(fns)?))
@@ -348,11 +344,13 @@ impl_resolver!(UGameEngineTick, |ctx| async {
     )
     .await;
 
-    let fns = refs.into_iter().flatten().flat_map(|r| {
-        ctx.image()
-            .get_root_function(r)
-            .map(|f| f.unwrap().range.start)
-    });
+    let fns = refs
+        .into_iter()
+        .flatten()
+        .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
+        .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
+        .into_iter()
+        .flatten();
 
     Ok(UGameEngineTick(ensure_one(fns)?))
 });
@@ -391,16 +389,15 @@ impl_resolver!(ConsoleManagerSingleton, |ctx| async {
     )
     .await;
 
-    Ok(ConsoleManagerSingleton(ensure_one(
-        refs.iter().flatten().map(|r| {
-            ctx.image()
-                .get_root_function(*r)
-                .unwrap()
-                .unwrap()
-                .range()
-                .start
-        }),
-    )?))
+    let fns = refs
+        .into_iter()
+        .flatten()
+        .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
+        .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
+        .into_iter()
+        .flatten();
+
+    Ok(ConsoleManagerSingleton(ensure_one(fns)?))
 });
 
 #[derive(Debug)]
