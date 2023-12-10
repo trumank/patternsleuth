@@ -198,11 +198,9 @@ fn scan(command: CommandScan) -> Result<()> {
     let patterns = get_patterns()?
         .into_iter()
         .filter(|p| {
-            command.resolver.is_empty()
-                && sig_filter
-                    .is_empty()
-                    .then_some(include_default)
-                    .unwrap_or_else(|| sig_filter.contains(&p.sig))
+            (command.resolver.is_empty() && sig_filter.is_empty())
+                .then_some(include_default)
+                .unwrap_or_else(|| sig_filter.contains(&p.sig))
         })
         .chain(
             command
@@ -248,7 +246,7 @@ fn scan(command: CommandScan) -> Result<()> {
 
     let resolvers = command
         .resolver
-        .into_iter()
+        .iter()
         .map(|res| res.getter)
         .collect::<Vec<_>>();
 
@@ -260,6 +258,7 @@ fn scan(command: CommandScan) -> Result<()> {
     let mut games: HashSet<String> = Default::default();
 
     let mut all: HashMap<(String, (&Sig, &String)), Vec<Resolution>> = HashMap::new();
+    let mut all_resolutions: HashMap<String, _> = Default::default();
 
     use colored::Colorize;
     use indicatif::ProgressIterator;
@@ -340,6 +339,7 @@ fn scan(command: CommandScan) -> Result<()> {
         let resolution = exe.resolve_many(&resolvers);
         if !resolution.is_empty() {
             println!("{resolution:#x?}");
+            all_resolutions.insert(name.to_string(), resolution);
         }
 
         let scan = exe.scan(&patterns)?;
@@ -567,6 +567,7 @@ fn scan(command: CommandScan) -> Result<()> {
                     .iter()
                     .map(|conf| format!("{:?}({})", conf.sig, conf.name)),
             )
+            .chain(command.resolver.iter().map(|r| r.name.to_string()))
             .collect();
         summary.set_titles(Row::new(title_strs.iter().map(|s| Cell::new(s)).collect()));
         let mut totals = patterns.iter().map(|_| Summary::default()).collect_vec();
@@ -639,6 +640,19 @@ fn scan(command: CommandScan) -> Result<()> {
 
             let cell_strs: Vec<String> = summaries.iter().map(Summary::format).collect();
             row.extend(cell_strs.iter().map(|s| Cell::new(s)));
+
+            if let Some(res) = all_resolutions.get(game) {
+                for res in res {
+                    match res {
+                        Ok(res) => row.push(Cell::new(&format!("{:x?}", res))),
+                        Err(err) => {
+                            #[allow(clippy::unnecessary_to_owned)]
+                            row.push(Cell::new(&format!("{:x?}", err).red().to_string()));
+                        }
+                    }
+                }
+            }
+
             summary.add_row(Row::new(row));
         }
 
@@ -648,6 +662,14 @@ fn scan(command: CommandScan) -> Result<()> {
         ]
         .into_iter()
         .chain(totals.iter().map(Summary::format))
+        .chain(command.resolver.iter().enumerate().map(|(i, _)| {
+            let ok = all_resolutions.values().filter(|r| r[i].is_ok()).count();
+            format!(
+                "Ok={ok}/{} ({:.2}%)",
+                games.len(),
+                100. * ok as f64 / games.len() as f64
+            )
+        }))
         .collect_vec();
         summary.add_row(Row::new(
             total_strs.iter().map(|s| Cell::new(s)).collect_vec(),
