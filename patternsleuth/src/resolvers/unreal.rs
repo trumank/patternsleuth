@@ -131,6 +131,48 @@ impl_resolver_singleton!(FUObjectArrayAllocatedUObjectIndex, |ctx| async {
     Ok(FUObjectArrayAllocatedUObjectIndex(ensure_one(fns)?))
 });
 
+/// public: void __cdecl FUObjectArray::FreeUObjectIndex(class UObjectBase *)
+#[derive(Debug)]
+pub struct FUObjectFreeUObjectIndex(pub usize);
+impl_resolver_singleton!(FUObjectFreeUObjectIndex, |ctx| async {
+    let refs_future = async {
+        let strings = join_all([
+            ctx.scan(
+                Pattern::from_bytes("Removing object (0x%016llx) at index %d but the index points to a different object (0x%016llx)!".encode_utf16().flat_map(u16::to_le_bytes).collect()).unwrap(),
+            ),
+            ctx.scan(
+                Pattern::from_bytes("Unexpected concurency while adding new object".encode_utf16().flat_map(u16::to_le_bytes).collect()).unwrap()
+            ),
+        ])
+        .await;
+
+        Ok(join_all(strings.iter().flatten().flat_map(|s| {
+            [
+                ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
+                ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
+            ]
+        }))
+        .await)
+    };
+
+    // same string is present in both functions so resolve the other so we can filter it out
+    let (allocated_uobject, refs) = try_join!(
+        ctx.resolve(FUObjectArrayAllocatedUObjectIndex::resolver()),
+        refs_future,
+    )?;
+
+    let fns = refs
+        .into_iter()
+        .flatten()
+        .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
+        .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
+        .into_iter()
+        .flatten()
+        .filter(|f| *f != allocated_uobject.0);
+
+    Ok(FUObjectFreeUObjectIndex(ensure_one(fns)?))
+});
+
 /// void __cdecl UObjectBaseShutdown(void)
 /// could be used to determine object listener offsets, but only for recent UE versions
 #[derive(Debug)]
