@@ -111,6 +111,7 @@ impl StopRecordingReplay {
 pub struct DllHookResolution {
     start_recording_replay: Arc<StartRecordingReplay>,
     stop_recording_replay: Arc<StopRecordingReplay>,
+    gmalloc: Arc<GMalloc>,
     guobject_array: Arc<GUObjectArray>,
     fnametostring: Arc<FNameToStringVoid>,
     allocate_uobject: Arc<FUObjectArrayAllocateUObjectIndex>,
@@ -128,7 +129,6 @@ mod resolvers {
             *,
         },
         scanner::Pattern,
-        MemoryAccessorTrait,
     };
 
     impl_resolver!(StartRecordingReplay, |ctx| async {
@@ -157,6 +157,7 @@ mod resolvers {
         let (
             start_recording_replay,
             stop_recording_replay,
+            gmalloc,
             guobject_array,
             fnametostring,
             allocate_uobject,
@@ -165,6 +166,7 @@ mod resolvers {
         ) = try_join!(
             ctx.resolve(StartRecordingReplay::resolver()),
             ctx.resolve(StopRecordingReplay::resolver()),
+            ctx.resolve(GMalloc::resolver()),
             ctx.resolve(GUObjectArray::resolver()),
             ctx.resolve(FNameToStringVoid::resolver()),
             ctx.resolve(FUObjectArrayAllocateUObjectIndex::resolver()),
@@ -174,6 +176,7 @@ mod resolvers {
         Ok(DllHookResolution {
             start_recording_replay,
             stop_recording_replay,
+            gmalloc,
             guobject_array,
             fnametostring,
             allocate_uobject,
@@ -198,26 +201,29 @@ unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
 
     info!("results: {:?}", resolution);
 
-    info!("done executing");
+    ue::GMALLOC.set(resolution.gmalloc.0 as *const c_void);
 
-    HookUGameEngineTick.initialize(std::mem::transmute(resolution.game_tick.0), |game_engine| {
-        info!("tick");
-        HookUGameEngineTick.call(game_engine);
-    })?;
+    HookUGameEngineTick.initialize(
+        std::mem::transmute(resolution.game_tick.0),
+        move |game_engine| {
+            //info!("tick");
+            HookUGameEngineTick.call(game_engine);
+        },
+    )?;
     HookUGameEngineTick.enable()?;
 
     HookAllocateUObject.initialize(
         std::mem::transmute(resolution.allocate_uobject.0),
         |this, object, merging_threads| {
             HookAllocateUObject.call(this, object, merging_threads);
-            info!("allocated object {this:?} {object:?} {merging_threads}");
+            //info!("allocated object {this:?} {object:?} {merging_threads}");
         },
     )?;
     HookAllocateUObject.enable()?;
     HookFreeUObject.initialize(
         std::mem::transmute(resolution.free_uobject.0),
         |this, object| {
-            info!("freeing object {this:?} {object:?}");
+            //info!("freeing object {this:?} {object:?}");
             HookFreeUObject.call(this, object);
         },
     )?;
@@ -527,7 +533,85 @@ mod gui {
 
 #[allow(non_snake_case)]
 mod ue {
-    use std::ffi::{c_void, OsString};
+    use std::{
+        ffi::{c_void, OsString},
+        sync::Mutex,
+    };
+
+    pub static GMALLOC: GMalloc = GMalloc {
+        ptr: Mutex::new(None),
+    };
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct GMalloc {
+        ptr: Mutex<Option<*const *const FMalloc>>,
+    }
+    unsafe impl Sync for GMalloc {}
+    unsafe impl Send for GMalloc {}
+    impl GMalloc {
+        pub fn set(&self, gmalloc: *const c_void) {
+            *self.ptr.lock().unwrap() = Some(gmalloc as *const *const FMalloc);
+        }
+        pub fn get(&self) -> &FMalloc {
+            unsafe { &**self.ptr.lock().unwrap().unwrap() }
+        }
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct FMalloc {
+        vtable: *const FMallocVTable,
+    }
+    unsafe impl Sync for FMalloc {}
+    unsafe impl Send for FMalloc {}
+    impl FMalloc {
+        pub fn malloc(&self, count: usize, alignment: u32) -> *mut c_void {
+            unsafe { ((*self.vtable).Malloc)(self, count, alignment) }
+        }
+        pub fn realloc(&self, original: *mut c_void, count: usize, alignment: u32) -> *mut c_void {
+            unsafe { ((*self.vtable).Realloc)(self, original, count, alignment) }
+        }
+        pub fn free(&self, original: *mut c_void) {
+            unsafe { ((*self.vtable).Free)(self, original) }
+        }
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct FMallocVTable {
+        pub __vecDelDtor: unsafe extern "system" fn(), // TOOD
+        pub Exec: unsafe extern "system" fn(),         // TOOD
+        pub Malloc:
+            unsafe extern "system" fn(this: &FMalloc, count: usize, alignment: u32) -> *mut c_void,
+        pub TryMalloc:
+            unsafe extern "system" fn(this: &FMalloc, count: usize, alignment: u32) -> *mut c_void,
+        pub Realloc: unsafe extern "system" fn(
+            this: &FMalloc,
+            original: *mut c_void,
+            count: usize,
+            alignment: u32,
+        ) -> *mut c_void,
+        pub TryRealloc: unsafe extern "system" fn(
+            this: &FMalloc,
+            original: *mut c_void,
+            count: usize,
+            alignment: u32,
+        ) -> *mut c_void,
+        pub Free: unsafe extern "system" fn(this: &FMalloc, original: *mut c_void),
+        pub QuantizeSize: unsafe extern "system" fn(), // TOOD
+        pub GetAllocationSize: unsafe extern "system" fn(), // TOOD
+        pub Trim: unsafe extern "system" fn(),         // TOOD
+        pub SetupTLSCachesOnCurrentThread: unsafe extern "system" fn(), // TOOD
+        pub ClearAndDisableTLSCachesOnCurrentThread: unsafe extern "system" fn(), // TOOD // TOOD
+        pub InitializeStatsMetadata: unsafe extern "system" fn(), // TOOD
+        pub UpdateStats: unsafe extern "system" fn(),  // TOOD
+        pub GetAllocatorStats: unsafe extern "system" fn(), // TOOD
+        pub DumpAllocatorStats: unsafe extern "system" fn(), // TOOD
+        pub IsInternallyThreadSafe: unsafe extern "system" fn(), // TOOD
+        pub ValidateHeap: unsafe extern "system" fn(), // TOOD
+        pub GetDescriptiveName: unsafe extern "system" fn(), // TOOD
+    }
 
     #[derive(Debug)]
     #[repr(C)]
@@ -778,6 +862,11 @@ mod ue {
         pub data: *const T,
         pub num: i32,
         pub max: i32,
+    }
+    impl<T> Drop for TArray<T> {
+        fn drop(&mut self) {
+            GMALLOC.get().free(self.data as *mut c_void);
+        }
     }
     impl<T> Default for TArray<T> {
         fn default() -> Self {
