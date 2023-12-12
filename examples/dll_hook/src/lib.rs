@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::{ffi::c_void, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
-use patternsleuth::resolvers::unreal::{ConsoleManagerSingleton, FNameToStringVoid, GUObjectArray};
+use patternsleuth::resolvers::unreal::*;
 use simple_log::{error, info, LogConfigBuilder};
 use windows::Win32::{
     Foundation::HMODULE,
@@ -75,6 +75,7 @@ fn setup() -> Result<PathBuf> {
         .time_format("%Y-%m-%d %H:%M:%S.%f")
         .level("debug")
         .output_file()
+        .size(u64::MAX)
         .build();
     simple_log::new(config).map_err(|e| anyhow!("{e}"))?;
     Ok(bin_dir.to_path_buf())
@@ -112,6 +113,9 @@ pub struct DllHookResolution {
     stop_recording_replay: Arc<StopRecordingReplay>,
     guobject_array: Arc<GUObjectArray>,
     fnametostring: Arc<FNameToStringVoid>,
+    allocate_uobject: Arc<FUObjectArrayAllocateUObjectIndex>,
+    free_uobject: Arc<FUObjectArrayFreeUObjectIndex>,
+    game_tick: Arc<UGameEngineTick>,
 }
 
 mod resolvers {
@@ -120,7 +124,7 @@ mod resolvers {
     use patternsleuth::{
         resolvers::{
             futures::{future::join_all, try_join},
-            unreal::{FNameToStringVoid, GUObjectArray},
+            unreal::*,
             *,
         },
         scanner::Pattern,
@@ -150,19 +154,39 @@ mod resolvers {
     });
 
     impl_resolver!(DllHookResolution, |ctx| async {
-        let (start_recording_replay, stop_recording_replay, guobject_array, fnametostring) = try_join!(
+        let (
+            start_recording_replay,
+            stop_recording_replay,
+            guobject_array,
+            fnametostring,
+            allocate_uobject,
+            free_uobject,
+            game_tick,
+        ) = try_join!(
             ctx.resolve(StartRecordingReplay::resolver()),
             ctx.resolve(StopRecordingReplay::resolver()),
             ctx.resolve(GUObjectArray::resolver()),
             ctx.resolve(FNameToStringVoid::resolver()),
+            ctx.resolve(FUObjectArrayAllocateUObjectIndex::resolver()),
+            ctx.resolve(FUObjectArrayFreeUObjectIndex::resolver()),
+            ctx.resolve(UGameEngineTick::resolver()),
         )?;
         Ok(DllHookResolution {
             start_recording_replay,
             stop_recording_replay,
             guobject_array,
             fnametostring,
+            allocate_uobject,
+            free_uobject,
+            game_tick,
         })
     });
+}
+
+retour::static_detour! {
+    static HookUGameEngineTick: unsafe extern "system" fn(*mut c_void);
+    static HookAllocateUObject: unsafe extern "system" fn(*mut c_void, *const c_void, bool);
+    static HookFreeUObject: unsafe extern "system" fn(*mut c_void, *const c_void);
 }
 
 unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
@@ -175,6 +199,33 @@ unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
     info!("results: {:?}", resolution);
 
     info!("done executing");
+
+    HookUGameEngineTick.initialize(std::mem::transmute(resolution.game_tick.0), |game_engine| {
+        info!("tick");
+        HookUGameEngineTick.call(game_engine);
+    })?;
+    HookUGameEngineTick.enable()?;
+
+    HookAllocateUObject.initialize(
+        std::mem::transmute(resolution.allocate_uobject.0),
+        |this, object, merging_threads| {
+            HookAllocateUObject.call(this, object, merging_threads);
+            info!("allocated object {this:?} {object:?} {merging_threads}");
+        },
+    )?;
+    HookAllocateUObject.enable()?;
+    HookFreeUObject.initialize(
+        std::mem::transmute(resolution.free_uobject.0),
+        |this, object| {
+            info!("freeing object {this:?} {object:?}");
+            HookFreeUObject.call(this, object);
+        },
+    )?;
+    HookFreeUObject.enable()?;
+
+    info!("hooked");
+
+    return Ok(());
 
     if true {
         std::thread::spawn(move || {
