@@ -525,6 +525,7 @@ mod gui {
     }
 }
 
+#[allow(non_snake_case)]
 mod ue {
     use std::ffi::{c_void, OsString};
 
