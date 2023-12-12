@@ -145,8 +145,8 @@ impl_resolver_singleton!(FUObjectArrayAllocateUObjectIndex, |ctx| async {
 
 /// public: void __cdecl FUObjectArray::FreeUObjectIndex(class UObjectBase *)
 #[derive(Debug)]
-pub struct FUObjectFreeUObjectIndex(pub usize);
-impl_resolver_singleton!(FUObjectFreeUObjectIndex, |ctx| async {
+pub struct FUObjectArrayFreeUObjectIndex(pub usize);
+impl_resolver_singleton!(FUObjectArrayFreeUObjectIndex, |ctx| async {
     let refs_future = async {
         let strings = join_all([
             ctx.scan(
@@ -196,7 +196,7 @@ impl_resolver_singleton!(FUObjectFreeUObjectIndex, |ctx| async {
         .flatten()
         .filter(|f| *f != allocate_uobject.0);
 
-    Ok(FUObjectFreeUObjectIndex(ensure_one(fns)?))
+    Ok(FUObjectArrayFreeUObjectIndex(ensure_one(fns)?))
 });
 
 /// void __cdecl UObjectBaseShutdown(void)
