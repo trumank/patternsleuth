@@ -117,6 +117,10 @@ pub struct DllHookResolution {
     allocate_uobject: Arc<FUObjectArrayAllocateUObjectIndex>,
     free_uobject: Arc<FUObjectArrayFreeUObjectIndex>,
     game_tick: Arc<UGameEngineTick>,
+    kismet_system_library: Arc<KismetSystemLibrary>,
+    fframe_step_via_exec: Arc<FFrameStepViaExec>,
+    fframe_step: Arc<FFrameStep>,
+    fframe_step_explicit_property: Arc<FFrameStepExplicitProperty>,
 }
 
 mod resolvers {
@@ -163,6 +167,10 @@ mod resolvers {
             allocate_uobject,
             free_uobject,
             game_tick,
+            kismet_system_library,
+            fframe_step_via_exec,
+            fframe_step,
+            fframe_step_explicit_property,
         ) = try_join!(
             ctx.resolve(StartRecordingReplay::resolver()),
             ctx.resolve(StopRecordingReplay::resolver()),
@@ -172,6 +180,10 @@ mod resolvers {
             ctx.resolve(FUObjectArrayAllocateUObjectIndex::resolver()),
             ctx.resolve(FUObjectArrayFreeUObjectIndex::resolver()),
             ctx.resolve(UGameEngineTick::resolver()),
+            ctx.resolve(KismetSystemLibrary::resolver()),
+            ctx.resolve(FFrameStepViaExec::resolver()),
+            ctx.resolve(FFrameStep::resolver()),
+            ctx.resolve(FFrameStepExplicitProperty::resolver()),
         )?;
         Ok(DllHookResolution {
             start_recording_replay,
@@ -182,14 +194,19 @@ mod resolvers {
             allocate_uobject,
             free_uobject,
             game_tick,
+            kismet_system_library,
+            fframe_step_via_exec,
+            fframe_step,
+            fframe_step_explicit_property,
         })
     });
 }
 
 retour::static_detour! {
-    static HookUGameEngineTick: unsafe extern "system" fn(*mut c_void);
+    static HookUGameEngineTick: unsafe extern "system" fn(*mut c_void, f32, u8);
     static HookAllocateUObject: unsafe extern "system" fn(*mut c_void, *const c_void, bool);
     static HookFreeUObject: unsafe extern "system" fn(*mut c_void, *const c_void);
+    static HookKismetPrintString: unsafe extern "system" fn(*mut ue::UObjectBase, *mut ue::kismet::FFrame, *mut c_void);
 }
 
 unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
@@ -202,12 +219,16 @@ unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
     info!("results: {:?}", resolution);
 
     ue::GMALLOC.set(resolution.gmalloc.0 as *const c_void);
+    *ue::FFRAME_STEP.lock().unwrap() = Some(std::mem::transmute(resolution.fframe_step.0));
+    *ue::FFRAME_STEP_EXPLICIT_PROPERTY.lock().unwrap() = Some(std::mem::transmute(
+        resolution.fframe_step_explicit_property.0,
+    ));
 
     HookUGameEngineTick.initialize(
         std::mem::transmute(resolution.game_tick.0),
-        move |game_engine| {
-            //info!("tick");
-            HookUGameEngineTick.call(game_engine);
+        move |game_engine, delta_seconds, idle_mode| {
+            //info!("tick time={:0.5}", delta_seconds);
+            HookUGameEngineTick.call(game_engine, delta_seconds, idle_mode);
         },
     )?;
     HookUGameEngineTick.enable()?;
@@ -228,6 +249,41 @@ unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
         },
     )?;
     HookFreeUObject.enable()?;
+
+    HookKismetPrintString.initialize(
+        std::mem::transmute(
+            *resolution
+                .kismet_system_library
+                .0
+                .get("PrintString")
+                .unwrap(),
+        ),
+        |context, stack, result| {
+            let stack = &mut *stack;
+
+            let mut ctx: Option<&ue::UObject> = None;
+            let mut string = ue::FString::default();
+            let mut print_to_screen = false;
+            let mut print_to_log = false;
+            let mut color = ue::FLinearColor::default();
+            let mut duration = 0f32;
+
+            ue::kismet::arg(stack, &mut ctx);
+            ue::kismet::arg(stack, &mut string);
+            ue::kismet::arg(stack, &mut print_to_screen);
+            ue::kismet::arg(stack, &mut print_to_log);
+            ue::kismet::arg(stack, &mut color);
+            ue::kismet::arg(stack, &mut duration);
+
+            let s = string.to_os_string();
+            info!("PrintString({s:?})");
+
+            if !stack.code.is_null() {
+                stack.code = stack.code.add(1);
+            }
+        },
+    )?;
+    HookKismetPrintString.enable()?;
 
     info!("hooked");
 
@@ -542,6 +598,18 @@ mod ue {
         ptr: Mutex::new(None),
     };
 
+    pub static FFRAME_STEP_EXPLICIT_PROPERTY: Mutex<Option<FnFFrame_StepExplicitProperty>> =
+        Mutex::new(None);
+    pub static FFRAME_STEP: Mutex<Option<FnFFrame_Step>> = Mutex::new(None);
+
+    pub type FnFFrame_Step =
+        unsafe extern "system" fn(stack: &mut kismet::FFrame, *mut UObject, result: *mut c_void);
+    pub type FnFFrame_StepExplicitProperty = unsafe extern "system" fn(
+        stack: &mut kismet::FFrame,
+        result: *mut c_void,
+        property: *const FProperty,
+    );
+
     #[derive(Debug)]
     #[repr(C)]
     pub struct GMalloc {
@@ -759,6 +827,14 @@ mod ue {
 
     #[derive(Debug)]
     #[repr(C)]
+    struct FOutputDevice {
+        vtable: *const c_void,
+        /* offset 0x0008 */ bSuppressEventTag: bool,
+        /* offset 0x0009 */ bAutoEmitLineTerminator: bool,
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
     pub struct UField {
         pub UObject: UObject,
         pub Next: *const UField,
@@ -773,13 +849,34 @@ mod ue {
 
     #[derive(Debug)]
     #[repr(C)]
-    pub struct FField {
+    struct FFieldClass {
         // TODO
-        /* offset 0x0008 */ //FFieldClass* ClassPrivate;
-        /* offset 0x0010 */ //FFieldVariant Owner;
-        /* offset 0x0020 */ //FField* Next;
-        /* offset 0x0028 */ //FName NamePrivate;
-        /* offset 0x0030 */ //EObjectFlags FlagsPrivate;
+        /* offset 0x0000 */
+        Name: FName,
+        /* offset 0x0008 */ //unhandled_primitive.kind /* UQuad */ Id;
+        /* offset 0x0010 */ //unhandled_primitive.kind /* UQuad */ CastFlags;
+        /* offset 0x0018 */ //EClassFlags ClassFlags;
+        /* offset 0x0020 */ //FFieldClass* SuperClass;
+        /* offset 0x0028 */ //FField* DefaultObject;
+        /* offset 0x0030 */ //Type0x1159e /* TODO: figure out how to name it */* ConstructFn;
+        /* offset 0x0038 */ //FThreadSafeCounter UnqiueNameIndexCounter;
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
+    struct FFieldVariant {
+        /* offset 0x0000 */ container: *const c_void,
+        /* offset 0x0008 */ bIsUObject: bool,
+    }
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct FField {
+        /* offset 0x0008 */ ClassPrivate: *const FFieldClass,
+        /* offset 0x0010 */ Owner: FFieldVariant,
+        /* offset 0x0020 */ Next: *const FField,
+        /* offset 0x0028 */ NamePrivate: FName,
+        /* offset 0x0030 */ FlagsPrivate: EObjectFlags,
     }
 
     pub struct FProperty {
@@ -916,6 +1013,64 @@ mod ue {
             }
             #[cfg(not(target_os = "windows"))]
             unimplemented!()
+        }
+    }
+
+    #[derive(Debug, Default)]
+    #[repr(C)]
+    pub struct FVector {
+        pub x: f32,
+        pub y: f32,
+        pub z: f32,
+    }
+
+    #[derive(Debug, Default)]
+    #[repr(C)]
+    pub struct FLinearColor {
+        pub r: f32,
+        pub g: f32,
+        pub b: f32,
+        pub a: f32,
+    }
+
+    pub mod kismet {
+        use super::*;
+
+        #[derive(Debug)]
+        #[repr(C)]
+        pub struct FFrame {
+            /* offset 0x0000 */ pub base: FOutputDevice,
+            /* offset 0x0010 */ pub node: *const c_void,
+            /* offset 0x0018 */ pub object: *mut UObject,
+            /* offset 0x0020 */ pub code: *const c_void,
+            /* offset 0x0028 */ pub locals: *const c_void,
+            /* offset 0x0030 */ pub most_recent_property: *const FProperty,
+            /* offset 0x0038 */ pub most_recent_property_address: *const c_void,
+            /* offset 0x0040 */ pub flow_stack: [u8; 0x30],
+            /* offset 0x0070 */ pub previous_frame: *const FFrame,
+            /* offset 0x0078 */ pub out_parms: *const c_void,
+            /* offset 0x0080 */ pub property_chain_for_compiled_in: *const FField,
+            /* offset 0x0088 */ pub current_native_function: *const c_void,
+            /* offset 0x0090 */ pub b_array_context_failed: bool,
+        }
+
+        pub fn arg<T: Sized>(stack: &mut FFrame, output: &mut T) {
+            //dbg!(&stack);
+            let output = output as *const _ as *mut _;
+            unsafe {
+                //simple_log::info!("{:x?}", stack);
+                if stack.code.is_null() {
+                    let cur = stack.property_chain_for_compiled_in;
+                    stack.property_chain_for_compiled_in = (*cur).Next;
+                    FFRAME_STEP_EXPLICIT_PROPERTY.lock().unwrap().unwrap()(
+                        stack,
+                        output,
+                        cur as *const FProperty,
+                    );
+                } else {
+                    FFRAME_STEP.lock().unwrap().unwrap()(stack, stack.object, output);
+                }
+            }
         }
     }
 }
