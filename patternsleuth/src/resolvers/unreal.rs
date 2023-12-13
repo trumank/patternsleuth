@@ -267,6 +267,25 @@ impl_resolver_singleton!(FNameToStringFString, |ctx| async {
     )?))
 });
 
+/// class UObject * __cdecl StaticConstructObject_Internal(struct FStaticConstructObjectParameters const &)
+#[derive(Debug)]
+pub struct StaticConstructObjectInternal(pub usize);
+impl_resolver_singleton!(StaticConstructObjectInternal, |ctx| async {
+    let patterns = [
+        "48 89 44 24 28 C7 44 24 20 00 00 00 00 E8 | ?? ?? ?? ?? 48 8B 5C 24 ?? 48 8B ?? 24",
+        "E8 | ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? C0 E9 ?? 32 88 ?? ?? ?? ?? 80 E1 01 30 88 ?? ?? ?? ?? 48",
+        "E8 | ?? ?? ?? ?? 48 8B D8 48 39 75 30 74 15",
+    ];
+
+    let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+    Ok(StaticConstructObjectInternal(try_ensure_one(
+        res.iter()
+            .flatten()
+            .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) }),
+    )?))
+});
+
 /// public: void __cdecl UObject::SkipFunction(struct FFrame &, void *const, class UFunction *)
 #[derive(Debug)]
 pub struct UObjectSkipFunction(pub usize);
