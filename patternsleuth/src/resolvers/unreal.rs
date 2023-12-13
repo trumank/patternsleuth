@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::{Debug, Display},
+};
 
 use futures::{future::join_all, try_join};
 use iced_x86::{Code, Decoder, DecoderOptions, Instruction, Register};
@@ -12,13 +15,58 @@ use crate::{
 };
 
 /// currently seems to be 4.22+
-#[derive(Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct EngineVersion {
+    pub major: u16,
+    pub minor: u16,
+}
+impl Display for EngineVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+impl Debug for EngineVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "EngineVersion({}.{})", self.major, self.minor)
+    }
+}
+impl_resolver!(EngineVersion, |ctx| async {
+    let patterns = [
+        "C7 03 | 04 00 ?? 00 66 89 4B 04 48 3B F8 74 ?? 48",
+        "C7 05 ?? ?? ?? ?? | 04 00 ?? 00 66 89 ?? ?? ?? ?? ?? C7 05",
+        "C7 05 ?? ?? ?? ?? | 04 00 ?? 00 66 89 ?? ?? ?? ?? ?? 89",
+        "41 C7 ?? | 04 00 ?? 00 ?? ?? 00 00 00 66 41 89",
+        "41 C7 ?? | 04 00 18 00 66 41 89 ?? 04",
+        "41 C7 04 24 | 04 00 ?? 00 66 ?? 89 ?? 24",
+        "41 C7 04 24 | 04 00 ?? 00 B9 ?? 00 00 00",
+        "C7 05 ?? ?? ?? ?? | 04 00 ?? 00 89 05 ?? ?? ?? ?? E8",
+        "C7 05 ?? ?? ?? ?? | 04 00 ?? 00 66 89 ?? ?? ?? ?? ?? 89 05",
+        "C7 46 20 | 04 00 ?? 00 66 44 89 76 24 44 89 76 28 48 39 C7",
+        "C7 03 | 04 00 ?? 00 66 44 89 63 04 C7 43 08 C1 5C 08 80 E8",
+        "C7 47 20 | 04 00 ?? 00 66 89 6F 24 C7 47 28 ?? ?? ?? ?? 49",
+        "C7 03 | 04 00 ?? 00 66 89 6B 04 89 7B 08 48 83 C3 10",
+        "41 C7 06 | 05 00 ?? ?? 48 8B 5C 24 ?? 49 8D 76 ?? 33 ED 41 89 46",
+        "C7 06 | 05 00 ?? ?? 48 8B 5C 24 20 4C 8D 76 10 33 ED",
+    ];
+
+    let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+    try_ensure_one(res.iter().flatten().map(|a| {
+        Ok(EngineVersion {
+            major: ctx.image().memory.u16_le(*a)?,
+            minor: ctx.image().memory.u16_le(a + 2)?,
+        })
+    }))
+});
+
+/// currently seems to be 4.22+
+#[derive(Debug)]
+pub struct EngineVersionStrings {
     pub branch_name: String,
     pub build_date: String,
     pub build_version: String,
 }
-impl_resolver!(EngineVersion, |ctx| async {
+impl_resolver!(EngineVersionStrings, |ctx| async {
     let patterns = [
         "48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC 48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC 48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC",
     ];
@@ -49,7 +97,7 @@ impl_resolver!(EngineVersion, |ctx| async {
                 .filter(|r| months.contains(&r.to_vec()))
                 .is_some()
             {
-                return Ok(EngineVersion {
+                return Ok(EngineVersionStrings {
                     branch_name: mem.read_wstring(caps[0].rip())?,
                     build_date: mem.read_wstring(caps[1].rip())?,
                     build_version: mem.read_wstring(caps[2].rip())?,

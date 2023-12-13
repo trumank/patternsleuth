@@ -655,6 +655,22 @@ pub trait MemoryTrait<'data> {
 
 /// Memory accessor helpers
 pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
+    /// Return i16 at `address`
+    fn i16_le(&self, address: usize) -> Result<i16, MemoryOutOfBoundsError> {
+        Ok(i16::from_le_bytes(
+            self.range(address..address + std::mem::size_of::<i16>())?
+                .try_into()
+                .unwrap(),
+        ))
+    }
+    /// Return u16 at `address`
+    fn u16_le(&self, address: usize) -> Result<u16, MemoryOutOfBoundsError> {
+        Ok(u16::from_le_bytes(
+            self.range(address..address + std::mem::size_of::<u16>())?
+                .try_into()
+                .unwrap(),
+        ))
+    }
     /// Return i32 at `address`
     fn i32_le(&self, address: usize) -> Result<i32, MemoryOutOfBoundsError> {
         Ok(i32::from_le_bytes(
