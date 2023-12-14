@@ -9,7 +9,8 @@ use patternsleuth_scanner::Pattern;
 
 use crate::{
     resolvers::{
-        bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, Result,
+        bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, Context,
+        Result,
     },
     Addressable, Matchable, MemoryAccessorTrait, MemoryTrait,
 };
@@ -332,17 +333,64 @@ impl_resolver_singleton!(FNameToStringVoid, |ctx| async {
 /// public: void __cdecl FName::ToString(class FString &) const
 #[derive(Debug)]
 pub struct FNameToStringFString(pub usize);
-impl_resolver_singleton!(FNameToStringFString, |ctx| async {
+impl_resolver!(FNameToStringFString, |ctx| async {
     let patterns =
         ["48 8b 48 ?? 48 89 4c 24 ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00 48 8d"];
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
-    Ok(FNameToStringFString(try_ensure_one(
+    if let Ok(addr) = try_ensure_one(
         res.iter()
             .flatten()
             .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) }),
-    )?))
+    ) {
+        return Ok(FNameToStringFString(addr));
+    }
+    // pattern failed to fallback to string ref
+
+    let s = Pattern::from_bytes(
+        //"  DrivingBone: %s\nDrivenParamet"
+        "0x%08x [%s]\0"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect(),
+    )
+    .unwrap();
+    let strings = ctx.scan(s).await;
+
+    let refs = join_all(
+        strings
+            .iter()
+            .map(|s| ctx.scan(Pattern::new(format!("48 8d 15 X0x{s:x}")).unwrap())),
+    )
+    .await;
+
+    let fn_gather_debug_data = ensure_one(
+        refs.into_iter()
+            .flatten()
+            .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
+            .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
+            .into_iter()
+            .flatten(),
+    )?;
+
+    let bytes = ctx.image().memory.range_from(fn_gather_debug_data..)?;
+
+    let mut decoder = Decoder::with_ip(
+        64,
+        &bytes[0..bytes.len().min(200)],
+        fn_gather_debug_data as u64,
+        DecoderOptions::NONE,
+    );
+
+    let addr = decoder
+        .iter()
+        .find_map(|i| {
+            (i.code() == Code::Call_rel32_64).then_some(i.memory_displacement64() as usize)
+        })
+        .context("did not find CALL instruction")?;
+
+    Ok(FNameToStringFString(addr))
 });
 
 /// private: __cdecl FText::FText(class FString &&)
@@ -720,4 +768,3 @@ impl_resolver!(UtilStringExtractor, |ctx| async {
             .collect::<Result<HashSet<String>>>()?,
     ))
 });
-
