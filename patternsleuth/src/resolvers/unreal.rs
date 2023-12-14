@@ -346,7 +346,7 @@ impl_resolver!(FNameToStringFString, |ctx| async {
     ) {
         return Ok(FNameToStringFString(addr));
     }
-    // pattern failed to fallback to string ref
+    // pattern failed, fallback to string ref
 
     let s = Pattern::from_bytes(
         //"  DrivingBone: %s\nDrivenParamet"
