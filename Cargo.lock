@@ -2572,6 +2572,7 @@ dependencies = [
  "futures-scopes",
  "iced-x86",
  "inventory",
+ "itertools 0.11.0",
  "libc",
  "memchr",
  "msvc-demangler",

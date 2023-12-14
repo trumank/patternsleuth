@@ -315,6 +315,37 @@ impl_resolver_singleton!(FNameToStringFString, |ctx| async {
     )?))
 });
 
+/// private: __cdecl FText::FText(class FString &&)
+#[derive(Debug)]
+pub struct FTextFString(pub usize);
+impl_resolver_singleton!(FTextFString, |ctx| async {
+    enum Directness {
+        Direct,
+        Indirect,
+    }
+    let patterns = [
+        (Directness::Indirect, "40 53 48 83 ec ?? 48 8b d9 e8 | ?? ?? ?? ?? 83 4b ?? 12 48 8b c3 48 83 ?? ?? 5b c3"),
+        (Directness::Indirect, "eb 12 48 8d ?? 24 ?? e8 | ?? ?? ?? ?? ?? 02 00 00 00 48 8b 10"),
+        (Directness::Direct, "48 89 5C 24 10 48 89 6C 24 18 56 57 41 54 41 56 41 57 48 83 EC 40 45 33 E4 48 8B F1 41 8B DC 4C 8B F2 89 5C 24 70 41 8D 4C 24 70 E8 ?? ?? ?? FF 48 8B F8 48 85 C0 0F 84 ?? 00 00 00 49 63 5E 08 ?? 8B ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 8B ?? EB 2E 45 33 C0 48 8D 4C 24 20 8B D3 E8"),
+    ];
+
+    let res = join_all(
+        patterns
+            .iter()
+            .map(|(tag, p)| ctx.scan_tagged(tag, Pattern::new(p).unwrap())),
+    )
+    .await;
+
+    let mem = &ctx.image().memory;
+
+    Ok(FTextFString(try_ensure_one(res.iter().flat_map(
+        |(directness, _, a)| match directness {
+            Directness::Direct => itertools::Either::Right(a.iter().map(|a| Ok(*a))),
+            Directness::Indirect => itertools::Either::Left(a.iter().map(|a| Ok(mem.rip4(*a)?))),
+        },
+    ))?))
+});
+
 /// class UObject * __cdecl StaticConstructObject_Internal(struct FStaticConstructObjectParameters const &)
 #[derive(Debug)]
 pub struct StaticConstructObjectInternal(pub usize);
