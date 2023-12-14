@@ -280,6 +280,36 @@ impl_resolver_singleton!(UObjectBaseShutdown, |ctx| async {
     Ok(UObjectBaseShutdown(ensure_one(fns)?))
 });
 
+/// public: __cdecl FName::FName(wchar_t const *, enum EFindName)
+#[derive(Debug)]
+pub struct FNameCtorWchar(pub usize);
+impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
+    let s = Pattern::from_bytes(
+        "MovementComponent0\x00"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect(),
+    )
+    .unwrap();
+    let strings = ctx.scan(s).await;
+
+    let refs = join_all(strings.iter().map(|s| {
+        ctx.scan(
+            Pattern::new(format!(
+                "41 b8 01 00 00 00 48 8d 15 X0x{s:x} 48 8d 0d ?? ?? ?? ?? e9 | ?? ?? ?? ??"
+            ))
+            .unwrap(),
+        )
+    }))
+    .await;
+
+    Ok(FNameCtorWchar(try_ensure_one(
+        refs.iter()
+            .flatten()
+            .map(|a| Ok(ctx.image().memory.rip4(*a)?)),
+    )?))
+});
+
 /// public: class FString __cdecl FName::ToString(void) const
 #[derive(Debug)]
 pub struct FNameToStringVoid(pub usize);
@@ -667,3 +697,27 @@ impl_resolver_singleton!(ConsoleManagerSingleton, |ctx| async {
 
     Ok(ConsoleManagerSingleton(ensure_one(fns)?))
 });
+
+/// useful for extracting strings from common patterns for analysis
+#[derive(Debug)]
+pub struct UtilStringExtractor(pub HashSet<String>);
+impl_resolver!(UtilStringExtractor, |ctx| async {
+    let strings = ctx
+        .scan(
+            Pattern::new(
+                "41 b8 01 00 00 00 48 8d 15 | ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e9 ?? ?? ?? ??",
+            )
+            .unwrap(),
+        )
+        .await;
+
+    let mem = &ctx.image().memory;
+
+    Ok(UtilStringExtractor(
+        strings
+            .into_iter()
+            .map(|a| Ok(mem.read_wstring(mem.rip4(a)?)?))
+            .collect::<Result<HashSet<String>>>()?,
+    ))
+});
+
