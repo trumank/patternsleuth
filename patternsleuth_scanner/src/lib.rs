@@ -119,6 +119,7 @@ impl Pattern {
                                 sig.push(0);
                                 mask.push(0);
                             }
+                            i += 4;
                         } else {
                             bail!("bad pattern word \"{}\"", w)
                         }
