@@ -319,13 +319,66 @@ impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
 #[derive(Debug)]
 pub struct FNameToString(pub usize);
 impl_resolver_singleton!(FNameToString, |ctx| async {
-    let either = join!(
+    let string = async {
+        // Locates either variant by searching for a string ref and finding the first function
+        // call directly above it. Which variant depends on how much inlining has occured
+        let s = Pattern::from_bytes(
+            "  DrivingBone: %s\nDrivenParamet"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect(),
+        )
+        .unwrap();
+        let strings = ctx.scan(s).await;
+
+        let refs = join_all(
+            strings
+                .iter()
+                .map(|s| ctx.scan(Pattern::new(format!("48 8d 15 X0x{s:x}")).unwrap())),
+        )
+        .await;
+
+        let fn_gather_debug_data = ensure_one(
+            refs.into_iter()
+                .flatten()
+                .map(|r| -> Result<_> {
+                    Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start..r))
+                })
+                .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
+                .into_iter()
+                .flatten(),
+        )?;
+
+        let bytes = ctx.image().memory.range(fn_gather_debug_data.clone())?;
+
+        let mut decoder = Decoder::with_ip(
+            64,
+            bytes,
+            fn_gather_debug_data.start as u64,
+            DecoderOptions::NONE,
+        );
+
+        let addr = decoder
+            .iter()
+            .filter_map(|i| {
+                (i.code() == Code::Call_rel32_64).then_some(i.memory_displacement64() as usize)
+            })
+            .last()
+            .context("did not find CALL instruction")?;
+
+        let res: Result<usize> = Ok(addr);
+
+        res
+    };
+
+    let any = join!(
         ctx.resolve(FNameToStringFString::resolver()),
         ctx.resolve(FNameToStringVoid::resolver()),
+        string,
     );
 
     Ok(FNameToString(
-        either.0.map(|r| r.0).or(either.1.map(|r| r.0))?,
+        any.0.map(|r| r.0).or(any.1.map(|r| r.0)).or(any.2)?,
     ))
 });
 
@@ -357,58 +410,11 @@ impl_resolver!(FNameToStringFString, |ctx| async {
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
-    if let Ok(addr) = try_ensure_one(
+    Ok(FNameToStringFString(try_ensure_one(
         res.iter()
             .flatten()
             .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) }),
-    ) {
-        return Ok(FNameToStringFString(addr));
-    }
-    // pattern failed, fallback to string ref
-
-    let s = Pattern::from_bytes(
-        //"  DrivingBone: %s\nDrivenParamet"
-        "0x%08x [%s]\0"
-            .encode_utf16()
-            .flat_map(u16::to_le_bytes)
-            .collect(),
-    )
-    .unwrap();
-    let strings = ctx.scan(s).await;
-
-    let refs = join_all(
-        strings
-            .iter()
-            .map(|s| ctx.scan(Pattern::new(format!("48 8d 15 X0x{s:x}")).unwrap())),
-    )
-    .await;
-
-    let fn_gather_debug_data = ensure_one(
-        refs.into_iter()
-            .flatten()
-            .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
-            .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
-            .into_iter()
-            .flatten(),
-    )?;
-
-    let bytes = ctx.image().memory.range_from(fn_gather_debug_data..)?;
-
-    let mut decoder = Decoder::with_ip(
-        64,
-        &bytes[0..bytes.len().min(200)],
-        fn_gather_debug_data as u64,
-        DecoderOptions::NONE,
-    );
-
-    let addr = decoder
-        .iter()
-        .find_map(|i| {
-            (i.code() == Code::Call_rel32_64).then_some(i.memory_displacement64() as usize)
-        })
-        .context("did not find CALL instruction")?;
-
-    Ok(FNameToStringFString(addr))
+    )?))
 });
 
 /// private: __cdecl FText::FText(class FString &&)
