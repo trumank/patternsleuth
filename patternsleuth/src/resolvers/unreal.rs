@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use futures::{future::join_all, try_join};
+use futures::{future::join_all, join, try_join};
 use iced_x86::{Code, Decoder, DecoderOptions, Instruction, Register};
 use patternsleuth_scanner::Pattern;
 
@@ -309,6 +309,24 @@ impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
             .flatten()
             .map(|a| Ok(ctx.image().memory.rip4(*a)?)),
     )?))
+});
+
+/// Can be either of the following:
+/// `public: class FString __cdecl FName::ToString(void) const`
+/// `public: void __cdecl FName::ToString(class FString &) const`
+///
+/// They take the same arguments and either can be used as long as the return value isn't used.
+#[derive(Debug)]
+pub struct FNameToString(pub usize);
+impl_resolver_singleton!(FNameToString, |ctx| async {
+    let either = join!(
+        ctx.resolve(FNameToStringFString::resolver()),
+        ctx.resolve(FNameToStringVoid::resolver()),
+    );
+
+    Ok(FNameToString(
+        either.0.map(|r| r.0).or(either.1.map(|r| r.0))?,
+    ))
 });
 
 /// public: class FString __cdecl FName::ToString(void) const
