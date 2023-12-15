@@ -286,22 +286,21 @@ impl_resolver_singleton!(UObjectBaseShutdown, |ctx| async {
 #[derive(Debug)]
 pub struct FNameCtorWchar(pub usize);
 impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
-    let s = Pattern::from_bytes(
-        "MovementComponent0\x00"
-            .encode_utf16()
-            .flat_map(u16::to_le_bytes)
-            .collect(),
-    )
-    .unwrap();
-    let strings = ctx.scan(s).await;
-
-    let refs = join_all(strings.iter().map(|s| {
+    let strings = ["TGPUSkinVertexFactoryUnlimited\0", "MovementComponent0\0"];
+    let strings = join_all(strings.iter().map(|s| {
         ctx.scan(
-            Pattern::new(format!(
-                "41 b8 01 00 00 00 48 8d 15 X0x{s:x} 48 8d 0d ?? ?? ?? ?? e9 | ?? ?? ?? ??"
-            ))
-            .unwrap(),
+            Pattern::from_bytes(s.encode_utf16().flat_map(u16::to_le_bytes).collect()).unwrap(),
         )
+    }))
+    .await;
+
+    let refs = join_all(strings.iter().flatten().flat_map(|s| {
+        [
+            format!("48 8d 15 X0x{s:x} 48 8d 0d ?? ?? ?? ?? e8 | ?? ?? ?? ??"),
+            format!("41 b8 01 00 00 00 48 8d 15 X0x{s:x} 48 8d 0d ?? ?? ?? ?? e9 | ?? ?? ?? ??"),
+        ]
+        .into_iter()
+        .map(|p| ctx.scan(Pattern::new(p).unwrap()))
     }))
     .await;
 
