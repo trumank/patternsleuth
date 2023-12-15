@@ -341,7 +341,7 @@ impl<'data> Image<'data> {
         }
         Ok(new)
     }
-    fn populate_exception_cache(&mut self) -> Result<(), MemoryOutOfBoundsError> {
+    fn populate_exception_cache(&mut self) -> Result<(), MemoryAccessError> {
         for i in self.exception_directory_range.clone().step_by(12) {
             let f = RuntimeFunction::read(&self.memory, self.base_address, i)?;
             self.exception_children_cache.insert(f.range.start, vec![]);
@@ -391,7 +391,7 @@ impl<'data> Image<'data> {
     pub fn get_function(
         &self,
         address: usize,
-    ) -> Result<Option<RuntimeFunction>, MemoryOutOfBoundsError> {
+    ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
         let size = 12;
         let mut min = 0;
         let mut max = self.exception_directory_range.len() / size - 1;
@@ -424,7 +424,7 @@ impl<'data> Image<'data> {
     pub fn get_root_function(
         &self,
         address: usize,
-    ) -> Result<Option<RuntimeFunction>, MemoryOutOfBoundsError> {
+    ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
         if let Some(f) = self.get_function(address)? {
             let mut f = RuntimeFunction {
                 range: f.range,
@@ -464,7 +464,7 @@ impl<'data> Image<'data> {
     pub fn get_child_functions(
         &self,
         address: usize,
-    ) -> Result<Vec<RuntimeFunction>, MemoryOutOfBoundsError> {
+    ) -> Result<Vec<RuntimeFunction>, MemoryAccessError> {
         let mut queue = vec![address];
         let mut all_children = vec![self.get_function(address)?.unwrap()];
         while let Some(next) = queue.pop() {
@@ -606,7 +606,7 @@ impl RuntimeFunction {
         memory: &impl MemoryTrait<'data>,
         base_address: usize,
         address: usize,
-    ) -> Result<Self, MemoryOutOfBoundsError> {
+    ) -> Result<Self, MemoryAccessError> {
         let addr_begin = base_address + memory.u32_le(address)? as usize;
         let addr_end = base_address + memory.u32_le(address + 4)? as usize;
         let unwind = base_address + memory.u32_le(address + 8)? as usize;
@@ -624,13 +624,31 @@ impl RuntimeFunction {
 }
 
 #[derive(Debug, Clone)]
-pub struct MemoryOutOfBoundsError;
-impl std::fmt::Display for MemoryOutOfBoundsError {
+pub enum MemoryAccessError {
+    MemoryOutOfBoundsError,
+    Utf8Error,
+    Utf16Error,
+}
+impl std::error::Error for MemoryAccessError {}
+impl std::fmt::Display for MemoryAccessError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MemoryOutOfBoundsError")
+        match self {
+            Self::MemoryOutOfBoundsError => write!(f, "MemoryOutOfBoundsError"),
+            Self::Utf8Error => write!(f, "Utf8Error"),
+            Self::Utf16Error => write!(f, "Utf16Error"),
+        }
     }
 }
-impl std::error::Error for MemoryOutOfBoundsError {}
+impl From<std::str::Utf8Error> for MemoryAccessError {
+    fn from(_: std::str::Utf8Error) -> Self {
+        Self::Utf8Error
+    }
+}
+impl From<std::string::FromUtf16Error> for MemoryAccessError {
+    fn from(_: std::string::FromUtf16Error) -> Self {
+        Self::Utf16Error
+    }
+}
 
 /// Continuous section of memory
 pub trait MemoryBlockTrait<'data> {
@@ -643,20 +661,20 @@ pub trait MemoryBlockTrait<'data> {
 /// Potentially sparse section of memory
 pub trait MemoryTrait<'data> {
     /// Return u8 at `address`
-    fn index(&self, address: usize) -> Result<u8, MemoryOutOfBoundsError>;
+    fn index(&self, address: usize) -> Result<u8, MemoryAccessError>;
     /// Return slice of u8 at `range`
-    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryOutOfBoundsError>;
+    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryAccessError>;
     /// Return slice of u8 from start of `range` to end of block
-    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryOutOfBoundsError>;
+    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryAccessError>;
     /// Return slice of u8 from end of `range` to start of block (not useful because start of block
     /// is unknown to caller)
-    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryOutOfBoundsError>;
+    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryAccessError>;
 }
 
 /// Memory accessor helpers
 pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
     /// Return i16 at `address`
-    fn i16_le(&self, address: usize) -> Result<i16, MemoryOutOfBoundsError> {
+    fn i16_le(&self, address: usize) -> Result<i16, MemoryAccessError> {
         Ok(i16::from_le_bytes(
             self.range(address..address + std::mem::size_of::<i16>())?
                 .try_into()
@@ -664,7 +682,7 @@ pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
         ))
     }
     /// Return u16 at `address`
-    fn u16_le(&self, address: usize) -> Result<u16, MemoryOutOfBoundsError> {
+    fn u16_le(&self, address: usize) -> Result<u16, MemoryAccessError> {
         Ok(u16::from_le_bytes(
             self.range(address..address + std::mem::size_of::<u16>())?
                 .try_into()
@@ -672,7 +690,7 @@ pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
         ))
     }
     /// Return i32 at `address`
-    fn i32_le(&self, address: usize) -> Result<i32, MemoryOutOfBoundsError> {
+    fn i32_le(&self, address: usize) -> Result<i32, MemoryAccessError> {
         Ok(i32::from_le_bytes(
             self.range(address..address + std::mem::size_of::<i32>())?
                 .try_into()
@@ -680,7 +698,7 @@ pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
         ))
     }
     /// Return u32 at `address`
-    fn u32_le(&self, address: usize) -> Result<u32, MemoryOutOfBoundsError> {
+    fn u32_le(&self, address: usize) -> Result<u32, MemoryAccessError> {
         Ok(u32::from_le_bytes(
             self.range(address..address + std::mem::size_of::<u32>())?
                 .try_into()
@@ -688,7 +706,7 @@ pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
         ))
     }
     /// Return u64 at `address`
-    fn u64_le(&self, address: usize) -> Result<u64, MemoryOutOfBoundsError> {
+    fn u64_le(&self, address: usize) -> Result<u64, MemoryAccessError> {
         Ok(u64::from_le_bytes(
             self.range(address..address + std::mem::size_of::<u64>())?
                 .try_into()
@@ -696,18 +714,18 @@ pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
         ))
     }
     /// Return ptr (usize) at `address`
-    fn ptr(&self, address: usize) -> Result<usize, MemoryOutOfBoundsError> {
+    fn ptr(&self, address: usize) -> Result<usize, MemoryAccessError> {
         Ok(self.u64_le(address)? as usize)
     }
     /// Return instruction relative address at `address`
-    fn rip4(&self, address: usize) -> Result<usize, MemoryOutOfBoundsError> {
+    fn rip4(&self, address: usize) -> Result<usize, MemoryAccessError> {
         Ok((address + 4)
             .checked_add_signed(self.i32_le(address)? as isize)
             .unwrap())
     }
 
     /// Read null terminated string from `address`
-    fn read_string(&self, address: usize) -> Result<String, MemoryOutOfBoundsError> {
+    fn read_string(&self, address: usize) -> Result<String, MemoryAccessError> {
         let data = &self
             .range_from(address..)?
             .iter()
@@ -715,11 +733,11 @@ pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
             .take_while(|n| *n != 0)
             .collect::<Vec<u8>>();
 
-        Ok(std::str::from_utf8(data).unwrap().to_string())
+        Ok(std::str::from_utf8(data)?.to_string())
     }
 
     /// Read null terminated wide string from `address`
-    fn read_wstring(&self, address: usize) -> Result<String, MemoryOutOfBoundsError> {
+    fn read_wstring(&self, address: usize) -> Result<String, MemoryAccessError> {
         let data = &self
             .range_from(address..)?
             .chunks(2)
@@ -727,42 +745,42 @@ pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
             .take_while(|n| *n != 0)
             .collect::<Vec<u16>>();
 
-        Ok(String::from_utf16(data).unwrap())
+        Ok(String::from_utf16(data)?)
     }
 }
 
 impl<'data, T: MemoryTrait<'data>> MemoryAccessorTrait<'data> for T {}
 
 impl<'data, T: MemoryBlockTrait<'data>> MemoryTrait<'data> for T {
-    fn index(&self, address: usize) -> Result<u8, MemoryOutOfBoundsError> {
+    fn index(&self, address: usize) -> Result<u8, MemoryAccessError> {
         // TODO bounds
         Ok(self.data()[address - self.address()])
     }
-    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryOutOfBoundsError> {
+    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryAccessError> {
         // TODO bounds
         Ok(&self.data()[range.start - self.address()..range.end - self.address()])
     }
-    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryOutOfBoundsError> {
+    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryAccessError> {
         // TODO bounds
         Ok(&self.data()[range.start - self.address()..])
     }
-    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryOutOfBoundsError> {
+    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryAccessError> {
         // TODO bounds
         Ok(&self.data()[..range.end - self.address()])
     }
 }
 
 impl<'data> MemoryTrait<'data> for Memory<'data> {
-    fn index(&self, address: usize) -> Result<u8, MemoryOutOfBoundsError> {
+    fn index(&self, address: usize) -> Result<u8, MemoryAccessError> {
         self.get_section_containing(address)?.index(address)
     }
-    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryOutOfBoundsError> {
+    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryAccessError> {
         self.get_section_containing(range.start)?.range(range)
     }
-    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryOutOfBoundsError> {
+    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryAccessError> {
         self.get_section_containing(range.start)?.range_from(range)
     }
-    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryOutOfBoundsError> {
+    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryAccessError> {
         self.get_section_containing(range.end)?.range_to(range)
     }
 }
@@ -890,14 +908,14 @@ impl<'data> Memory<'data> {
     pub fn get_section_containing(
         &self,
         address: usize,
-    ) -> Result<&NamedMemorySection<'data>, MemoryOutOfBoundsError> {
+    ) -> Result<&NamedMemorySection<'data>, MemoryAccessError> {
         self.sections
             .iter()
             .find(|section| {
                 address >= section.section.address
                     && address < section.section.address + section.section.data.len()
             })
-            .ok_or(MemoryOutOfBoundsError)
+            .ok_or(MemoryAccessError::MemoryOutOfBoundsError)
     }
     pub fn find<F>(&self, kind: object::SectionKind, filter: F) -> Option<usize>
     where
@@ -973,7 +991,7 @@ pub trait Matchable<'data> {
         &'data self,
         pattern: &Pattern,
         address: usize,
-    ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'data>>>, MemoryOutOfBoundsError>;
+    ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'data>>>, MemoryAccessError>;
 }
 
 impl<'data> Matchable<'data> for Memory<'data> {
@@ -981,7 +999,7 @@ impl<'data> Matchable<'data> for Memory<'data> {
         &'data self,
         pattern: &Pattern,
         address: usize,
-    ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'data>>>, MemoryOutOfBoundsError> {
+    ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'data>>>, MemoryAccessError> {
         let s = self.get_section_containing(address)?;
         // TODO bounds check data passed to captures
         Ok(pattern.captures(s.data(), s.address(), address - s.address()))

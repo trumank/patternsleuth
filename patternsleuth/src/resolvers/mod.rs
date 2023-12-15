@@ -1,7 +1,7 @@
 pub mod unreal;
 
 use crate::{
-    Image, Memory, MemoryOutOfBoundsError, ResolutionAction, ResolutionType, ResolveContext,
+    Image, Memory, MemoryAccessError, ResolutionAction, ResolutionType, ResolveContext,
     ResolveStages,
 };
 use futures::{
@@ -93,7 +93,7 @@ pub type Result<T> = std::result::Result<T, ResolveError>;
 #[derive(Debug, Clone)]
 pub enum ResolveError {
     Msg(Cow<'static, str>),
-    MemoryAccessOutOfBounds(MemoryOutOfBoundsError),
+    MemoryAccessOutOfBounds(MemoryAccessError),
 }
 impl std::fmt::Display for ResolveError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -105,8 +105,8 @@ impl std::fmt::Display for ResolveError {
 }
 impl Error for ResolveError {}
 
-impl From<MemoryOutOfBoundsError> for ResolveError {
-    fn from(value: MemoryOutOfBoundsError) -> Self {
+impl From<MemoryAccessError> for ResolveError {
+    fn from(value: MemoryAccessError) -> Self {
         Self::MemoryAccessOutOfBounds(value)
     }
 }
