@@ -215,8 +215,77 @@ macro_rules! _impl_resolver_inner {
         }
     };
 }
+
+#[macro_export]
+macro_rules! _impl_try_collector {
+    (
+        $(#[$outer:meta])*
+        $struct_vis:vis struct $struct_name:ident {
+            $(
+                $(#[$inner:ident $($args:tt)*])*
+                $member_vis:vis $member_name:ident: $resolver:path,
+            )*
+        }
+    ) => {
+        #[allow(non_snake_case)]
+        $(#[$outer])*
+        $struct_vis struct $struct_name {
+            $(
+                $(#[$inner $($args)*])*
+                $member_vis $member_name: ::std::sync::Arc<$resolver>,
+            )*
+        }
+        $crate::_impl_resolver!($struct_name, |ctx| async {
+            #[allow(non_snake_case)]
+            let (
+                $( $member_name, )*
+            ) = $crate::resolvers::futures::try_join!(
+                $( ctx.resolve($resolver::resolver()), )*
+            )?;
+            Ok($struct_name {
+                $( $member_name, )*
+            })
+        });
+    };
+}
+
+#[macro_export]
+macro_rules! _impl_collector {
+    (
+        $(#[$outer:meta])*
+        $struct_vis:vis struct $struct_name:ident {
+            $(
+                $(#[$inner:ident $($args:tt)*])*
+                $member_vis:vis $member_name:ident: $resolver:path,
+            )*
+        }
+    ) => {
+        #[allow(non_snake_case)]
+        $(#[$outer])*
+        $struct_vis struct $struct_name {
+            $(
+                $(#[$inner $($args)*])*
+                $member_vis $member_name: $crate::resolvers::Result<::std::sync::Arc<$resolver>>,
+            )*
+        }
+        $crate::_impl_resolver!($struct_name, |ctx| async {
+            #[allow(non_snake_case)]
+            let (
+                $( $member_name, )*
+            ) = $crate::resolvers::futures::join!(
+                $( ctx.resolve($resolver::resolver()), )*
+            );
+            Ok($struct_name {
+                $( $member_name, )*
+            })
+        });
+    };
+}
+
+pub use _impl_collector as impl_collector;
 pub use _impl_resolver as impl_resolver;
 pub use _impl_resolver_singleton as impl_resolver_singleton;
+pub use _impl_try_collector as impl_try_collector;
 
 pub trait Singleton {
     fn get(&self) -> Option<usize>;

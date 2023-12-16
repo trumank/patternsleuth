@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use std::{ffi::c_void, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
+use patternsleuth::resolvers::impl_try_collector;
 use patternsleuth::resolvers::unreal::*;
 use simple_log::{error, info, LogConfigBuilder};
 use windows::Win32::{
@@ -107,31 +107,11 @@ impl StopRecordingReplay {
     }
 }
 
-#[derive(Debug)]
-pub struct DllHookResolution {
-    start_recording_replay: Arc<StartRecordingReplay>,
-    stop_recording_replay: Arc<StopRecordingReplay>,
-    gmalloc: Arc<GMalloc>,
-    guobject_array: Arc<GUObjectArray>,
-    fnametostring: Arc<FNameToStringVoid>,
-    allocate_uobject: Arc<FUObjectArrayAllocateUObjectIndex>,
-    free_uobject: Arc<FUObjectArrayFreeUObjectIndex>,
-    game_tick: Arc<UGameEngineTick>,
-    kismet_system_library: Arc<KismetSystemLibrary>,
-    fframe_step_via_exec: Arc<FFrameStepViaExec>,
-    fframe_step: Arc<FFrameStep>,
-    fframe_step_explicit_property: Arc<FFrameStepExplicitProperty>,
-}
-
 mod resolvers {
-    use crate::{DllHookResolution, StartRecordingReplay, StopRecordingReplay};
+    use crate::{StartRecordingReplay, StopRecordingReplay};
 
     use patternsleuth::{
-        resolvers::{
-            futures::{future::join_all, try_join},
-            unreal::*,
-            *,
-        },
+        resolvers::{futures::future::join_all, *},
         scanner::Pattern,
     };
 
@@ -156,50 +136,24 @@ mod resolvers {
 
         Ok(StopRecordingReplay(ensure_one(res.into_iter().flatten())?))
     });
+}
 
-    impl_resolver!(DllHookResolution, |ctx| async {
-        let (
-            start_recording_replay,
-            stop_recording_replay,
-            gmalloc,
-            guobject_array,
-            fnametostring,
-            allocate_uobject,
-            free_uobject,
-            game_tick,
-            kismet_system_library,
-            fframe_step_via_exec,
-            fframe_step,
-            fframe_step_explicit_property,
-        ) = try_join!(
-            ctx.resolve(StartRecordingReplay::resolver()),
-            ctx.resolve(StopRecordingReplay::resolver()),
-            ctx.resolve(GMalloc::resolver()),
-            ctx.resolve(GUObjectArray::resolver()),
-            ctx.resolve(FNameToStringVoid::resolver()),
-            ctx.resolve(FUObjectArrayAllocateUObjectIndex::resolver()),
-            ctx.resolve(FUObjectArrayFreeUObjectIndex::resolver()),
-            ctx.resolve(UGameEngineTick::resolver()),
-            ctx.resolve(KismetSystemLibrary::resolver()),
-            ctx.resolve(FFrameStepViaExec::resolver()),
-            ctx.resolve(FFrameStep::resolver()),
-            ctx.resolve(FFrameStepExplicitProperty::resolver()),
-        )?;
-        Ok(DllHookResolution {
-            start_recording_replay,
-            stop_recording_replay,
-            gmalloc,
-            guobject_array,
-            fnametostring,
-            allocate_uobject,
-            free_uobject,
-            game_tick,
-            kismet_system_library,
-            fframe_step_via_exec,
-            fframe_step,
-            fframe_step_explicit_property,
-        })
-    });
+impl_try_collector! {
+    #[derive(Debug)]
+    struct DllHookResolution {
+        start_recording_replay: StartRecordingReplay,
+        stop_recording_replay: StopRecordingReplay,
+        gmalloc: GMalloc,
+        guobject_array: GUObjectArray,
+        fnametostring: FNameToString,
+        allocate_uobject: FUObjectArrayAllocateUObjectIndex,
+        free_uobject: FUObjectArrayFreeUObjectIndex,
+        game_tick: UGameEngineTick,
+        kismet_system_library: KismetSystemLibrary,
+        fframe_step_via_exec: FFrameStepViaExec,
+        fframe_step: FFrameStep,
+        fframe_step_explicit_property: FFrameStepExplicitProperty,
+    }
 }
 
 retour::static_detour! {

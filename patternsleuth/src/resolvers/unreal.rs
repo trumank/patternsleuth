@@ -777,7 +777,7 @@ impl_resolver!(UtilStringExtractor, |ctx| async {
     let strings = ctx
         .scan(
             Pattern::new(
-                "41 b8 01 00 00 00 48 8d 15 | ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e9 ?? ?? ?? ??",
+                "48 8d 55 f8 49 8b c8 e8 | ?? ?? ?? ?? 0f 28 45 f0 48 8d 55 f0 44 8b c8 66 0f 7f 45 f0 41 b8 01 00 00 00 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ??",
             )
             .unwrap(),
         )
@@ -788,7 +788,29 @@ impl_resolver!(UtilStringExtractor, |ctx| async {
     Ok(UtilStringExtractor(
         strings
             .into_iter()
-            .map(|a| Ok(mem.read_wstring(mem.rip4(a)?)?))
-            .collect::<Result<HashSet<String>>>()?,
+            .map(|a| -> Result<_> { Ok(mem.read_wstring(mem.rip4(a)?)?) })
+            .filter_map(|s| s.ok())
+            .collect::<HashSet<String>>(),
     ))
+});
+
+/// useful for extracting strings from common patterns for analysis
+#[derive(Debug)]
+pub struct A(pub HashSet<usize>);
+impl_resolver!(A, |ctx| async {
+    let strings = ctx
+        .scan(
+            Pattern::new(
+                "48 8d 55 f8 49 8b c8 e8 ?? ?? ?? ?? 0f 28 45 f0 48 8d 55 f0 44 8b c8 66 0f 7f 45 f0 41 b8 01 00 00 00 48 8d 0d ?? ?? ?? ?? e8 | ?? ?? ?? ??",
+            )
+            .unwrap(),
+        )
+        .await;
+
+    let mem = &ctx.image().memory;
+
+    Ok(A(strings
+        .into_iter()
+        .map(|a| Ok(mem.rip4(a)?))
+        .collect::<Result<HashSet<_>>>()?))
 });
