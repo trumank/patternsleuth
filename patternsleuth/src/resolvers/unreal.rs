@@ -571,6 +571,23 @@ impl_resolver!(FFrameStepViaExec, |ctx| async {
     )
 });
 
+/// public: static bool __cdecl UGameplayStatics::SaveGameToMemory(class USaveGame *, class TArray<unsigned char, class TSizedDefaultAllocator<32> > &)
+#[derive(Debug)]
+pub struct UGameplayStaticsSaveGameToMemory(pub usize);
+impl_resolver_singleton!(UGameplayStaticsSaveGameToMemory, |ctx| async {
+    let patterns = [
+        "48 89 5C 24 10 48 89 7C 24 18 55 48 8D AC 24 ?? FF FF FF 48 81 EC ?? 01 00 00 48 8B DA 48 8B F9 48 85 C9 0F 84 ?? 02 00 00 0F 57 C0 48 C7 85 ?? 00 00 00 00 00 00 00",
+        "48 89 5C 24 10 48 89 7C 24 18 55 48 8D AC 24 20 FF FF FF 48 81 EC E0 01 00 00 48 8B DA 48 8B F9 48 85 C9 0F 84 ?? ?? 00 00 0F 57 C0 48 C7 85 F0 00 00 00 00 00 00 00 33 C0 48 8D 4D 80 0F 11 45 80 48 89 45 10 0F 11 45 90 0F 11 45 A0 0F 11 45 B0 0F 11 45 C0 0F 11 45 D0 0F 11 45 E0 0F 11 45 F0 0F 11 45",
+        "48 89 5C 24 10 48 89 7C 24 18 55 48 8D AC 24 ?? FF FF FF 48 81 EC ?? 01 00 00 48 8B DA 48 8B F9 48 85 C9 0F 84 71 01 00 00 33 D2 48 C7 85 ?? 00 00 00 00 00 00 00 41 B8 ?? 00 00 00 48 8D 4D 80 E8 ?? ?? ?? ?? 48 8D 4D 80 E8 ?? ?? ?? ?? 48 8D 05 ?? ?? ?? ?? 48 C7 45 ?? 00 00 00 00 48 89 45 80 48 8D 4D",
+    ];
+
+    let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+    Ok(UGameplayStaticsSaveGameToMemory(ensure_one(
+        res.into_iter().flatten(),
+    )?))
+});
+
 /// public: static bool __cdecl UGameplayStatics::SaveGameToSlot(class USaveGame *, class FString const &, int)
 #[derive(Debug)]
 pub struct UGameplayStaticsSaveGameToSlot(pub usize);
