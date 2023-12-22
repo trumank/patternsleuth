@@ -42,8 +42,6 @@ mod windows {
             )?
         };
 
-        let module_addr = mod_info.lpBaseOfDll as usize;
-
         let memory = unsafe {
             std::slice::from_raw_parts(
                 mod_info.lpBaseOfDll as *mut u8,
@@ -52,18 +50,6 @@ mod windows {
         };
 
         let object = object::File::parse(memory)?;
-
-        let exception_directory_range = match object {
-            object::File::Pe64(ref inner) => {
-                let exception_directory = inner
-                    .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
-                    .context("no exception directory")?;
-
-                let (address, size) = exception_directory.address_range();
-                module_addr + address as usize..module_addr + (address + size) as usize
-            }
-            _ => 0..0,
-        };
 
         let image_base_address = object.relative_address_base() as usize;
 
@@ -76,12 +62,6 @@ mod windows {
 
         let memory = Memory::new_internal_data(sections)?;
 
-        Ok(Image {
-            base_address: module_addr,
-            exception_directory_range,
-            exception_children_cache: Default::default(),
-            memory,
-            symbols: Default::default(),
-        })
+        Image::read_inner::<String>(None, false, memory, object)
     }
 }

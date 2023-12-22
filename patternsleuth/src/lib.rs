@@ -297,7 +297,14 @@ impl<'data> Image<'data> {
     ) -> Result<Image<'data>> {
         let object = object::File::parse(data)?;
         let memory = Memory::new(&object)?;
-
+        Self::read_inner(exe_path, load_functions, memory, object)
+    }
+    fn read_inner<'memory, P: AsRef<Path>>(
+        exe_path: Option<P>,
+        load_functions: bool,
+        memory: Memory<'memory>,
+        object: object::File,
+    ) -> Result<Image<'memory>> {
         let base_address = object.relative_address_base() as usize;
 
         #[allow(unused_variables)]

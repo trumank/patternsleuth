@@ -74,19 +74,6 @@ mod linux {
 
         let object = object::File::parse(image_header.as_slice())?;
 
-        let base_address = object.relative_address_base() as usize;
-        let exception_directory_range = match object {
-            object::File::Pe64(ref inner) => {
-                let exception_directory = inner
-                    .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
-                    .context("no exception directory")?;
-
-                let (address, size) = exception_directory.address_range();
-                base_address + address as usize..base_address + (address + size) as usize
-            }
-            _ => 0..0,
-        };
-
         let mut sections = vec![];
         for section in object.sections() {
             let mut data = vec![0; section.size() as usize];
@@ -96,13 +83,7 @@ mod linux {
 
         let memory = Memory::new_external_data(sections)?;
 
-        Ok(Image {
-            base_address,
-            exception_directory_range,
-            exception_children_cache: Default::default(),
-            memory,
-            symbols: Default::default(),
-        })
+        Image::read_inner::<String>(None, false, memory, object)
     }
 }
 
@@ -182,19 +163,6 @@ mod windows {
 
         let object = object::File::parse(memory.as_slice())?;
 
-        let base_address = object.relative_address_base() as usize;
-        let exception_directory_range = match object {
-            object::File::Pe64(ref inner) => {
-                let exception_directory = inner
-                    .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
-                    .context("no exception directory")?;
-
-                let (address, size) = exception_directory.address_range();
-                base_address + address as usize..base_address + (address + size) as usize
-            }
-            _ => 0..0,
-        };
-
         let mut sections = vec![];
         for section in object.sections() {
             let mut data = vec![0; section.size() as usize];
@@ -207,12 +175,6 @@ mod windows {
 
         let memory = Memory::new_external_data(sections)?;
 
-        Ok(Image {
-            base_address,
-            exception_directory_range,
-            exception_children_cache: Default::default(),
-            memory,
-            symbols: Default::default(),
-        })
+        Image::read_inner::<String>(None, false, memory, object)
     }
 }
