@@ -285,6 +285,7 @@ pub struct Image<'data> {
     pub exception_children_cache: HashMap<usize, Vec<RuntimeFunction>>,
     pub memory: Memory<'data>,
     pub symbols: Option<HashMap<usize, String>>,
+    pub imports: HashMap<String, HashMap<String, usize>>,
 }
 impl<'data> Image<'data> {
     pub fn builder() -> ImageBuilder {
@@ -323,24 +324,63 @@ impl<'data> Image<'data> {
             None
         };
 
-        let exception_directory_range = match object {
-            object::File::Pe64(ref inner) => {
-                let exception_directory = inner
-                    .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
-                    .context("no exception directory")?;
+        let get_ex_dir = || -> Result<Range<usize>> {
+            Ok(match object {
+                object::File::Pe64(ref inner) => {
+                    let exception_directory = inner
+                        .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
+                        .context("no exception directory")?;
 
-                let (address, size) = exception_directory.address_range();
-                base_address + address as usize..base_address + (address + size) as usize
-            }
-            _ => 0..0,
+                    let (address, size) = exception_directory.address_range();
+                    base_address + address as usize..base_address + (address + size) as usize
+                }
+                _ => bail!("not a PE file"),
+            })
+        };
+
+        let get_imports = || -> Result<_> {
+            Ok(match object {
+                object::File::Pe64(ref inner) => {
+                    use object::pe::ImageNtHeaders64;
+                    use object::read::pe::ImageThunkData;
+                    use object::LittleEndian as LE;
+
+                    let mut imports: HashMap<String, HashMap<String, usize>> = Default::default();
+
+                    let import_table = inner.import_table()?.unwrap();
+                    let mut import_descs = import_table.descriptors()?;
+
+                    while let Some(import_desc) = import_descs.next()? {
+                        let mut cur = HashMap::new();
+
+                        let Ok(lib_name) = import_table.name(import_desc.name.get(LE)) else {
+                            continue;
+                        };
+                        let lib_name = std::str::from_utf8(lib_name)?.to_ascii_lowercase();
+                        let mut thunks =
+                            import_table.thunks(import_desc.original_first_thunk.get(LE))?;
+                        let mut address = base_address + import_desc.first_thunk.get(LE) as usize;
+                        while let Some(thunk) = thunks.next::<ImageNtHeaders64>()? {
+                            if let Ok((_hint, name)) = import_table.hint_name(thunk.address()) {
+                                cur.insert(std::str::from_utf8(name)?.to_owned(), address);
+                                address += 8;
+                            }
+                        }
+                        imports.insert(lib_name, cur);
+                    }
+                    imports
+                }
+                _ => bail!("not a PE file"),
+            })
         };
 
         let mut new = Image {
             base_address,
-            exception_directory_range,
+            exception_directory_range: get_ex_dir().unwrap_or_default(),
             exception_children_cache: Default::default(),
             memory,
             symbols,
+            imports: get_imports().unwrap_or_default(),
         };
 
         if load_functions {
