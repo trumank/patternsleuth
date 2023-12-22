@@ -293,11 +293,17 @@ pub trait Singleton {
 
 type AnyValue = Result<Arc<dyn Any + Send + Sync>>;
 
+#[derive(Debug)]
+struct PatternMatches {
+    pattern: Pattern,
+    matches: Vec<usize>,
+}
+
 #[derive(Default)]
 struct AsyncContextInnerWrite {
     resolvers: HashMap<TypeId, AnyValue>,
     pending_resolvers: HashMap<TypeId, Vec<oneshot::Sender<AnyValue>>>,
-    queue: Vec<(Pattern, oneshot::Sender<(Pattern, Vec<usize>)>)>,
+    queue: Vec<(Pattern, oneshot::Sender<PatternMatches>)>,
 }
 
 struct AsyncContextInnerRead<'data> {
@@ -326,13 +332,13 @@ impl<'data> AsyncContext<'data> {
         self.scan_tagged((), pattern).await.2
     }
     pub async fn scan_tagged<T>(&self, tag: T, pattern: Pattern) -> (T, Pattern, Vec<usize>) {
-        let (tx, rx) = oneshot::channel::<(Pattern, Vec<usize>)>();
+        let (tx, rx) = oneshot::channel::<PatternMatches>();
         {
             let mut lock = self.read.write.lock().unwrap();
             lock.queue.push((pattern, tx));
         }
-        let (pattern, results) = rx.await.unwrap();
-        (tag, pattern, results)
+        let PatternMatches { pattern, matches } = rx.await.unwrap();
+        (tag, pattern, matches)
     }
     pub async fn resolve<'ctx, T: Send + Sync + 'static>(
         &'ctx self,
@@ -435,8 +441,8 @@ where
                     }
                 }
 
-                for ((rx, results), pattern) in all_results.into_iter().zip(patterns) {
-                    rx.send((pattern, results)).unwrap();
+                for ((rx, matches), pattern) in all_results.into_iter().zip(patterns) {
+                    rx.send(PatternMatches { pattern, matches }).unwrap();
                 }
             }
         }
