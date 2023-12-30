@@ -2,7 +2,7 @@ mod db;
 mod disassemble;
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -25,6 +25,8 @@ use patternsleuth::{
 #[derive(Parser)]
 enum Commands {
     Scan(CommandScan),
+    Report(CommandReport),
+    DiffReport(CommandDiffReport),
     Symbols(CommandSymbols),
     BuildIndex(CommandBuildIndex),
     ViewSymbol(CommandViewSymbol),
@@ -98,6 +100,27 @@ struct CommandScan {
     /// Show scan progress
     #[arg(long)]
     progress: bool,
+}
+
+#[derive(Parser)]
+struct CommandReport {
+    /// A game to scan (can be specified multiple times). Scans everything if omitted. Supports
+    /// globs
+    #[arg(short, long)]
+    game: Vec<String>,
+
+    /// A resolver to scan for (can be specified multiple times)
+    #[arg(short, long, value_parser(|s: &_| parse_resolver(s)))]
+    resolver: Vec<&'static NamedResolver>,
+}
+
+#[derive(Parser)]
+struct CommandDiffReport {
+    /// Path to first report
+    a: PathBuf,
+
+    /// Path to second report
+    b: PathBuf,
 }
 
 #[derive(Parser)]
@@ -185,6 +208,8 @@ fn find_ext<P: AsRef<Path>>(dir: P, ext: &str) -> Result<Option<PathBuf>> {
 fn main() -> Result<()> {
     match Commands::parse() {
         Commands::Scan(command) => scan(command),
+        Commands::Report(command) => report(command),
+        Commands::DiffReport(command) => diff_report(command),
         Commands::Symbols(command) => symbols(command),
         Commands::BuildIndex(command) => db::build(command),
         Commands::ViewSymbol(command) => db::view(command),
@@ -699,6 +724,120 @@ fn scan(command: CommandScan) -> Result<()> {
         output.println(summary.to_string());
     }
 
+    Ok(())
+}
+
+fn report(command: CommandReport) -> Result<()> {
+    use rayon::prelude::*;
+
+    fn load_game(path: impl AsRef<Path>, data: &mut Vec<u8>) -> Result<Image<'_>> {
+        use std::io::Read;
+        data.clear();
+        fs::File::open(path)?.read_to_end(data)?;
+        Image::builder().build(data)
+    }
+
+    let resolvers = command
+        .resolver
+        .iter()
+        .map(|res| res.getter)
+        .collect::<Vec<_>>();
+
+    let time = time::OffsetDateTime::now_local()?.format(time::macros::format_description!(
+        "[year]-[month]-[day]_[hour]-[minute]-[second]"
+    ))?;
+
+    let games = get_games(command.game)?;
+
+    let results = std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+
+    let progress = ProgressBar::new(games.len() as u64);
+    games.into_par_iter().try_for_each(|game| -> Result<()> {
+        progress.println(format!("{:?} {:?}", game.name, game.exe_path.display()));
+
+        let mut data = vec![];
+        let exe = match load_game(&game.exe_path, &mut data) {
+            Ok(exe) => exe,
+            Err(err) => {
+                progress.println(format!("err reading {}: {}", game.exe_path.display(), err));
+                progress.inc(1);
+                return Ok(());
+            }
+        };
+
+        let resolution = exe.resolve_many(&resolvers);
+
+        let map = command
+            .resolver
+            .iter()
+            .zip(resolution)
+            .map(|(resolver, resolution)| (resolver.name, resolution))
+            .collect::<BTreeMap<_, _>>();
+        results.lock().unwrap().insert(game.name, map);
+
+        progress.inc(1);
+
+        Ok(())
+    })?;
+
+    fs::create_dir_all("reports")?;
+    fs::write(
+        format!(
+            "reports/{}{}{}.json",
+            time,
+            option_env!("GIT_HASH")
+                .map(|hash| format!("-{}", &hash[..10]))
+                .unwrap_or_default(),
+            option_env!("GIT_DIRTY")
+                .map(|_| "-dirty")
+                .unwrap_or_default(),
+        ),
+        serde_json::to_vec(
+            &std::sync::Arc::try_unwrap(results)
+                .unwrap()
+                .into_inner()
+                .unwrap(),
+        )
+        .unwrap(),
+    )?;
+
+    Ok(())
+}
+fn diff_report(command: CommandDiffReport) -> Result<()> {
+    use patternsleuth::resolvers::{Resolution, ResolveError};
+    type Report = BTreeMap<String, BTreeMap<String, Result<Box<dyn Resolution>, ResolveError>>>;
+
+    let a: Report = serde_json::from_slice(&fs::read(command.a)?)?;
+    let b: Report = serde_json::from_slice(&fs::read(command.b)?)?;
+
+    let mut games_only_in_a = vec![];
+    let mut games_only_in_b = vec![];
+
+    for game in a.keys().chain(b.keys()).unique() {
+        let game_a = a.get(game);
+        let game_b = b.get(game);
+        if game_a.is_none() {
+            games_only_in_b.push(game);
+        }
+        if game_b.is_none() {
+            games_only_in_a.push(game);
+        }
+        if let (Some(game_a), Some(game_b)) = (game_a, game_b) {
+            for res in game_a.keys().chain(game_b.keys()).unique() {
+                if let (Some(res_a), Some(res_b)) = (game_a.get(res), game_b.get(res)) {
+                    if res_a.as_ref().ok() != res_b.as_ref().ok() {
+                        println!("{} {:?} a={:x?} b={:x?}", res, game, res_a, res_b);
+                    }
+                } else {
+                    // TODO warn if mismatched set of resolvers
+                }
+            }
+        }
+    }
+    dbg!(games_only_in_a);
+    dbg!(games_only_in_b);
+
+    //dbg!(a);
     Ok(())
 }
 

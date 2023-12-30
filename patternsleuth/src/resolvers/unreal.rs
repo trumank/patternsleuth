@@ -17,6 +17,10 @@ use crate::{
 
 /// currently seems to be 4.22+
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct EngineVersion {
     pub major: u16,
     pub minor: u16,
@@ -61,7 +65,11 @@ impl_resolver!(EngineVersion, |ctx| async {
 });
 
 /// currently seems to be 4.22+
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct EngineVersionStrings {
     pub branch_name: String,
     pub build_date: String,
@@ -110,7 +118,11 @@ impl_resolver!(EngineVersionStrings, |ctx| async {
     bail_out!("not found");
 });
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct GUObjectArray(pub usize);
 impl_resolver_singleton!(GUObjectArray, |ctx| async {
     let patterns = [
@@ -126,7 +138,11 @@ impl_resolver_singleton!(GUObjectArray, |ctx| async {
     ))?))
 });
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct GMalloc(pub usize);
 impl_resolver_singleton!(GMalloc, |ctx| async {
     let patterns = [
@@ -144,7 +160,11 @@ impl_resolver_singleton!(GMalloc, |ctx| async {
 });
 
 /// public: static class FUObjectHashTables & __cdecl FUObjectHashTables::Get(void)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct FUObjectHashTablesGet(pub usize);
 impl_resolver_singleton!(FUObjectHashTablesGet, |ctx| async {
     let patterns = [
@@ -162,7 +182,11 @@ impl_resolver_singleton!(FUObjectHashTablesGet, |ctx| async {
 });
 
 /// public: void __cdecl FUObjectArray::AllocateUObjectIndex(class UObjectBase *, bool)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct FUObjectArrayAllocateUObjectIndex(pub usize);
 impl_resolver_singleton!(FUObjectArrayAllocateUObjectIndex, |ctx| async {
     let strings = ctx
@@ -209,7 +233,11 @@ impl_resolver_singleton!(FUObjectArrayAllocateUObjectIndex, |ctx| async {
 });
 
 /// public: void __cdecl FUObjectArray::FreeUObjectIndex(class UObjectBase *)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct FUObjectArrayFreeUObjectIndex(pub usize);
 impl_resolver_singleton!(FUObjectArrayFreeUObjectIndex, |ctx| async {
     let refs_future = async {
@@ -266,7 +294,11 @@ impl_resolver_singleton!(FUObjectArrayFreeUObjectIndex, |ctx| async {
 
 /// void __cdecl UObjectBaseShutdown(void)
 /// could be used to determine object listener offsets, but only for recent UE versions
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct UObjectBaseShutdown(pub usize);
 impl_resolver_singleton!(UObjectBaseShutdown, |ctx| async {
     let strings = ctx
@@ -301,7 +333,11 @@ impl_resolver_singleton!(UObjectBaseShutdown, |ctx| async {
 });
 
 /// public: __cdecl FName::FName(wchar_t const *, enum EFindName)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct FNameCtorWchar(pub usize);
 impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
     let strings = ["TGPUSkinVertexFactoryUnlimited\0", "MovementComponent0\0"];
@@ -334,7 +370,11 @@ impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
 /// `public: void __cdecl FName::ToString(class FString &) const`
 ///
 /// They take the same arguments and either can be used as long as the return value isn't used.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct FNameToString(pub usize);
 impl_resolver_singleton!(FNameToString, |ctx| async {
     let string = async {
@@ -401,7 +441,11 @@ impl_resolver_singleton!(FNameToString, |ctx| async {
 });
 
 /// public: class FString __cdecl FName::ToString(void) const
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct FNameToStringVoid(pub usize);
 impl_resolver_singleton!(FNameToStringVoid, |ctx| async {
     let patterns = [
@@ -420,7 +464,11 @@ impl_resolver_singleton!(FNameToStringVoid, |ctx| async {
 });
 
 /// public: void __cdecl FName::ToString(class FString &) const
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct FNameToStringFString(pub usize);
 impl_resolver!(FNameToStringFString, |ctx| async {
     let patterns =
@@ -436,7 +484,11 @@ impl_resolver!(FNameToStringFString, |ctx| async {
 });
 
 /// private: __cdecl FText::FText(class FString &&)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct FTextFString(pub usize);
 impl_resolver_singleton!(FTextFString, |ctx| async {
     enum Directness {
@@ -467,7 +519,11 @@ impl_resolver_singleton!(FTextFString, |ctx| async {
 });
 
 /// class UObject * __cdecl StaticConstructObject_Internal(struct FStaticConstructObjectParameters const &)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct StaticConstructObjectInternal(pub usize);
 impl_resolver_singleton!(StaticConstructObjectInternal, |ctx| async {
     let patterns = [
@@ -486,7 +542,11 @@ impl_resolver_singleton!(StaticConstructObjectInternal, |ctx| async {
 });
 
 /// public: void __cdecl UObject::SkipFunction(struct FFrame &, void *const, class UFunction *)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct UObjectSkipFunction(pub usize);
 impl_resolver!(UObjectSkipFunction, |ctx| async {
     let patterns = [
@@ -499,7 +559,11 @@ impl_resolver!(UObjectSkipFunction, |ctx| async {
 });
 
 // GNatives
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct GNatives(pub usize);
 impl_resolver!(GNatives, |ctx| async {
     let skip_function = ctx.resolve(UObjectSkipFunction::resolver()).await?;
@@ -525,7 +589,11 @@ impl_resolver!(GNatives, |ctx| async {
 });
 
 /// public: void __cdecl FFrame::Step(class UObject *, void *const)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct FFrameStep(pub usize);
 impl_resolver_singleton!(FFrameStep, |ctx| async {
     let patterns = [
@@ -539,7 +607,11 @@ impl_resolver_singleton!(FFrameStep, |ctx| async {
 
 /// public: void __cdecl FFrame::StepExplicitProperty(void *const, class FProperty *)
 /// public: void __cdecl FFrame::StepExplicitProperty(void *const, class UProperty *)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct FFrameStepExplicitProperty(pub usize);
 impl_resolver_singleton!(FFrameStepExplicitProperty, |ctx| async {
     let patterns = [
@@ -557,6 +629,10 @@ impl_resolver_singleton!(FFrameStepExplicitProperty, |ctx| async {
 /// public: static void __cdecl UKismetStringLibrary::execLen(class UObject *, struct FFrame &, void *const)
 /// public: void __cdecl UKismetStringLibrary::execLen(struct FFrame &, void *const)
 #[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct FFrameStepViaExec {
     pub step: usize,
     pub step_explicit_property: usize,
@@ -590,7 +666,11 @@ impl_resolver!(FFrameStepViaExec, |ctx| async {
 });
 
 /// public: static bool __cdecl UGameplayStatics::SaveGameToMemory(class USaveGame *, class TArray<unsigned char, class TSizedDefaultAllocator<32> > &)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct UGameplayStaticsSaveGameToMemory(pub usize);
 impl_resolver_singleton!(UGameplayStaticsSaveGameToMemory, |ctx| async {
     let patterns = [
@@ -607,7 +687,11 @@ impl_resolver_singleton!(UGameplayStaticsSaveGameToMemory, |ctx| async {
 });
 
 /// public: static bool __cdecl UGameplayStatics::SaveGameToSlot(class USaveGame *, class FString const &, int)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct UGameplayStaticsSaveGameToSlot(pub usize);
 impl_resolver_singleton!(UGameplayStaticsSaveGameToSlot, |ctx| async {
     let patterns = [
@@ -624,7 +708,11 @@ impl_resolver_singleton!(UGameplayStaticsSaveGameToSlot, |ctx| async {
 });
 
 /// public: static class USaveGame * __cdecl UGameplayStatics::LoadGameFromMemory(class TArray<unsigned char, class TSizedDefaultAllocator<32> > const &)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct UGameplayStaticsLoadGameFromMemory(pub usize);
 impl_resolver_singleton!(UGameplayStaticsLoadGameFromMemory, |ctx| async {
     let patterns = [
@@ -643,7 +731,11 @@ impl_resolver_singleton!(UGameplayStaticsLoadGameFromMemory, |ctx| async {
 });
 
 /// public: static class USaveGame * __cdecl UGameplayStatics::LoadGameFromSlot(class FString const &, int)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct UGameplayStaticsLoadGameFromSlot(pub usize);
 impl_resolver_singleton!(UGameplayStaticsLoadGameFromSlot, |ctx| async {
     let patterns = [
@@ -662,7 +754,11 @@ impl_resolver_singleton!(UGameplayStaticsLoadGameFromSlot, |ctx| async {
 });
 
 /// public: static bool __cdecl UGameplayStatics::DoesSaveGameExist(class FString const &, int)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct UGameplayStaticsDoesSaveGameExist(pub usize);
 impl_resolver_singleton!(UGameplayStaticsDoesSaveGameExist, |ctx| async {
     let patterns = [
@@ -678,7 +774,11 @@ impl_resolver_singleton!(UGameplayStaticsDoesSaveGameExist, |ctx| async {
     )?))
 });
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct KismetSystemLibrary(pub HashMap<String, usize>);
 
 impl_resolver!(KismetSystemLibrary, |ctx| async {
@@ -733,7 +833,11 @@ impl_resolver!(KismetSystemLibrary, |ctx| async {
     }
 });
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct UGameEngineTick(pub usize);
 
 impl_resolver_singleton!(UGameEngineTick, |ctx| async {
@@ -760,7 +864,11 @@ impl_resolver_singleton!(UGameEngineTick, |ctx| async {
     Ok(UGameEngineTick(ensure_one(fns)?))
 });
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct ConsoleManagerSingleton(usize);
 
 impl_resolver_singleton!(ConsoleManagerSingleton, |ctx| async {
@@ -806,7 +914,11 @@ impl_resolver_singleton!(ConsoleManagerSingleton, |ctx| async {
 });
 
 /// useful for extracting strings from common patterns for analysis
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct UtilStringExtractor(pub HashSet<String>);
 impl_resolver!(UtilStringExtractor, |ctx| async {
     let strings = ctx
@@ -830,7 +942,11 @@ impl_resolver!(UtilStringExtractor, |ctx| async {
 });
 
 /// useful for extracting strings from common patterns for analysis
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct A(pub HashSet<usize>);
 impl_resolver!(A, |ctx| async {
     let strings = ctx

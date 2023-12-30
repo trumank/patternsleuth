@@ -671,6 +671,10 @@ impl RuntimeFunction {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub enum MemoryAccessError {
     MemoryOutOfBoundsError,
     Utf8Error,

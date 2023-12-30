@@ -91,6 +91,10 @@ pub fn try_ensure_one<T: PartialEq>(data: impl IntoIterator<Item = Result<T>>) -
 
 pub type Result<T> = std::result::Result<T, ResolveError>;
 #[derive(Debug, Clone)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub enum ResolveError {
     Msg(Cow<'static, str>),
     MemoryAccessOutOfBounds(MemoryAccessError),
@@ -147,8 +151,56 @@ pub fn resolvers() -> impl Iterator<Item = &'static NamedResolver> {
 type DynResolver<'ctx> = BoxFuture<'ctx, Result<Arc<dyn Resolution>>>;
 type Resolver<'ctx, T> = BoxFuture<'ctx, Result<T>>;
 
-pub trait Resolution: std::fmt::Debug + std::any::Any + Send + Sync + Singleton {}
-impl<T: std::fmt::Debug + std::any::Any + Send + Sync + Singleton> Resolution for T {}
+#[cfg_attr(feature = "serde-resolvers", typetag::serde(tag = "type"))]
+pub trait Resolution: std::fmt::Debug + std::any::Any + Send + Sync + Singleton + DynEq {}
+
+/// Allow comparison of dyn Resolution
+/// https://users.rust-lang.org/t/how-to-compare-two-trait-objects-for-equality/88063/3
+pub trait DynEq: Any + DynEqHelper {
+    fn as_any(&self) -> &dyn Any;
+    fn as_dyn_eq_helper(&self) -> &dyn DynEqHelper;
+    fn level_one(&self, arg2: &dyn DynEqHelper) -> bool;
+
+    fn dyn_eq<T: PartialEq + 'static>(&self, other: &T) -> bool
+    where
+        Self: Sized,
+    {
+        if let Some(this) = self.as_any().downcast_ref::<T>() {
+            this == other
+        } else {
+            false
+        }
+    }
+}
+pub trait DynEqHelper {
+    fn level_two(&self, arg1: &dyn DynEq) -> bool;
+}
+impl<T: Any + PartialEq> DynEq for T {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_dyn_eq_helper(&self) -> &dyn DynEqHelper {
+        self
+    }
+    fn level_one(&self, arg2: &dyn DynEqHelper) -> bool {
+        arg2.level_two(self)
+    }
+}
+impl<T: Any + PartialEq> DynEqHelper for T {
+    fn level_two(&self, arg1: &dyn DynEq) -> bool {
+        if let Some(other) = arg1.as_any().downcast_ref::<Self>() {
+            other.dyn_eq(self)
+        } else {
+            false
+        }
+    }
+}
+impl PartialEq for dyn Resolution {
+    fn eq(&self, other: &Self) -> bool {
+        self.level_one(other.as_dyn_eq_helper())
+    }
+}
+
 pub struct DynResolverFactory {
     pub factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> DynResolver<'ctx>,
 }
@@ -159,6 +211,8 @@ pub struct ResolverFactory<T> {
 
 pub use ::futures;
 pub use ::inventory;
+#[cfg(feature = "serde-resolvers")]
+pub use ::typetag;
 
 #[macro_export]
 macro_rules! _impl_resolver {
@@ -190,6 +244,9 @@ macro_rules! _impl_resolver_inner {
         $crate::resolvers::inventory::submit! {
             $crate::resolvers::NamedResolver { name: stringify!($name), getter: $name::dyn_resolver }
         }
+
+        #[cfg_attr(feature = "serde-resolvers", $crate::resolvers::typetag::serde)]
+        impl $crate::resolvers::Resolution for $name {}
 
         impl $name {
             pub fn resolver() -> &'static $crate::resolvers::ResolverFactory<$name> {
