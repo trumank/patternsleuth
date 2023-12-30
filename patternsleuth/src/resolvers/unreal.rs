@@ -5,6 +5,7 @@ use std::{
 
 use futures::{future::join_all, join, try_join};
 use iced_x86::{Code, Decoder, DecoderOptions, Instruction, Register};
+use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
@@ -56,12 +57,22 @@ impl_resolver!(EngineVersion, |ctx| async {
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
-    try_ensure_one(res.iter().flatten().map(|a| {
-        Ok(EngineVersion {
-            major: ctx.image().memory.u16_le(*a)?,
-            minor: ctx.image().memory.u16_le(a + 2)?,
-        })
-    }))
+    try_ensure_one(
+        res.iter()
+            .flatten()
+            .map(|a| {
+                Ok(EngineVersion {
+                    major: ctx.image().memory.u16_le(*a)?,
+                    minor: ctx.image().memory.u16_le(a + 2)?,
+                })
+            })
+            .filter_ok(|ver| match ver.major {
+                // TODO 4.0 can false positive so ignore it. need to harden if this is to work on 4.0 games
+                4 if (1..=27).contains(&ver.minor) => true,
+                5 if (0..).contains(&ver.minor) => true,
+                _ => false,
+            }),
+    )
 });
 
 /// currently seems to be 4.22+
