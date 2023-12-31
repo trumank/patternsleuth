@@ -315,10 +315,11 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
             println!("{resolution:#x?}");
             for res in resolution.into_iter().flatten() {
                 let start = res.get().unwrap();
+                let bounds = patternsleuth::disassemble::function_range(&exe, start)?;
                 functions.push(Function {
                     game: exe_path.to_string_lossy().to_string(),
                     address: start,
-                    data: exe.memory[start..start + 100].to_vec(),
+                    data: exe.memory[bounds].to_vec(),
                 });
             }
         }

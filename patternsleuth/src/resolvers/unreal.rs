@@ -4,16 +4,17 @@ use std::{
 };
 
 use futures::{future::join_all, join, try_join};
-use iced_x86::{Code, Decoder, DecoderOptions, Instruction, Register};
+use iced_x86::{Code, Decoder, DecoderOptions, FlowControl, Instruction, OpKind, Register};
 use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
+    disassemble::{disassemble, Control},
     resolvers::{
         bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, Context,
         Result,
     },
-    Addressable, Matchable, MemoryAccessorTrait, MemoryTrait,
+    Addressable, Image, Matchable, MemoryAccessorTrait, MemoryTrait,
 };
 
 /// currently seems to be 4.22+
@@ -156,6 +157,25 @@ impl_resolver_singleton!(GUObjectArray, |ctx| async {
 )]
 pub struct GMalloc(pub usize);
 impl_resolver_singleton!(GMalloc, |ctx| async {
+    let any = join!(
+        ctx.resolve(GMallocPatterns::resolver()),
+        ctx.resolve(GMallocString::resolver()),
+    );
+
+    Ok(Self(*ensure_one(
+        [any.0.map(|r| r.0), any.1.map(|r| r.0)]
+            .iter()
+            .filter_map(|r| r.as_ref().ok()),
+    )?))
+});
+
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct GMallocPatterns(pub usize);
+impl_resolver_singleton!(GMallocPatterns, |ctx| async {
     let patterns = [
         "48 85 C9 74 2E 53 48 83 EC 20 48 8B D9 48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 0C E8 ?? ?? 00 00 48 8B 0D ?? ?? ?? ?? 48 8B 01 48 8B D3 FF 50 ?? 48 83 C4 20 5B C3",
         "48 89 5C 24 08 57 48 83 EC 20 48 8B F9 ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? FF 48 8B 0D | ?? ?? ?? ?? ?? 8B ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 ?? ?? ?? ?? 48",
@@ -165,9 +185,156 @@ impl_resolver_singleton!(GMalloc, |ctx| async {
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
-    Ok(GMalloc(try_ensure_one(res.iter().flatten().map(
+    Ok(Self(try_ensure_one(res.iter().flatten().map(
         |a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) },
     ))?))
+});
+
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct GMallocString(pub usize);
+impl_resolver_singleton!(GMallocString, |ctx| async {
+    let strings = ctx
+        .scan(
+            Pattern::from_bytes(
+                "DeleteFile %s\0"
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes)
+                    .collect(),
+            )
+            .unwrap(),
+        )
+        .await;
+
+    let refs_indirect = join_all(
+        strings
+            .iter()
+            .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
+    )
+    .await;
+
+    let refs = join_all(
+        strings
+            .iter()
+            .chain(refs_indirect.iter().flatten())
+            .flat_map(|s| {
+                [
+                    ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
+                    ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
+                ]
+            }),
+    )
+    .await;
+
+    let fns = refs
+        .into_iter()
+        .flatten()
+        .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
+        .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
+        .into_iter()
+        .flatten();
+
+    fn find_global(
+        img: &Image<'_>,
+        f: usize,
+        depth: usize,
+        searched: &mut HashSet<usize>,
+    ) -> Result<Option<usize>> {
+        searched.insert(f);
+
+        //println!("searching {f:x?}");
+
+        let mut mov_rcx = None;
+        let mut gmalloc = None;
+        let mut calls = vec![];
+
+        disassemble(img, f, |inst| {
+            let cur = inst.ip() as usize;
+            if !(f..f + 1000).contains(&cur)
+                && Some(f) != img.get_root_function(cur)?.map(|f| f.range.start)
+            {
+                //println!("bailing at {:x}", inst.ip());
+                return Ok(Control::Break);
+            }
+
+            if inst.code() == Code::Cmp_rm64_imm8
+                && inst.memory_base() == Register::RIP
+                && inst.op0_kind() == OpKind::Memory
+                && inst.op1_kind() == OpKind::Immediate8to64
+                && inst.immediate8() == 0
+            {
+                gmalloc = Some(inst.ip_rel_memory_address() as usize);
+                return Ok(Control::Exit);
+            }
+
+            if inst.code() == Code::Test_rm64_r64
+                && inst.op0_register() == Register::RCX
+                && inst.op1_register() == Register::RCX
+            {
+                if let Some(mov_rcx) = mov_rcx {
+                    gmalloc = Some(mov_rcx);
+                    return Ok(Control::Exit);
+                }
+            }
+
+            if inst.code() == Code::Mov_r64_rm64
+                && inst.memory_base() == Register::RIP
+                && inst.op0_register() == Register::RCX
+            {
+                /*
+                println!(
+                    "{depth} {:x} {:x} {:x?}",
+                    inst.ip(),
+                    inst.ip_rel_memory_address(),
+                    inst
+                );
+                */
+                mov_rcx = Some(inst.ip_rel_memory_address() as usize);
+            } else {
+                mov_rcx = None;
+            }
+
+            match inst.flow_control() {
+                FlowControl::Call
+                | FlowControl::ConditionalBranch
+                | FlowControl::UnconditionalBranch => {
+                    let call = inst.near_branch_target() as usize;
+                    //println!("{:x} {:x}", inst.ip(), call);
+                    if Some(f) != img.get_root_function(call)?.map(|f| f.range.start) {
+                        calls.push(call);
+                    }
+                }
+                _ => {}
+            }
+
+            Ok(Control::Continue)
+        })?;
+
+        if gmalloc.is_some() {
+            Ok(gmalloc)
+        } else {
+            if depth > 0 {
+                for call in calls.iter().rev() {
+                    if !searched.contains(call) {
+                        let res = find_global(img, *call, depth - 1, searched)?;
+                        if res.is_some() {
+                            return Ok(res);
+                        }
+                    }
+                }
+            }
+            Ok(None)
+        }
+    }
+
+    let fns = fns
+        .map(|f| find_global(ctx.image(), f, 3, &mut Default::default()))
+        .flatten_ok();
+
+    Ok(Self(try_ensure_one(fns)?))
 });
 
 /// public: static class FUObjectHashTables & __cdecl FUObjectHashTables::Get(void)
