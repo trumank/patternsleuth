@@ -804,11 +804,16 @@ fn report(command: CommandReport) -> Result<()> {
     Ok(())
 }
 fn diff_report(command: CommandDiffReport) -> Result<()> {
+    use colored::Colorize;
     use patternsleuth::resolvers::{Resolution, ResolveError};
+    use prettytable::{Cell, Row, Table};
     type Report = BTreeMap<String, BTreeMap<String, Result<Box<dyn Resolution>, ResolveError>>>;
 
     let a: Report = serde_json::from_slice(&fs::read(command.a)?)?;
     let b: Report = serde_json::from_slice(&fs::read(command.b)?)?;
+
+    let mut table = Table::new();
+    //table.set_titles(cells.iter().map(|c| c.0.clone()).collect());
 
     let mut games_only_in_a = vec![];
     let mut games_only_in_b = vec![];
@@ -826,7 +831,22 @@ fn diff_report(command: CommandDiffReport) -> Result<()> {
             for res in game_a.keys().chain(game_b.keys()).unique() {
                 if let (Some(res_a), Some(res_b)) = (game_a.get(res), game_b.get(res)) {
                     if res_a.as_ref().ok() != res_b.as_ref().ok() {
-                        println!("{} {:?} a={:x?} b={:x?}", res, game, res_a, res_b);
+                        let format_res = |res: &Result<Box<dyn Resolution>, ResolveError>| {
+                            let s = format!("{:x?}", res);
+                            if res.is_ok() {
+                                s.bold()
+                            } else {
+                                s.bold().red()
+                            }
+                            .to_string()
+                        };
+
+                        table.add_row(Row::new(vec![
+                            Cell::new(res),
+                            Cell::new(game),
+                            Cell::new(&format_res(res_a)),
+                            Cell::new(&format_res(res_b)),
+                        ]));
                     }
                 } else {
                     // TODO warn if mismatched set of resolvers
@@ -834,8 +854,11 @@ fn diff_report(command: CommandDiffReport) -> Result<()> {
             }
         }
     }
+
     dbg!(games_only_in_a);
     dbg!(games_only_in_b);
+
+    table.printstd();
 
     //dbg!(a);
     Ok(())
