@@ -1081,6 +1081,20 @@ pub mod disassemble {
         Ok(min..max)
     }
 
+    pub fn disassemble_single<'mem, 'img: 'mem>(
+        exe: &'img Image<'mem>,
+        address: usize,
+    ) -> Result<Option<Instruction>, MemoryAccessError> {
+        Ok(Decoder::with_ip(
+            64,
+            exe.memory.range_from(address..)?,
+            address as u64,
+            DecoderOptions::NONE,
+        )
+        .iter()
+        .next())
+    }
+
     pub enum Control {
         Continue,
         Break,

@@ -388,6 +388,14 @@ impl<'data> AsyncContext<'data> {
     pub async fn scan(&self, pattern: Pattern) -> Vec<usize> {
         self.scan_tagged((), pattern).await.2
     }
+    pub async fn scan_tagged2<T: Copy>(&self, tag: T, pattern: Pattern) -> Vec<(T, usize)> {
+        self.scan_tagged(tag, pattern)
+            .await
+            .2
+            .into_iter()
+            .map(|a| (tag, a))
+            .collect()
+    }
     pub async fn scan_tagged<T>(&self, tag: T, pattern: Pattern) -> (T, Pattern, Vec<usize>) {
         let (tx, rx) = oneshot::channel::<PatternMatches>();
         {

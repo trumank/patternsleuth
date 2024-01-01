@@ -9,7 +9,7 @@ use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    disassemble::{disassemble, Control},
+    disassemble::{disassemble, disassemble_single, Control},
     resolvers::{
         bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, Context,
         Result,
@@ -17,7 +17,170 @@ use crate::{
     Addressable, Image, Matchable, MemoryAccessorTrait, MemoryTrait,
 };
 
-/// currently seems to be 4.22+
+#[allow(unused)]
+mod util {
+    use crate::resolvers::AsyncContext;
+
+    use super::*;
+
+    #[derive(Debug, Clone, Copy)]
+    pub(crate) struct Call {
+        pub(crate) index: usize,
+        pub(crate) ip: usize,
+        pub(crate) callee: usize,
+    }
+
+    pub(crate) fn utf16(string: &str) -> Vec<u8> {
+        string.encode_utf16().flat_map(u16::to_le_bytes).collect()
+    }
+    pub(crate) fn utf8_pattern(string: &str) -> Pattern {
+        Pattern::from_bytes(string.as_bytes().to_vec()).unwrap()
+    }
+    pub(crate) fn utf16_pattern(string: &str) -> Pattern {
+        Pattern::from_bytes(utf16(string)).unwrap()
+    }
+    pub(crate) async fn scan_xrefs(
+        ctx: &AsyncContext<'_>,
+        addresses: impl IntoIterator<Item = &usize> + Copy,
+    ) -> Vec<usize> {
+        let refs_indirect = join_all(
+            addresses
+                .into_iter()
+                .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
+        )
+        .await;
+
+        let refs = join_all(
+            addresses
+                .into_iter()
+                .copied()
+                .chain(refs_indirect.into_iter().flatten())
+                .flat_map(|s| {
+                    [
+                        ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
+                        ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
+                    ]
+                }),
+        )
+        .await;
+
+        refs.into_iter().flatten().collect()
+    }
+    pub(crate) fn root_functions<'a, I>(ctx: &AsyncContext<'_>, addresses: I) -> Result<Vec<usize>>
+    where
+        I: IntoIterator<Item = &'a usize> + Copy,
+    {
+        Ok(addresses
+            .into_iter()
+            .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(*r)?.map(|f| f.range.start)) })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+
+    pub(crate) fn find_calls(img: &Image<'_>, f: usize) -> Result<Vec<Call>> {
+        let mut calls = vec![];
+
+        disassemble(img, f, |inst| {
+            let cur = inst.ip() as usize;
+            if Some(f) != img.get_root_function(cur)?.map(|f| f.range.start) {
+                return Ok(Control::Break);
+            }
+
+            match inst.flow_control() {
+                FlowControl::Call
+                | FlowControl::ConditionalBranch
+                | FlowControl::UnconditionalBranch => {
+                    let call = inst.near_branch_target() as usize;
+                    if Some(f) != img.get_root_function(call)?.map(|f| f.range.start) {
+                        calls.push(Call {
+                            index: 0,
+                            ip: inst.ip() as usize,
+                            callee: call,
+                        });
+                    }
+                }
+                _ => {}
+            }
+
+            Ok(Control::Continue)
+        })?;
+
+        calls.sort_by_key(|c| c.ip);
+        for (i, call) in calls.iter_mut().enumerate() {
+            call.index = i;
+        }
+        Ok(calls)
+    }
+
+    pub(crate) fn find_path(
+        img: &Image<'_>,
+        f: usize,
+        depth: usize,
+        searched: &mut HashSet<usize>,
+        path: &mut Vec<Call>,
+        needle: usize,
+    ) -> Result<Vec<String>> {
+        searched.insert(f);
+
+        let mut result = vec![];
+        let mut calls = vec![];
+
+        disassemble(img, f, |inst| {
+            let cur = inst.ip() as usize;
+            if !(f..f + 1000).contains(&cur)
+                && Some(f) != img.get_root_function(cur)?.map(|f| f.range.start)
+            {
+                println!("bailing at {:x}", inst.ip());
+                return Ok(Control::Break);
+            }
+
+            match inst.flow_control() {
+                FlowControl::Call
+                | FlowControl::ConditionalBranch
+                | FlowControl::UnconditionalBranch => {
+                    let call = inst.near_branch_target() as usize;
+                    println!("{:x} {:x}", inst.ip(), call);
+                    if Some(f) != img.get_root_function(call)?.map(|f| f.range.start) {
+                        calls.push(Call {
+                            index: 0, // unknown for now
+                            ip: cur,
+                            callee: call,
+                        });
+                    }
+                }
+                _ => {}
+            }
+
+            Ok(Control::Continue)
+        })?;
+
+        for (i, call) in calls.iter_mut().sorted_by_key(|c| c.ip).enumerate() {
+            call.index = i;
+            if !searched.contains(&call.callee) {
+                path.push(*call);
+                if call.callee == needle {
+                    println!("{path:x?}");
+                    result.push(format!("{path:x?}"));
+                }
+                if depth > 0 {
+                    result.extend(find_path(
+                        img,
+                        call.callee,
+                        depth - 1,
+                        searched,
+                        path,
+                        needle,
+                    )?);
+                }
+                path.pop();
+            }
+        }
+        Ok(result)
+    }
+}
+
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(
     feature = "serde-resolvers",
@@ -720,6 +883,25 @@ impl_resolver_singleton!(FTextFString, |ctx| async {
 )]
 pub struct StaticConstructObjectInternal(pub usize);
 impl_resolver_singleton!(StaticConstructObjectInternal, |ctx| async {
+    let any = join!(
+        ctx.resolve(StaticConstructObjectInternalPatterns::resolver()),
+        ctx.resolve(StaticConstructObjectInternalString::resolver()),
+    );
+
+    Ok(Self(*ensure_one(
+        [any.0.map(|r| r.0), any.1.map(|r| r.0)]
+            .iter()
+            .filter_map(|r| r.as_ref().ok()),
+    )?))
+});
+
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct StaticConstructObjectInternalPatterns(pub usize);
+impl_resolver_singleton!(StaticConstructObjectInternalPatterns, |ctx| async {
     let patterns = [
         "48 89 44 24 28 C7 44 24 20 00 00 00 00 E8 | ?? ?? ?? ?? 48 8B 5C 24 ?? 48 8B ?? 24",
         "E8 | ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? C0 E9 ?? 32 88 ?? ?? ?? ?? 80 E1 01 30 88 ?? ?? ?? ?? 48",
@@ -728,11 +910,231 @@ impl_resolver_singleton!(StaticConstructObjectInternal, |ctx| async {
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
-    Ok(StaticConstructObjectInternal(try_ensure_one(
-        res.iter()
+    Ok(Self(try_ensure_one(res.iter().flatten().map(
+        |a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) },
+    ))?))
+});
+
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct StaticConstructObjectInternalString(pub usize);
+impl_resolver!(StaticConstructObjectInternalString, |ctx| async {
+    let strings = join_all(
+        [
+            "UBehaviorTreeManager\0",
+            "ULeaderboardFlushCallbackProxy\0",
+            "UPlayMontageCallbackProxy\0",
+        ]
+        .iter()
+        .map(|s| {
+            ctx.scan(
+                Pattern::from_bytes(s.encode_utf16().flat_map(u16::to_le_bytes).collect()).unwrap(),
+            )
+        }),
+    )
+    .await;
+
+    let refs_indirect = join_all(
+        strings
+            .iter()
             .flatten()
-            .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) }),
-    )?))
+            .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
+    )
+    .await;
+
+    let refs = join_all(
+        strings
+            .iter()
+            .flatten()
+            .chain(refs_indirect.iter().flatten())
+            .flat_map(|s| {
+                [
+                    ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
+                    ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
+                    ctx.scan(Pattern::new(format!("48 8d ?? X0x{:X}", s + 2)).unwrap()),
+                    ctx.scan(Pattern::new(format!("4c 8d ?? X0x{:X}", s + 2)).unwrap()),
+                ]
+            }),
+    )
+    .await;
+
+    let fns = refs
+        .into_iter()
+        .flatten()
+        .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
+        .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
+        .into_iter()
+        .flatten();
+
+    fn check_is_new_object(img: &Image<'_>, f: usize) -> Result<bool> {
+        let cmp = "NewObject with empty name can't"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect_vec();
+
+        let check = |f| -> Result<bool> {
+            let mut is = false;
+            disassemble(img, f, |inst| {
+                let cur = inst.ip() as usize;
+                if Some(f) != img.get_root_function(cur)?.map(|f| f.range.start) {
+                    return Ok(Control::Break);
+                }
+
+                if inst.code() == Code::Lea_r64_m
+                    && inst.memory_base() == Register::RIP
+                    && inst.op0_kind() == OpKind::Register
+                    && inst.op1_kind() == OpKind::Memory
+                {
+                    let ptr = inst.ip_rel_memory_address() as usize;
+                    if img
+                        .memory
+                        .range(ptr..ptr + cmp.len())
+                        .map(|data| data == cmp)
+                        .unwrap_or(false)
+                    {
+                        is = true;
+                        return Ok(Control::Exit);
+                    }
+                }
+
+                Ok(Control::Continue)
+            })?;
+            Ok(is)
+        };
+
+        if check(f)? {
+            return Ok(true);
+        } else {
+            // sometimes can be a call deep so check all outgoing calls as well
+            for call in util::find_calls(img, f)? {
+                let mut f = call.callee;
+                // sometimes there's a jmp stub between
+                if let Some(inst) = disassemble_single(img, f)? {
+                    if inst.flow_control() == FlowControl::UnconditionalBranch {
+                        f = inst.near_branch_target() as usize;
+                    }
+                }
+
+                if check(f)? {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    fn check_is_static_construct(img: &Image<'_>, f: usize) -> Result<bool> {
+        let mut is = false;
+        disassemble(img, f, |inst| {
+            let cur = inst.ip() as usize;
+            if Some(f) != img.get_root_function(cur)?.map(|f| f.range.start) {
+                return Ok(Control::Break);
+            }
+
+            if inst.immediate32() == 0x10000080 {
+                is = true;
+                return Ok(Control::Exit);
+            }
+
+            Ok(Control::Continue)
+        })?;
+        Ok(is)
+    }
+
+    let new_object = {
+        let mut fns = fns.collect_vec();
+
+        let mut new_object = None;
+        for f in &fns {
+            if check_is_new_object(ctx.image(), *f)? {
+                new_object = Some(*f);
+                break;
+            }
+        }
+
+        'root: for _ in 0..2 {
+            #[derive(Clone, Copy)]
+            enum CallType {
+                Call,
+                Jump,
+            }
+
+            if new_object.is_none() {
+                let calls = join_all(fns.into_iter().flat_map(|f| {
+                    [
+                        ctx.scan_tagged2(
+                            CallType::Call,
+                            Pattern::new(format!("e8 X0x{f:x}")).unwrap(),
+                        ),
+                        ctx.scan_tagged2(
+                            CallType::Jump,
+                            Pattern::new(format!("e9 X0x{f:x}")).unwrap(),
+                        ),
+                    ]
+                }))
+                .await;
+
+                fns = calls
+                    .into_iter()
+                    .flatten()
+                    .map(|(t, r)| -> Result<_> {
+                        Ok(match t {
+                            CallType::Call => {
+                                ctx.image().get_root_function(r)?.map(|f| f.range.start)
+                            }
+                            CallType::Jump => Some(r),
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
+                    .into_iter()
+                    .flatten()
+                    .collect_vec();
+            }
+
+            for f in &fns {
+                if check_is_new_object(ctx.image(), *f)? {
+                    new_object = Some(*f);
+                    break 'root;
+                }
+            }
+        }
+        new_object
+    }
+    .context("could not find NewObject<>")?;
+
+    let mut checked = HashSet::new();
+    for call in util::find_calls(ctx.image(), new_object)? {
+        if !checked.contains(&call.callee) {
+            checked.insert(call.callee);
+
+            let mut f = call.callee;
+            if let Some(inst) = disassemble_single(ctx.image(), f)? {
+                if inst.flow_control() == FlowControl::UnconditionalBranch {
+                    f = inst.near_branch_target() as usize;
+                }
+            }
+
+            if check_is_static_construct(ctx.image(), f)? {
+                return Ok(Self(call.callee));
+            }
+        }
+    }
+    // try one call deeper
+    for f in checked.clone().into_iter() {
+        for call in util::find_calls(ctx.image(), f)? {
+            if !checked.contains(&call.callee) {
+                checked.insert(call.callee);
+                if check_is_static_construct(ctx.image(), call.callee)? {
+                    return Ok(Self(call.callee));
+                }
+            }
+        }
+    }
+
+    bail_out!("could not find StaticConstructObject_Internal call");
 });
 
 /// public: void __cdecl UObject::SkipFunction(struct FFrame &, void *const, class UFunction *)
