@@ -305,6 +305,7 @@ impl_resolver_singleton!(GUObjectArray, |ctx| async {
         "74 ?? 48 8D 0D | ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01",
         "75 ?? 48 ?? ?? 48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 45 33 C9 4C 89 74 24",
         "45 84 c0 48 c7 41 10 00 00 00 00 b8 ff ff ff ff 4c 8d 1d | ?? ?? ?? ?? 89 41 08 4c 8b d1 4c 89 19 0f 45 05 ?? ?? ?? ?? ff c0 89 41 08 3b 05",
+        "81 ce 00 00 00 02 83 e0 fb 89 47 08 48 8d 0d | ?? ?? ?? ?? 48 89 fa 45 31 c0 e8 ?? ?? ?? ??",
     ];
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
@@ -587,24 +588,72 @@ impl_resolver_singleton!(UObjectBaseShutdown, |ctx| async {
 )]
 pub struct FNameCtorWchar(pub usize);
 impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
-    let strings = ["TGPUSkinVertexFactoryUnlimited\0", "MovementComponent0\0"];
-    let strings = join_all(strings.iter().map(|s| ctx.scan(util::utf16_pattern(s)))).await;
+    let strings = async {
+        let strings = ["TGPUSkinVertexFactoryUnlimited\0", "MovementComponent0\0"];
+        join_all(strings.iter().map(|s| ctx.scan(util::utf16_pattern(s)))).await
+    };
+    let patterns = async {
+        ctx.scan(Pattern::new("EB 07 48 8D 15 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 41 B8 01 00 00 00 E8 | ?? ?? ?? ??").unwrap()).await
+    };
+    let (patterns, strings) = join!(patterns, strings);
+
+    // sometimes the call gets inlined so use patterns if any match
+    if !patterns.is_empty() {
+        return Ok(Self(try_ensure_one(
+            patterns
+                .iter()
+                .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) }),
+        )?));
+    }
+
+    #[derive(Clone, Copy)]
+    enum Tag {
+        Direct,
+        FirstCall,
+    }
 
     let refs = join_all(strings.iter().flatten().flat_map(|s| {
         [
-            format!("48 8d 15 X0x{s:x} 48 8d 0d ?? ?? ?? ?? e8 | ?? ?? ?? ??"),
-            format!("41 b8 01 00 00 00 48 8d 15 X0x{s:x} 48 8d 0d ?? ?? ?? ?? e9 | ?? ?? ?? ??"),
+            (
+                Tag::FirstCall,
+                format!("48 8d 15 X0x{s:x} 4c 8d 05 ?? ?? ?? ?? 41 b1 01 e8 | ?? ?? ?? ??"),
+            ),
+            (
+                Tag::Direct,
+                format!("48 8d 15 X0x{s:x} 48 8d 0d ?? ?? ?? ?? e8 | ?? ?? ?? ??"),
+            ),
+            (
+                Tag::Direct,
+                format!(
+                    "41 b8 01 00 00 00 48 8d 15 X0x{s:x} 48 8d 0d ?? ?? ?? ?? e9 | ?? ?? ?? ??"
+                ),
+            ),
         ]
         .into_iter()
-        .map(|p| ctx.scan(Pattern::new(p).unwrap()))
+        .map(|(t, p)| ctx.scan_tagged2(t, Pattern::new(p).unwrap()))
     }))
     .await;
 
-    Ok(FNameCtorWchar(try_ensure_one(
-        refs.iter()
-            .flatten()
-            .map(|a| Ok(ctx.image().memory.rip4(*a)?)),
-    )?))
+    Ok(Self(try_ensure_one(refs.iter().flatten().map(
+        |(tag, address)| {
+            let f = ctx.image().memory.rip4(*address)?;
+            match tag {
+                Tag::Direct => Ok(f),
+                Tag::FirstCall => {
+                    let bytes = ctx.image().memory.range(f..f + 0x200)?;
+                    let mut decoder = Decoder::with_ip(64, bytes, f as u64, DecoderOptions::NONE);
+
+                    decoder
+                        .iter()
+                        .find_map(|i| {
+                            (i.code() == Code::Call_rel32_64)
+                                .then_some(i.memory_displacement64() as usize)
+                        })
+                        .context("did not find CALL instruction")
+                }
+            }
+        },
+    ))?))
 });
 
 /// Can be either of the following:
@@ -619,6 +668,16 @@ impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
 )]
 pub struct FNameToString(pub usize);
 impl_resolver_singleton!(FNameToString, |ctx| async {
+    let patterns = async {
+        let patterns = ["56 57 48 83 EC 28 48 89 D6 48 89 CF 83 79 ?? 00 74"];
+
+        join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap())))
+            .await
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+    };
+
     let string = async {
         // Locates either variant by searching for a string ref and finding the first function
         // call directly above it. Which variant depends on how much inlining has occured
@@ -675,7 +734,13 @@ impl_resolver_singleton!(FNameToString, |ctx| async {
         ctx.resolve(FNameToStringFString::resolver()),
         ctx.resolve(FNameToStringVoid::resolver()),
         string,
+        patterns,
     );
+
+    // use pattern if found
+    if !any.3.is_empty() {
+        return Ok(Self(ensure_one(any.3)?));
+    }
 
     Ok(FNameToString(
         any.0.map(|r| r.0).or(any.1.map(|r| r.0)).or(any.2)?,
