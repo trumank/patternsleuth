@@ -217,6 +217,7 @@ impl_resolver!(EngineVersion, |ctx| async {
         "C7 03 | 04 00 ?? 00 66 89 6B 04 89 7B 08 48 83 C3 10",
         "41 C7 06 | 05 00 ?? ?? 48 8B 5C 24 ?? 49 8D 76 ?? 33 ED 41 89 46",
         "C7 06 | 05 00 ?? ?? 48 8B 5C 24 20 4C 8D 76 10 33 ED",
+        "11 76 30 c7 46 20 | 04 00 ?? 00",
     ];
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
