@@ -90,7 +90,7 @@ pub fn try_ensure_one<T: PartialEq>(data: impl IntoIterator<Item = Result<T>>) -
 }
 
 pub type Result<T> = std::result::Result<T, ResolveError>;
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)

@@ -670,7 +670,7 @@ impl RuntimeFunction {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
