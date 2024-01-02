@@ -370,45 +370,11 @@ impl_resolver_singleton!(GMallocPatterns, |ctx| async {
 )]
 pub struct GMallocString(pub usize);
 impl_resolver_singleton!(GMallocString, |ctx| async {
-    let strings = ctx
-        .scan(
-            Pattern::from_bytes(
-                "DeleteFile %s\0"
-                    .encode_utf16()
-                    .flat_map(u16::to_le_bytes)
-                    .collect(),
-            )
-            .unwrap(),
-        )
-        .await;
+    let strings = ctx.scan(util::utf16_pattern("DeleteFile %s\0")).await;
 
-    let refs_indirect = join_all(
-        strings
-            .iter()
-            .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
-    )
-    .await;
+    let refs = util::scan_xrefs(ctx, &strings).await;
 
-    let refs = join_all(
-        strings
-            .iter()
-            .chain(refs_indirect.iter().flatten())
-            .flat_map(|s| {
-                [
-                    ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
-                    ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
-                ]
-            }),
-    )
-    .await;
-
-    let fns = refs
-        .into_iter()
-        .flatten()
-        .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
-        .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
-        .into_iter()
-        .flatten();
+    let fns = util::root_functions(ctx, &refs)?;
 
     fn find_global(
         img: &Image<'_>,
@@ -504,6 +470,7 @@ impl_resolver_singleton!(GMallocString, |ctx| async {
     }
 
     let fns = fns
+        .into_iter()
         .map(|f| find_global(ctx.image(), f, 3, &mut Default::default()))
         .flatten_ok();
 
@@ -541,46 +508,13 @@ impl_resolver_singleton!(FUObjectHashTablesGet, |ctx| async {
 pub struct FUObjectArrayAllocateUObjectIndex(pub usize);
 impl_resolver_singleton!(FUObjectArrayAllocateUObjectIndex, |ctx| async {
     let strings = ctx
-        .scan(
-            Pattern::from_bytes(
-                "Unable to add more objects to disregard for GC pool (Max: %d)\x00"
-                    .encode_utf16()
-                    .flat_map(u16::to_le_bytes)
-                    .collect(),
-            )
-            .unwrap(),
-        )
+        .scan(util::utf16_pattern(
+            "Unable to add more objects to disregard for GC pool (Max: %d)\0",
+        ))
         .await;
-
-    let refs_indirect = join_all(
-        strings
-            .iter()
-            .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
-    )
-    .await;
-
-    let refs = join_all(
-        strings
-            .iter()
-            .chain(refs_indirect.iter().flatten())
-            .flat_map(|s| {
-                [
-                    ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
-                    ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
-                ]
-            }),
-    )
-    .await;
-
-    let fns = refs
-        .into_iter()
-        .flatten()
-        .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
-        .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
-        .into_iter()
-        .flatten();
-
-    Ok(FUObjectArrayAllocateUObjectIndex(ensure_one(fns)?))
+    let refs = util::scan_xrefs(ctx, &strings).await;
+    let fns = util::root_functions(ctx, &refs)?;
+    Ok(Self(ensure_one(fns)?))
 });
 
 /// public: void __cdecl FUObjectArray::FreeUObjectIndex(class UObjectBase *)
@@ -592,37 +526,20 @@ impl_resolver_singleton!(FUObjectArrayAllocateUObjectIndex, |ctx| async {
 pub struct FUObjectArrayFreeUObjectIndex(pub usize);
 impl_resolver_singleton!(FUObjectArrayFreeUObjectIndex, |ctx| async {
     let refs_future = async {
-        let strings = join_all([
-            ctx.scan(
-                Pattern::from_bytes("Removing object (0x%016llx) at index %d but the index points to a different object (0x%016llx)!".encode_utf16().flat_map(u16::to_le_bytes).collect()).unwrap(),
-            ),
-            ctx.scan(
-                Pattern::from_bytes("Unexpected concurency while adding new object".encode_utf16().flat_map(u16::to_le_bytes).collect()).unwrap()
-            ),
-        ])
-        .await;
-
-        let refs_indirect = join_all(
-            strings
-                .iter()
-                .flatten()
-                .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
+        let search_strings = [
+            "Removing object (0x%016llx) at index %d but the index points to a different object (0x%016llx)!",
+            "Unexpected concurency while adding new object",
+        ];
+        let strings = join_all(
+            search_strings
+                .into_iter()
+                .map(|s| ctx.scan(util::utf16_pattern(s))),
         )
-        .await;
-
-        Ok(join_all(
-            strings
-                .iter()
-                .flatten()
-                .chain(refs_indirect.iter().flatten())
-                .flat_map(|s| {
-                    [
-                        ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
-                        ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
-                    ]
-                }),
-        )
-        .await)
+        .await
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        Ok(util::scan_xrefs(ctx, &strings).await)
     };
 
     // same string is present in both functions so resolve the other so we can filter it out
@@ -633,7 +550,6 @@ impl_resolver_singleton!(FUObjectArrayFreeUObjectIndex, |ctx| async {
 
     let fns = refs
         .into_iter()
-        .flatten()
         .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
         .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
         .into_iter()
@@ -653,33 +569,12 @@ impl_resolver_singleton!(FUObjectArrayFreeUObjectIndex, |ctx| async {
 pub struct UObjectBaseShutdown(pub usize);
 impl_resolver_singleton!(UObjectBaseShutdown, |ctx| async {
     let strings = ctx
-        .scan(
-            Pattern::from_bytes(
-                "All UObject delete listeners should be unregistered when shutting down the UObject array\x00"
-                    .encode_utf16()
-                    .flat_map(u16::to_le_bytes)
-                    .collect(),
-            )
-            .unwrap(),
-        )
+        .scan(util::utf16_pattern(
+                "All UObject delete listeners should be unregistered when shutting down the UObject array\0"
+        ))
         .await;
-
-    let refs = join_all(strings.iter().flat_map(|s| {
-        [
-            ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
-            ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
-        ]
-    }))
-    .await;
-
-    let fns = refs
-        .into_iter()
-        .flatten()
-        .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
-        .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
-        .into_iter()
-        .flatten();
-
+    let refs = util::scan_xrefs(ctx, &strings).await;
+    let fns = util::root_functions(ctx, &refs)?;
     Ok(UObjectBaseShutdown(ensure_one(fns)?))
 });
 
@@ -692,12 +587,7 @@ impl_resolver_singleton!(UObjectBaseShutdown, |ctx| async {
 pub struct FNameCtorWchar(pub usize);
 impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
     let strings = ["TGPUSkinVertexFactoryUnlimited\0", "MovementComponent0\0"];
-    let strings = join_all(strings.iter().map(|s| {
-        ctx.scan(
-            Pattern::from_bytes(s.encode_utf16().flat_map(u16::to_le_bytes).collect()).unwrap(),
-        )
-    }))
-    .await;
+    let strings = join_all(strings.iter().map(|s| ctx.scan(util::utf16_pattern(s)))).await;
 
     let refs = join_all(strings.iter().flatten().flat_map(|s| {
         [
