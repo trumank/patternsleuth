@@ -812,11 +812,11 @@ fn diff_report(command: CommandDiffReport) -> Result<()> {
     let a: Report = serde_json::from_slice(&fs::read(command.a)?)?;
     let b: Report = serde_json::from_slice(&fs::read(command.b)?)?;
 
-    let mut table = Table::new();
-    //table.set_titles(cells.iter().map(|c| c.0.clone()).collect());
-
     let mut games_only_in_a = vec![];
     let mut games_only_in_b = vec![];
+
+    type Res<'r> = Result<&'r Box<dyn Resolution + 'static>, &'r ResolveError>;
+    let mut diffs: BTreeMap<&str, BTreeMap<&str, (Res, Res)>> = Default::default();
 
     for game in a.keys().chain(b.keys()).unique() {
         let game_a = a.get(game);
@@ -830,24 +830,10 @@ fn diff_report(command: CommandDiffReport) -> Result<()> {
         if let (Some(game_a), Some(game_b)) = (game_a, game_b) {
             for res in game_a.keys().chain(game_b.keys()).unique() {
                 if let (Some(res_a), Some(res_b)) = (game_a.get(res), game_b.get(res)) {
-                    if res_a.as_ref().ok() != res_b.as_ref().ok() {
-                        let format_res = |res: &Result<Box<dyn Resolution>, ResolveError>| {
-                            let s = format!("{:x?}", res);
-                            if res.is_ok() {
-                                s.bold()
-                            } else {
-                                s.bold().red()
-                            }
-                            .to_string()
-                        };
-
-                        table.add_row(Row::new(vec![
-                            Cell::new(res),
-                            Cell::new(game),
-                            Cell::new(&format_res(res_a)),
-                            Cell::new(&format_res(res_b)),
-                        ]));
-                    }
+                    diffs
+                        .entry(res)
+                        .or_default()
+                        .insert(game, (res_a.as_ref(), res_b.as_ref()));
                 } else {
                     // TODO warn if mismatched set of resolvers
                 }
@@ -858,9 +844,119 @@ fn diff_report(command: CommandDiffReport) -> Result<()> {
     dbg!(games_only_in_a);
     dbg!(games_only_in_b);
 
+    fn local<I, O, F: FnOnce(I) -> O>(i: I, f: F) -> O {
+        f(i)
+    }
+
+    fn format_res(res: Result<&dyn Resolution, &ResolveError>) -> String {
+        local(format!("{:x?}", res).bold(), |s| match res {
+            Ok(_) => s,
+            Err(_) => s.red(),
+        })
+        .to_string()
+    }
+
+    fn format_percent_diff(percent_diff: f32) -> String {
+        local(
+            format!("{:+.2?}%", percent_diff).bold(),
+            |s| match percent_diff {
+                f if f < 0. => s.red(),
+                f if f > 0. => s.green(),
+                _ => s,
+            },
+        )
+        .to_string()
+    }
+
+    struct ResEntry {
+        ok_diff: usize,
+        percent_a: f32,
+        percent_b: f32,
+        percent_diff: f32,
+    }
+
+    let mut results = vec![];
+
+    for (res, entries) in diffs {
+        let mut table = Table::new();
+
+        let total = entries.len();
+        let ok_a = entries.values().filter(|res| res.0.is_ok()).count();
+        let ok_b = entries.values().filter(|res| res.1.is_ok()).count();
+        let diff = entries
+            .iter()
+            .filter(|(_, (a, b))| a.ok() != b.ok())
+            .collect::<Vec<_>>();
+        let ok_diff = diff
+            .iter()
+            .filter(|(_, pair)| matches!(pair, (Ok(a), Ok(b)) if a != b))
+            .count();
+
+        let percent_a = ok_a as f32 / total as f32 * 100.;
+        let percent_b = ok_b as f32 / total as f32 * 100.;
+        let percent_diff = percent_b - percent_a;
+
+        results.push((
+            res,
+            ResEntry {
+                ok_diff,
+                percent_a,
+                percent_b,
+                percent_diff,
+            },
+        ));
+
+        if diff.is_empty() {
+            break;
+        }
+
+        let score = format_percent_diff(percent_diff);
+        let changed = if ok_diff == 0 {
+            "".to_string()
+        } else {
+            format!("{ok_diff} changed").yellow().bold().to_string()
+        };
+        let title = format!(
+            "{res} - {ok_a}/{total} ({percent_a:.2}%) => {ok_b}/{total} ({percent_b:.2}%): {score} {changed}"
+        );
+        table.set_titles(Row::new(vec![Cell::new(&title).with_hspan(3)]));
+
+        for (game, (res_a, res_b)) in diff {
+            table.add_row(Row::new(vec![
+                Cell::new(game),
+                Cell::new(&format_res(res_a.map(|ok| ok.as_ref()))),
+                Cell::new(&format_res(res_b.map(|ok| ok.as_ref()))),
+            ]));
+        }
+
+        table.printstd();
+    }
+
+    let mut table = Table::new();
+    table.set_titles(Row::new(vec![
+        Cell::new("resolver"),
+        Cell::new("a"),
+        Cell::new("b"),
+        Cell::new("increase"),
+        Cell::new("changed"),
+    ]));
+    for (res, entry) in results {
+        table.add_row(Row::new(vec![
+            Cell::new(res),
+            Cell::new(&format!("{:.2}%", entry.percent_a)),
+            Cell::new(&format!("{:.2}%", entry.percent_b)),
+            Cell::new(&format_percent_diff(entry.percent_diff)),
+            Cell::new(
+                &local(format!("{}", entry.ok_diff), |s| match entry.ok_diff {
+                    0 => s.normal(),
+                    _ => s.yellow().bold(),
+                })
+                .to_string(),
+            ),
+        ]));
+    }
     table.printstd();
 
-    //dbg!(a);
     Ok(())
 }
 
