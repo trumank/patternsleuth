@@ -81,7 +81,7 @@ fn setup() -> Result<PathBuf> {
     Ok(bin_dir.to_path_buf())
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct StartRecordingReplay(usize);
 type FnStartRecordingReplay = unsafe extern "system" fn(
     this: *const ue::UObject, // game instance
@@ -96,7 +96,7 @@ impl StartRecordingReplay {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct StopRecordingReplay(usize);
 type FnStopRecordingReplay = unsafe extern "system" fn(
     this: *const ue::UObject, // game instance
@@ -139,7 +139,7 @@ mod resolvers {
 }
 
 impl_try_collector! {
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     struct DllHookResolution {
         start_recording_replay: StartRecordingReplay,
         stop_recording_replay: StopRecordingReplay,
