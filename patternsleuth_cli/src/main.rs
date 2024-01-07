@@ -907,7 +907,7 @@ fn diff_report(command: CommandDiffReport) -> Result<()> {
         ));
 
         if diff.is_empty() {
-            break;
+            continue;
         }
 
         let score = format_percent_diff(percent_diff);
