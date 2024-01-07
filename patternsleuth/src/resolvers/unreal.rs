@@ -389,7 +389,7 @@ impl_resolver_singleton!(GMallocString, |ctx| async {
         //println!("searching {f:x?}");
 
         let mut mov_rcx = None;
-        let mut gmalloc = None;
+        let mut possible_gmalloc = vec![];
         let mut calls = vec![];
 
         disassemble(img, f, |inst| {
@@ -407,8 +407,7 @@ impl_resolver_singleton!(GMallocString, |ctx| async {
                 && inst.op1_kind() == OpKind::Immediate8to64
                 && inst.immediate8() == 0
             {
-                gmalloc = Some(inst.ip_rel_memory_address() as usize);
-                return Ok(Control::Exit);
+                possible_gmalloc.push(inst.ip_rel_memory_address() as usize);
             }
 
             if inst.code() == Code::Test_rm64_r64
@@ -416,8 +415,7 @@ impl_resolver_singleton!(GMallocString, |ctx| async {
                 && inst.op1_register() == Register::RCX
             {
                 if let Some(mov_rcx) = mov_rcx {
-                    gmalloc = Some(mov_rcx);
-                    return Ok(Control::Exit);
+                    possible_gmalloc.push(mov_rcx);
                 }
             }
 
@@ -454,8 +452,8 @@ impl_resolver_singleton!(GMallocString, |ctx| async {
             Ok(Control::Continue)
         })?;
 
-        if gmalloc.is_some() {
-            Ok(gmalloc)
+        if let [gmalloc] = possible_gmalloc.as_slice() {
+            Ok(Some(*gmalloc))
         } else {
             if depth > 0 {
                 for call in calls.iter().rev() {
