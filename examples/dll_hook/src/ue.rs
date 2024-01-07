@@ -1,11 +1,8 @@
 #![allow(non_snake_case)]
 
-use std::{
-    ffi::{c_void, OsString},
-    sync::Mutex,
-};
+use std::{ffi::c_void, sync::Mutex};
 
-use crate::res;
+use crate::{globals, guobject_array, guobject_array_unchecked};
 
 pub static GMALLOC: GMalloc = GMalloc {
     ptr: Mutex::new(None),
@@ -27,7 +24,8 @@ pub fn FName_ToString(name: &FName) -> String {
     unsafe {
         type FnFNameToString = unsafe extern "system" fn(&FName, &mut FString);
 
-        let fnametostring: FnFNameToString = std::mem::transmute(res().fnametostring.0);
+        let fnametostring: FnFNameToString =
+            std::mem::transmute(globals().resolution.fnametostring.0);
         let mut string = FString::new();
         fnametostring(name, &mut string);
         string.to_string()
@@ -107,27 +105,73 @@ pub struct FMallocVTable {
 
 #[derive(Debug)]
 #[repr(C)]
+pub struct FWindowsCriticalSection([u8; 0x28]);
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct FUObjectCreateListener;
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct FUObjectDeleteListener;
+
+type ObjectIndex = i32;
+
+#[derive(Debug)]
+#[repr(C)]
 pub struct FUObjectArray {
-    /* offset 0x0000 */ pub ObjFirstGCIndex: i32,
-    /* offset 0x0004 */ pub ObjLastNonGCIndex: i32,
-    /* offset 0x0008 */ pub MaxObjectsNotConsideredByGC: i32,
-    /* offset 0x000c */ pub OpenForDisregardForGC: bool,
-    /* offset 0x0010 */
+    pub ObjFirstGCIndex: i32,
+    pub ObjLastNonGCIndex: i32,
+    pub MaxObjectsNotConsideredByGC: i32,
+    pub OpenForDisregardForGC: bool,
+
     pub ObjObjects: FChunkedFixedUObjectArray,
-    /* offset 0x0030 */ //FWindowsCriticalSection ObjObjectsCritical;
-    /* offset 0x0058 */ //TArray<int,TSizedDefaultAllocator<32> > ObjAvailableList;
-    /* offset 0x0068 */ //TArray<FUObjectArray::FUObjectCreateListener *,TSizedDefaultAllocator<32> > UObjectCreateListeners;
-    /* offset 0x0078 */ //TArray<FUObjectArray::FUObjectDeleteListener *,TSizedDefaultAllocator<32> > UObjectDeleteListeners;
-    /* offset 0x0088 */ //FWindowsCriticalSection UObjectDeleteListenersCritical;
-    /* offset 0x00b0 */ //FThreadSafeCounter MasterSerialNumber;
+    pub ObjObjectsCritical: FWindowsCriticalSection,
+    pub ObjAvailableList: [u8; 0x88],
+    pub UObjectCreateListeners: TArray<*const FUObjectCreateListener>,
+    pub UObjectDeleteListeners: TArray<*const FUObjectDeleteListener>,
+    pub UObjectDeleteListenersCritical: FWindowsCriticalSection,
+    pub MasterSerialNumber: std::sync::atomic::AtomicI32,
 }
-unsafe impl Send for FUObjectArray {}
-unsafe impl Sync for FUObjectArray {}
 impl FUObjectArray {
     pub fn iter(&self) -> ObjectIterator<'_> {
         ObjectIterator {
             array: self,
             index: 0,
+        }
+    }
+    fn item_ptr(&self, index: ObjectIndex) -> *const FUObjectItem {
+        let per_chunk = self.ObjObjects.MaxElements / self.ObjObjects.MaxChunks;
+
+        unsafe {
+            (*self.ObjObjects.Objects.add((index / per_chunk) as usize))
+                .add((index % per_chunk) as usize)
+        }
+    }
+    fn item(&self, index: ObjectIndex) -> &FUObjectItem {
+        unsafe { &*self.item_ptr(index) }
+    }
+    fn item_mut(&mut self, index: ObjectIndex) -> &mut FUObjectItem {
+        unsafe { &mut *(self.item_ptr(index) as *mut FUObjectItem) }
+    }
+    pub fn allocate_serial_number(&self, index: ObjectIndex) -> i32 {
+        use std::sync::atomic::Ordering;
+
+        let item = self.item(index);
+
+        let current = item.SerialNumber.load(Ordering::SeqCst);
+        if current != 0 {
+            current
+        } else {
+            let new = self.MasterSerialNumber.fetch_add(1, Ordering::SeqCst);
+
+            let exchange =
+                item.SerialNumber
+                    .compare_exchange(0, new, Ordering::SeqCst, Ordering::SeqCst);
+            match exchange {
+                Ok(_) => new,
+                Err(old) => old,
+            }
         }
     }
 }
@@ -153,17 +197,7 @@ impl<'a> Iterator for ObjectIterator<'a> {
         if self.index >= self.array.ObjObjects.NumElements {
             None
         } else {
-            let per_chunk = self.array.ObjObjects.MaxElements / self.array.ObjObjects.MaxChunks;
-
-            let obj = unsafe {
-                let chunk = *self
-                    .array
-                    .ObjObjects
-                    .Objects
-                    .add((self.index / per_chunk) as usize);
-                let item = &*chunk.add((self.index % per_chunk) as usize);
-                item.Object.as_ref()
-            };
+            let obj = unsafe { self.array.item(self.index).Object.as_ref() };
 
             self.index += 1;
             Some(obj)
@@ -174,21 +208,45 @@ impl<'a> Iterator for ObjectIterator<'a> {
 #[derive(Debug)]
 #[repr(C)]
 pub struct FChunkedFixedUObjectArray {
-    /* offset 0x0000 */ pub Objects: *const *const FUObjectItem,
-    /* offset 0x0008 */ pub PreAllocatedObjects: *const FUObjectItem,
-    /* offset 0x0010 */ pub MaxElements: i32,
-    /* offset 0x0014 */ pub NumElements: i32,
-    /* offset 0x0018 */ pub MaxChunks: i32,
-    /* offset 0x001c */ pub NumChunks: i32,
+    pub Objects: *const *const FUObjectItem,
+    pub PreAllocatedObjects: *const FUObjectItem,
+    pub MaxElements: i32,
+    pub NumElements: i32,
+    pub MaxChunks: i32,
+    pub NumChunks: i32,
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub struct FUObjectItem {
-    /* offset 0x0000 */ pub Object: *const UObjectBase,
-    /* offset 0x0008 */ pub Flags: i32,
-    /* offset 0x000c */ pub ClusterRootIndex: i32,
-    /* offset 0x0010 */ pub SerialNumber: i32,
+    pub Object: *const UObjectBase,
+    pub Flags: i32,
+    pub ClusterRootIndex: i32,
+    pub SerialNumber: std::sync::atomic::AtomicI32,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct FWeakObjectPtr {
+    ObjectIndex: i32,
+    ObjectSerialNumber: i32,
+}
+impl FWeakObjectPtr {
+    pub fn new(object: &UObjectBase) -> Self {
+        Self::new_from_index(object.InternalIndex)
+    }
+    pub fn new_from_index(index: ObjectIndex) -> Self {
+        Self {
+            ObjectIndex: index,
+            // serial allocation performs only atomic operations
+            ObjectSerialNumber: unsafe { guobject_array_unchecked().allocate_serial_number(index) },
+        }
+    }
+    pub fn get(&self, object_array: &FUObjectArray) -> Option<&UObjectBase> {
+        // TODO check valid
+        let item = object_array.item(self.ObjectIndex);
+        unsafe { Some(&*item.Object) }
+    }
 }
 
 bitflags::bitflags! {

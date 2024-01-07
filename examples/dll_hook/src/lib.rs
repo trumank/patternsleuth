@@ -162,10 +162,29 @@ impl_try_collector! {
     }
 }
 
-static mut RESOLUTION: Option<DllHookResolution> = None;
+struct Globals {
+    resolution: DllHookResolution,
+    guobject_array: parking_lot::FairMutex<&'static ue::FUObjectArray>,
+    main_thread_id: std::thread::ThreadId,
+}
 
-pub fn res() -> &'static DllHookResolution {
-    unsafe { RESOLUTION.as_ref().unwrap() }
+#[macro_export]
+macro_rules! assert_main_thread {
+    () => {
+        assert_eq!(std::thread::current().id(), globals().main_thread_id);
+    };
+}
+
+static mut GLOBALS: Option<Globals> = None;
+
+pub fn globals() -> &'static Globals {
+    unsafe { &GLOBALS.as_ref().unwrap() }
+}
+pub fn guobject_array() -> parking_lot::FairMutexGuard<'static, &'static ue::FUObjectArray> {
+    globals().guobject_array.lock()
+}
+pub unsafe fn guobject_array_unchecked() -> &'static ue::FUObjectArray {
+    &*globals().guobject_array.data_ptr()
 }
 
 unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
@@ -177,12 +196,21 @@ unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
 
     info!("results: {:?}", resolution);
 
-    RESOLUTION = Some(resolution);
+    let guobject_array: &'static ue::FUObjectArray =
+        &*(resolution.guobject_array.0 as *const ue::FUObjectArray);
 
-    ue::GMALLOC.set(res().gmalloc.0 as *const c_void);
-    *ue::FFRAME_STEP.lock().unwrap() = Some(std::mem::transmute(res().fframe_step.0));
-    *ue::FFRAME_STEP_EXPLICIT_PROPERTY.lock().unwrap() =
-        Some(std::mem::transmute(res().fframe_step_explicit_property.0));
+    GLOBALS = Some(Globals {
+        guobject_array: guobject_array.into(),
+        resolution,
+        main_thread_id: std::thread::current().id(),
+    });
+
+    ue::GMALLOC.set(globals().resolution.gmalloc.0 as *const c_void);
+    *ue::FFRAME_STEP.lock().unwrap() =
+        Some(std::mem::transmute(globals().resolution.fframe_step.0));
+    *ue::FFRAME_STEP_EXPLICIT_PROPERTY.lock().unwrap() = Some(std::mem::transmute(
+        globals().resolution.fframe_step_explicit_property.0,
+    ));
 
     hooks::initialize()?;
 

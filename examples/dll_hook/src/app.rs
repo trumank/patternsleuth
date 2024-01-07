@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 use simple_log::info;
 
-use crate::{gui, res, ue};
+use crate::{globals, gui, ue};
 
 pub fn run(bin_dur: impl AsRef<Path>) -> Result<()> {
     std::thread::spawn(move || {
@@ -14,10 +14,10 @@ pub fn run(bin_dur: impl AsRef<Path>) -> Result<()> {
 }
 
 unsafe fn testing() {
-    let guobjectarray = &*(res().guobject_array.0 as *const ue::FUObjectArray);
+    let guobjectarray = &*(globals().resolution.guobject_array.0 as *const ue::FUObjectArray);
     type FnFNameToString = unsafe extern "system" fn(&ue::FName, &mut ue::FString);
 
-    let fnametostring: FnFNameToString = std::mem::transmute(res().fnametostring.0);
+    let fnametostring: FnFNameToString = std::mem::transmute(globals().resolution.fnametostring.0);
 
     loop {
         info!("a");

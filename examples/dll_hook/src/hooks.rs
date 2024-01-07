@@ -6,7 +6,7 @@ use std::{
 use anyhow::Result;
 use simple_log::info;
 
-use crate::{object_cache, res, ue};
+use crate::{globals, guobject_array, object_cache, ue, assert_main_thread};
 
 retour::static_detour! {
     static HookUGameEngineTick: unsafe extern "system" fn(*mut c_void, f32, u8);
@@ -43,38 +43,70 @@ macro_rules! event {
     };
 }
 
-event!(create_uobject(object: &ue::UObjectBase));
-event!(delete_uobject(object: &ue::UObjectBase));
+event!(create_uobject(/*uobject_array: &UObjectLock,*/ object: &ue::UObjectBase));
+event!(delete_uobject(/*uobject_array: &UObjectLock,*/ object: &ue::UObjectBase));
+
+pub type UObjectLock = parking_lot::FairMutexGuard<'static, &'static ue::FUObjectArray>;
+static mut GUOBJECT_LOCK: Option<UObjectLock> = None;
 
 pub unsafe fn initialize() -> Result<()> {
+    assert_main_thread!();
+
+    GUOBJECT_LOCK = Some(guobject_array());
+
     HookUGameEngineTick.initialize(
-        std::mem::transmute(res().game_tick.0),
+        std::mem::transmute(globals().resolution.game_tick.0),
         move |game_engine, delta_seconds, idle_mode| {
-            //info!("tick time={:0.5}", delta_seconds);
+            assert_main_thread!();
+
+            info!("tick time={:0.5}", delta_seconds);
+
+            GUOBJECT_LOCK.take();
             HookUGameEngineTick.call(game_engine, delta_seconds, idle_mode);
+            GUOBJECT_LOCK = Some(globals().guobject_array.lock());
         },
     )?;
     HookUGameEngineTick.enable()?;
 
     HookAllocateUObject.initialize(
-        std::mem::transmute(res().allocate_uobject.0),
+        std::mem::transmute(globals().resolution.allocate_uobject.0),
         |this, object, merging_threads| {
+            //assert_main_thread!();
+
+            //info!("allocate uobject {:?}", object);
+
             HookAllocateUObject.call(this, object, merging_threads);
+
             object_cache::object_created(&*object);
-            create_uobject::call(&*object);
+            create_uobject::call(/*GUOBJECT_LOCK.as_ref().unwrap(),*/ &*object);
         },
     )?;
     HookAllocateUObject.enable()?;
 
-    HookFreeUObject.initialize(std::mem::transmute(res().free_uobject.0), |this, object| {
-        object_cache::object_deleted(&*this);
-        delete_uobject::call(&*this);
-        HookFreeUObject.call(this, object);
-    })?;
+    HookFreeUObject.initialize(
+        std::mem::transmute(globals().resolution.free_uobject.0),
+        |this, object| {
+            //assert_main_thread!();
+
+            //info!("delete uobject {:?}", object);
+
+            object_cache::object_deleted(&*this);
+            delete_uobject::call(/*GUOBJECT_LOCK.as_ref().unwrap(),*/ &*this);
+
+            HookFreeUObject.call(this, object);
+        },
+    )?;
     HookFreeUObject.enable()?;
 
     HookKismetPrintString.initialize(
-        std::mem::transmute(*res().kismet_system_library.0.get("PrintString").unwrap()),
+        std::mem::transmute(
+            *globals()
+                .resolution
+                .kismet_system_library
+                .0
+                .get("PrintString")
+                .unwrap(),
+        ),
         |context, stack, result| {
             let stack = &mut *stack;
 

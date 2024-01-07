@@ -1,4 +1,7 @@
-use std::sync::{mpsc::Receiver, Arc};
+use std::{
+    ops::Deref,
+    sync::{mpsc::Receiver, Arc},
+};
 
 use eframe::egui;
 
@@ -7,6 +10,8 @@ use egui_winit::winit::platform::windows::EventLoopBuilderExtWindows;
 #[cfg(unix)]
 use egui_winit::winit::platform::x11::EventLoopBuilderExtX11;
 use indexmap::IndexMap;
+
+use crate::{hooks::UObjectLock, ue::FWeakObjectPtr};
 
 use super::*;
 
@@ -32,6 +37,7 @@ type ObjectIndex = i32;
 struct ObjectProxy {
     name: String,
     flags: i32,
+    weak_ptr: FWeakObjectPtr,
 }
 
 #[derive(Debug)]
@@ -71,14 +77,17 @@ impl MyApp {
         let (tx, events) = std::sync::mpsc::channel();
         let txc = tx.clone();
         let create_uobject = Arc::new(move |object: &ue::UObjectBase| {
+            /*
             txc.send(Event::CreateUObject(
                 object.InternalIndex,
                 ObjectProxy {
                     name: ue::FName_ToString(&object.NamePrivate),
                     flags: 0,
+                    weak_ptr: ue::FWeakObjectPtr::new(object),
                 },
             ))
             .unwrap();
+            */
         });
         let txc = tx.clone();
         let delete_uobject = Arc::new(move |object: &ue::UObjectBase| {
@@ -102,6 +111,9 @@ impl MyApp {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
+        let object_lock = guobject_array();
+
         for event in self.events.try_iter() {
             match event {
                 Event::CreateUObject(index, object) => {
@@ -111,8 +123,8 @@ impl eframe::App for MyApp {
                     self.objects.insert(index, object);
                 }
                 Event::DeleteUObject(index) => {
-                    self.objects.remove(&index);
-                    self.filtered.remove(&index);
+                    //self.objects.remove(&index);
+                    //self.filtered.remove(&index);
                 }
             };
         }

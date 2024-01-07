@@ -17,9 +17,11 @@ eframe = "0.24.0"
 egui-winit = { version = "0.24.0", default-features = false }
 indexmap = "2.1.0"
 itertools.workspace = true
+parking_lot = "0.12.1"
 patternsleuth = { path = "../../patternsleuth", features = ["process-internal"] }
 retour = { git = "https://github.com/Hpmason/retour-rs", features = ["static-detour"] }
 simple-log = "1.6.0"
+thread_local = "1.1.7"
 widestring = "1.0.2"
 windows = { workspace = true, features = [
   "Win32_Foundation",
