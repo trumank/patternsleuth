@@ -1,7 +1,4 @@
-use std::{
-    ops::Deref,
-    sync::{mpsc::Receiver, Arc},
-};
+use std::sync::{mpsc::Receiver, Arc};
 
 use eframe::egui;
 
@@ -10,11 +7,6 @@ use egui_winit::winit::platform::windows::EventLoopBuilderExtWindows;
 #[cfg(unix)]
 use egui_winit::winit::platform::x11::EventLoopBuilderExtX11;
 use indexmap::IndexMap;
-
-use crate::{
-    hooks::{kismet_print_message, UObjectLock},
-    ue::FWeakObjectPtr,
-};
 
 use super::*;
 
@@ -31,7 +23,7 @@ pub fn run() -> Result<(), eframe::Error> {
     eframe::run_native(
         "My egui App",
         options,
-        Box::new(|cc| Box::new(MyApp::new())),
+        Box::new(|_cc| Box::new(MyApp::new())),
     )
 }
 
@@ -57,6 +49,7 @@ enum Event {
     },
 }
 
+#[allow(unused)]
 struct Listeners {
     create_uobject: Arc<dyn Fn(&ue::UObjectBase)>,
     delete_uobject: Arc<dyn Fn(&ue::UObjectBase)>,
@@ -155,8 +148,8 @@ impl eframe::App for MyApp {
                     self.objects.insert(index, object);
                 }
                 Event::DeleteUObject(index) => {
-                    //self.objects.remove(&index);
-                    //self.filtered.remove(&index);
+                    self.objects.remove(&index);
+                    self.filtered.remove(&index);
                 }
                 Event::KismetMessage {
                     message,
@@ -218,7 +211,7 @@ impl eframe::App for MyApp {
             );
 
             let log_window = |name, mut log: &str| {
-                egui::Window::new("Kismet Messages")
+                egui::Window::new(name)
                     .default_height(500.)
                     .show(ctx, |ui| {
                         egui::ScrollArea::vertical()
@@ -234,7 +227,7 @@ impl eframe::App for MyApp {
                     });
             };
 
-            log_window("Kismet VM Messages", &self.kismet_log);
+            log_window("Kismet Messages", &self.kismet_log);
         });
 
         ctx.request_repaint();

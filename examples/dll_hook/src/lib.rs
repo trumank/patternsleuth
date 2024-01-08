@@ -189,13 +189,13 @@ macro_rules! assert_main_thread {
 static mut GLOBALS: Option<Globals> = None;
 
 pub fn globals() -> &'static Globals {
-    unsafe { &GLOBALS.as_ref().unwrap() }
+    unsafe { GLOBALS.as_ref().unwrap() }
 }
 pub fn guobject_array() -> parking_lot::FairMutexGuard<'static, &'static ue::FUObjectArray> {
     globals().guobject_array.lock()
 }
 pub unsafe fn guobject_array_unchecked() -> &'static ue::FUObjectArray {
-    &*globals().guobject_array.data_ptr()
+    *globals().guobject_array.data_ptr()
 }
 
 unsafe fn patch(bin_dir: PathBuf) -> Result<()> {

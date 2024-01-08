@@ -10,7 +10,7 @@ type Objects = HashMap<InternalIndex, ObjectProxy>;
 
 fn objects() -> &'static Mutex<Objects> {
     static OBJECTS: OnceLock<Mutex<Objects>> = OnceLock::new();
-    OBJECTS.get_or_init(|| Default::default())
+    OBJECTS.get_or_init(Default::default)
 }
 
 // call from main thread

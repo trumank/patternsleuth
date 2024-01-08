@@ -5,7 +5,7 @@ use simple_log::info;
 
 use crate::{globals, gui, ue};
 
-pub fn run(bin_dur: impl AsRef<Path>) -> Result<()> {
+pub fn run(_bin_dir: impl AsRef<Path>) -> Result<()> {
     std::thread::spawn(move || {
         //unsafe { testing(); }
         gui::run().unwrap();
@@ -27,7 +27,7 @@ unsafe fn testing() {
                 if let Some(obj) = obj {
                     let mut name = ue::FString::default();
                     fnametostring(&obj.NamePrivate, &mut name);
-                    name.to_string().to_ascii_lowercase().contains(&"get")
+                    name.to_string().to_ascii_lowercase().contains("get")
                 } else {
                     false
                 }
@@ -40,7 +40,7 @@ unsafe fn testing() {
 
                 let mut class = ue::FString::default();
                 fnametostring(
-                    &(&*obj.ClassPrivate)
+                    &(*obj.ClassPrivate)
                         .UStruct
                         .UField
                         .UObject

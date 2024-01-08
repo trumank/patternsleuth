@@ -109,7 +109,7 @@ pub unsafe fn initialize() -> Result<()> {
                 .get("PrintString")
                 .unwrap(),
         ),
-        |context, stack, result| {
+        |_context, stack, _result| {
             let stack = &mut *stack;
 
             let mut ctx: Option<&ue::UObject> = None;

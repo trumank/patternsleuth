@@ -1,8 +1,8 @@
-#![allow(non_snake_case)]
+#![allow(non_snake_case, non_camel_case_types)]
 
-use std::{ffi::c_void, sync::Mutex};
+use std::{ffi::c_void, fmt::Display, sync::Mutex};
 
-use crate::{globals, guobject_array, guobject_array_unchecked};
+use crate::{globals, guobject_array_unchecked};
 
 pub static GMALLOC: GMalloc = GMalloc {
     ptr: Mutex::new(None),
@@ -489,11 +489,15 @@ impl<T> TArray<T> {
     }
 }
 
-impl FString {
-    pub fn to_string(&self) -> String {
-        widestring::U16Str::from_slice(&self.as_slice())
-            .to_string()
-            .unwrap()
+impl Display for FString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            widestring::U16Str::from_slice(self.as_slice())
+                .to_string()
+                .unwrap()
+        )
     }
 }
 
