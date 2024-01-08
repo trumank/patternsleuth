@@ -4,15 +4,15 @@ use std::{
 };
 
 use anyhow::Result;
-use simple_log::info;
 
-use crate::{globals, guobject_array, object_cache, ue, assert_main_thread};
+use crate::{assert_main_thread, globals, guobject_array, object_cache, ue};
 
 retour::static_detour! {
     static HookUGameEngineTick: unsafe extern "system" fn(*mut c_void, f32, u8);
     static HookAllocateUObject: unsafe extern "system" fn(*mut c_void, *const ue::UObjectBase, bool);
     static HookFreeUObject: unsafe extern "system" fn(*mut ue::UObjectBase, *const c_void); // inlined into UObject dtor so args are messed up
     static HookKismetPrintString: unsafe extern "system" fn(*mut ue::UObjectBase, *mut ue::kismet::FFrame, *mut c_void);
+    static HookKismetExecutionMessage: unsafe extern "system" fn(*const u16, u8, ue::FName);
 }
 
 macro_rules! event {
@@ -45,6 +45,8 @@ macro_rules! event {
 
 event!(create_uobject(/*uobject_array: &UObjectLock,*/ object: &ue::UObjectBase));
 event!(delete_uobject(/*uobject_array: &UObjectLock,*/ object: &ue::UObjectBase));
+event!(kismet_execution_message(message: &widestring::U16CStr, verbosity: u8, warning_id: ue::FName));
+event!(kismet_print_message(message: &str));
 
 pub type UObjectLock = parking_lot::FairMutexGuard<'static, &'static ue::FUObjectArray>;
 static mut GUOBJECT_LOCK: Option<UObjectLock> = None;
@@ -59,7 +61,7 @@ pub unsafe fn initialize() -> Result<()> {
         move |game_engine, delta_seconds, idle_mode| {
             assert_main_thread!();
 
-            info!("tick time={:0.5}", delta_seconds);
+            //info!("tick time={:0.5}", delta_seconds);
 
             GUOBJECT_LOCK.take();
             HookUGameEngineTick.call(game_engine, delta_seconds, idle_mode);
@@ -124,8 +126,9 @@ pub unsafe fn initialize() -> Result<()> {
             ue::kismet::arg(stack, &mut color);
             ue::kismet::arg(stack, &mut duration);
 
-            let s = string.to_string();
-            info!("PrintString({s:?})");
+            //let s = string.to_string();
+            //info!("PrintString({s:?})");
+            kismet_print_message::call(&string.to_string());
 
             if !stack.code.is_null() {
                 stack.code = stack.code.add(1);
@@ -133,6 +136,19 @@ pub unsafe fn initialize() -> Result<()> {
         },
     )?;
     HookKismetPrintString.enable()?;
+
+    HookKismetExecutionMessage.initialize(
+        std::mem::transmute(globals().resolution.fframe_kismet_execution_message.0),
+        |message, verbosity, warning_id| {
+            kismet_execution_message::call(
+                widestring::U16CStr::from_ptr_str(message),
+                verbosity,
+                warning_id,
+            );
+            HookKismetExecutionMessage.call(message, verbosity, warning_id);
+        },
+    )?;
+    HookKismetExecutionMessage.enable()?;
 
     Ok(())
 }

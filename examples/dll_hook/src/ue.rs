@@ -406,14 +406,14 @@ pub struct UClass {
     /* offset 0x0000 */ pub UStruct: UStruct,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct FName {
     /* offset 0x0000 */ pub ComparisonIndex: FNameEntryId,
     /* offset 0x0004 */ pub Number: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct FNameEntryId {
     /* offset 0x0000 */ pub Value: u32,
@@ -491,8 +491,7 @@ impl<T> TArray<T> {
 
 impl FString {
     pub fn to_string(&self) -> String {
-        widestring::U16CStr::from_slice_truncate(&self.as_slice())
-            .unwrap()
+        widestring::U16Str::from_slice(&self.as_slice())
             .to_string()
             .unwrap()
     }

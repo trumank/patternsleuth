@@ -113,8 +113,11 @@ impl StopRecordingReplay {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub struct FFrameKismetExecutionMessage(usize);
+
 mod resolvers {
-    use crate::{StartRecordingReplay, StopRecordingReplay};
+    use super::*;
 
     use patternsleuth::{
         resolvers::{futures::future::join_all, *},
@@ -129,7 +132,7 @@ mod resolvers {
 
         let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
-        Ok(StartRecordingReplay(ensure_one(res.into_iter().flatten())?))
+        Ok(Self(ensure_one(res.into_iter().flatten())?))
     });
 
     impl_resolver!(StopRecordingReplay, |ctx| async {
@@ -140,7 +143,14 @@ mod resolvers {
 
         let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
-        Ok(StopRecordingReplay(ensure_one(res.into_iter().flatten())?))
+        Ok(Self(ensure_one(res.into_iter().flatten())?))
+    });
+
+    impl_resolver_singleton!(FFrameKismetExecutionMessage, |ctx| async {
+        // void FFrame::KismetExecutionMessage(wchar16 const* Message, enum ELogVerbosity::Type Verbosity, class FName WarningId)
+        let patterns = ["48 89 5C 24 ?? 57 48 83 EC 40 0F B6 DA 48 8B F9"];
+        let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+        Ok(Self(ensure_one(res.into_iter().flatten())?))
     });
 }
 
@@ -159,6 +169,7 @@ impl_try_collector! {
         fframe_step_via_exec: FFrameStepViaExec,
         fframe_step: FFrameStep,
         fframe_step_explicit_property: FFrameStepExplicitProperty,
+        fframe_kismet_execution_message: FFrameKismetExecutionMessage,
     }
 }
 
