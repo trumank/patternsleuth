@@ -8,7 +8,16 @@ use std::{ffi::c_void, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use patternsleuth::resolvers::impl_try_collector;
-use patternsleuth::resolvers::unreal::*;
+use patternsleuth::resolvers::unreal::{
+    fname::FNameToString,
+    game_loop::{FEngineLoopInit, UGameEngineTick},
+    gmalloc::GMalloc,
+    guobject_array::{
+        FUObjectArrayAllocateUObjectIndex, FUObjectArrayFreeUObjectIndex, GUObjectArray,
+    },
+    kismet::{FFrameStep, FFrameStepExplicitProperty, FFrameStepViaExec},
+    KismetSystemLibrary,
+};
 use simple_log::{error, info, LogConfigBuilder};
 use windows::Win32::{
     Foundation::HMODULE,
@@ -165,6 +174,7 @@ impl_try_collector! {
         allocate_uobject: FUObjectArrayAllocateUObjectIndex,
         free_uobject: FUObjectArrayFreeUObjectIndex,
         game_tick: UGameEngineTick,
+        engine_loop_init: FEngineLoopInit,
         kismet_system_library: KismetSystemLibrary,
         fframe_step_via_exec: FFrameStepViaExec,
         fframe_step: FFrameStep,
