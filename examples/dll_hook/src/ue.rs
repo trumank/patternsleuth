@@ -70,8 +70,8 @@ impl FMalloc {
 #[derive(Debug)]
 #[repr(C)]
 pub struct FMallocVTable {
-    pub __vecDelDtor: unsafe extern "system" fn(), // TOOD
-    pub Exec: unsafe extern "system" fn(),         // TOOD
+    pub __vecDelDtor: unsafe extern "system" fn(), // TODO
+    pub Exec: unsafe extern "system" fn(),         // TODO
     pub Malloc:
         unsafe extern "system" fn(this: &FMalloc, count: usize, alignment: u32) -> *mut c_void,
     pub TryMalloc:
@@ -89,18 +89,18 @@ pub struct FMallocVTable {
         alignment: u32,
     ) -> *mut c_void,
     pub Free: unsafe extern "system" fn(this: &FMalloc, original: *mut c_void),
-    pub QuantizeSize: unsafe extern "system" fn(), // TOOD
-    pub GetAllocationSize: unsafe extern "system" fn(), // TOOD
-    pub Trim: unsafe extern "system" fn(),         // TOOD
-    pub SetupTLSCachesOnCurrentThread: unsafe extern "system" fn(), // TOOD
-    pub ClearAndDisableTLSCachesOnCurrentThread: unsafe extern "system" fn(), // TOOD // TOOD
-    pub InitializeStatsMetadata: unsafe extern "system" fn(), // TOOD
-    pub UpdateStats: unsafe extern "system" fn(),  // TOOD
-    pub GetAllocatorStats: unsafe extern "system" fn(), // TOOD
-    pub DumpAllocatorStats: unsafe extern "system" fn(), // TOOD
-    pub IsInternallyThreadSafe: unsafe extern "system" fn(), // TOOD
-    pub ValidateHeap: unsafe extern "system" fn(), // TOOD
-    pub GetDescriptiveName: unsafe extern "system" fn(), // TOOD
+    pub QuantizeSize: unsafe extern "system" fn(), // TODO
+    pub GetAllocationSize: unsafe extern "system" fn(), // TODO
+    pub Trim: unsafe extern "system" fn(),         // TODO
+    pub SetupTLSCachesOnCurrentThread: unsafe extern "system" fn(), // TODO
+    pub ClearAndDisableTLSCachesOnCurrentThread: unsafe extern "system" fn(), // TODO
+    pub InitializeStatsMetadata: unsafe extern "system" fn(), // TODO
+    pub UpdateStats: unsafe extern "system" fn(),  // TODO
+    pub GetAllocatorStats: unsafe extern "system" fn(), // TODO
+    pub DumpAllocatorStats: unsafe extern "system" fn(), // TODO
+    pub IsInternallyThreadSafe: unsafe extern "system" fn(), // TODO
+    pub ValidateHeap: unsafe extern "system" fn(), // TODO
+    pub GetDescriptiveName: unsafe extern "system" fn(), // TODO
 }
 
 #[derive(Debug)]
