@@ -20,19 +20,19 @@ incremental = true
 debug = true
 
 [workspace.dependencies]
-anyhow = "1.0.72"
-clap = { version = "4.3.21", features = ["derive"] }
-colored = "2.0.4"
-globset = "0.4.13"
+anyhow = "1.0.79"
+clap = { version = "4.4.14", features = ["derive"] }
+colored = "2.1.0"
+globset = "0.4.14"
 iced-x86 = "1.20.0"
-itertools = "0.11.0"
-memchr = "2.5.0"
+itertools = "0.12.0"
+memchr = "2.7.1"
 msvc-demangler = "0.9.0"
-object = "0.32.0"
+object = "0.32.2"
 pdb = "0.8.0"
 prettytable-rs = "0.10.0"
-rayon = "1.7.0"
-regex = "1.9.3"
-serde = "1.0.193"
+rayon = "1.8.0"
+regex = "1.10.2"
+serde = "1.0.195"
 strum = {version = "0.25.0", features = ["strum_macros", "derive"]}
 windows = { version = "0.52.0" }

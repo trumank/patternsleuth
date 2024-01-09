@@ -13,8 +13,8 @@ crate-type = ["cdylib"]
 [dependencies]
 anyhow = { workspace = true }
 bitflags = "2.4.1"
-eframe = "0.24.0"
-egui-winit = { version = "0.24.0", default-features = false }
+eframe = "0.25.0"
+egui-winit = { version = "0.25.0", default-features = false }
 indexmap = "2.1.0"
 itertools.workspace = true
 parking_lot = "0.12.1"

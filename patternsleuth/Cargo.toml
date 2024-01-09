@@ -16,15 +16,15 @@ strum = { workspace = true }
 pdb = { workspace = true, optional = true }
 msvc-demangler = { workspace = true, optional = true}
 iced-x86.workspace = true
-futures = "0.3.29"
+futures = "0.3.30"
 futures-scopes = "0.2.0"
-inventory = "0.3.13"
+inventory = "0.3.14"
 itertools.workspace = true
 serde = { workspace = true, optional = true, features = ["derive"] }
-typetag = { version = "0.2.14", optional = true }
+typetag = { version = "0.2.15", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = { version = "0.2.147", optional = true }
+libc = { version = "0.2.152", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, optional = true, features = [
