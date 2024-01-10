@@ -3,25 +3,25 @@ use std::path::Path;
 use anyhow::Result;
 use simple_log::info;
 
-use crate::{globals, gui, ue};
+use crate::{globals, gui, guobject_array_unchecked, ue};
 
 pub fn run(_bin_dir: impl AsRef<Path>) -> Result<()> {
     std::thread::spawn(move || {
         //unsafe { testing(); }
-        gui::run().unwrap();
+        //gui::run().unwrap();
     });
     Ok(())
 }
 
 unsafe fn testing() {
-    let guobjectarray = &*(globals().resolution.guobject_array.0 as *const ue::FUObjectArray);
     type FnFNameToString = unsafe extern "system" fn(&ue::FName, &mut ue::FString);
 
     let fnametostring: FnFNameToString = std::mem::transmute(globals().resolution.fnametostring.0);
 
     loop {
         info!("a");
-        let refs = guobjectarray
+        let objects = guobject_array_unchecked().objects();
+        let refs = objects
             .iter()
             .filter(|obj| {
                 if let Some(obj) = obj {

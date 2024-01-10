@@ -1,3 +1,5 @@
+#![feature(backtrace_frames)]
+
 mod app;
 mod gui;
 mod hooks;
@@ -194,6 +196,17 @@ macro_rules! assert_main_thread {
     () => {
         assert_eq!(std::thread::current().id(), globals().main_thread_id);
     };
+}
+
+fn dump_backtrace() {
+    info!(
+        "Dumping backtrace on thread {:?}:",
+        std::thread::current().id()
+    );
+    let backtrace = backtrace::Backtrace::new();
+    for (index, frame) in backtrace.frames().iter().enumerate() {
+        info!("  {index}: {:?} {:?}", frame.ip(), frame.symbols());
+    }
 }
 
 static mut GLOBALS: Option<Globals> = None;

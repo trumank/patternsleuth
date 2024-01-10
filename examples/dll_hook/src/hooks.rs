@@ -9,6 +9,7 @@ use crate::{assert_main_thread, globals, guobject_array, object_cache, ue};
 
 retour::static_detour! {
     static HookUGameEngineTick: unsafe extern "system" fn(*mut c_void, f32, u8);
+    static HookFEngineLoopInit: unsafe extern "system" fn(*mut c_void);
     static HookAllocateUObject: unsafe extern "system" fn(*mut c_void, *const ue::UObjectBase, bool);
     static HookFreeUObject: unsafe extern "system" fn(*mut ue::UObjectBase, *const c_void); // inlined into UObject dtor so args are messed up
     static HookKismetPrintString: unsafe extern "system" fn(*mut ue::UObjectBase, *mut ue::kismet::FFrame, *mut c_void);
@@ -55,6 +56,17 @@ pub unsafe fn initialize() -> Result<()> {
     assert_main_thread!();
 
     GUOBJECT_LOCK = Some(guobject_array());
+
+    HookFEngineLoopInit.initialize(
+        std::mem::transmute(globals().resolution.engine_loop_init.0),
+        move |engine_loop| {
+            assert_main_thread!();
+
+            HookFEngineLoopInit.call(engine_loop);
+            simple_log::info!("ENGINE LOOP INIT");
+        },
+    )?;
+    HookFEngineLoopInit.enable()?;
 
     HookUGameEngineTick.initialize(
         std::mem::transmute(globals().resolution.game_tick.0),

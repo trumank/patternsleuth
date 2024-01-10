@@ -12,9 +12,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = { workspace = true }
+backtrace = "0.3.69"
 bitflags = "2.4.1"
-eframe = "0.25.0"
-egui-winit = { version = "0.25.0", default-features = false }
+eframe = "0.24.0"
+egui-winit = { version = "0.24.0", default-features = false }
 indexmap = "2.1.0"
 itertools.workspace = true
 parking_lot = "0.12.1"
@@ -25,11 +26,12 @@ thread_local = "1.1.7"
 widestring = "1.0.2"
 windows = { workspace = true, features = [
   "Win32_Foundation",
-  "Win32_System_SystemServices",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_Security",
+  "Win32_System_Kernel",
   "Win32_System_LibraryLoader",
   "Win32_System_Memory",
-  "Win32_System_Threading",
-  "Win32_Security",
   "Win32_System_ProcessStatus",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
 ] }

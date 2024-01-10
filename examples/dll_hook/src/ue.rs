@@ -1,6 +1,16 @@
 #![allow(non_snake_case, non_camel_case_types)]
 
-use std::{ffi::c_void, fmt::Display, sync::Mutex};
+use std::{
+    cell::UnsafeCell,
+    ffi::c_void,
+    fmt::Display,
+    ops::{Deref, DerefMut},
+    sync::Mutex,
+};
+
+use windows::Win32::System::Threading::{
+    EnterCriticalSection, LeaveCriticalSection, CRITICAL_SECTION,
+};
 
 use crate::{globals, guobject_array_unchecked};
 
@@ -105,7 +115,53 @@ pub struct FMallocVTable {
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct FWindowsCriticalSection([u8; 0x28]);
+pub struct FWindowsCriticalSection(UnsafeCell<CRITICAL_SECTION>);
+impl FWindowsCriticalSection {
+    fn crit_ptr_mut(&self) -> *mut CRITICAL_SECTION {
+        &self.0 as *const _ as *mut _
+    }
+    unsafe fn lock(&self) {
+        simple_log::info!("LOCKING objects");
+        EnterCriticalSection(self.crit_ptr_mut());
+    }
+    unsafe fn unlock(&self) {
+        simple_log::info!("UNLOCKING objects");
+        LeaveCriticalSection(self.crit_ptr_mut());
+    }
+}
+
+pub struct CriticalSectionGuard<'crit, 'data, T: ?Sized + 'data> {
+    critical_section: &'crit FWindowsCriticalSection,
+    data: &'data UnsafeCell<T>,
+}
+impl<'crit, 'data, T: ?Sized> CriticalSectionGuard<'crit, 'data, T> {
+    fn lock(critical_section: &'crit FWindowsCriticalSection, data: &'data UnsafeCell<T>) -> Self {
+        unsafe {
+            critical_section.lock();
+        }
+        Self {
+            critical_section,
+            data,
+        }
+    }
+}
+impl<T: ?Sized> Drop for CriticalSectionGuard<'_, '_, T> {
+    fn drop(&mut self) {
+        unsafe { self.critical_section.unlock() }
+    }
+}
+impl<T: ?Sized> Deref for CriticalSectionGuard<'_, '_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        unsafe { &*self.data.get() }
+    }
+}
+impl<T: ?Sized> DerefMut for CriticalSectionGuard<'_, '_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.data.get() }
+    }
+}
 
 #[derive(Debug)]
 #[repr(C)]
@@ -120,44 +176,28 @@ type ObjectIndex = i32;
 #[derive(Debug)]
 #[repr(C)]
 pub struct FUObjectArray {
-    pub ObjFirstGCIndex: i32,
-    pub ObjLastNonGCIndex: i32,
-    pub MaxObjectsNotConsideredByGC: i32,
-    pub OpenForDisregardForGC: bool,
+    ObjFirstGCIndex: i32,
+    ObjLastNonGCIndex: i32,
+    MaxObjectsNotConsideredByGC: i32,
+    OpenForDisregardForGC: bool,
 
-    pub ObjObjects: FChunkedFixedUObjectArray,
-    pub ObjObjectsCritical: FWindowsCriticalSection,
-    pub ObjAvailableList: [u8; 0x88],
-    pub UObjectCreateListeners: TArray<*const FUObjectCreateListener>,
-    pub UObjectDeleteListeners: TArray<*const FUObjectDeleteListener>,
-    pub UObjectDeleteListenersCritical: FWindowsCriticalSection,
-    pub MasterSerialNumber: std::sync::atomic::AtomicI32,
+    ObjObjects: UnsafeCell<FChunkedFixedUObjectArray>,
+    ObjObjectsCritical: FWindowsCriticalSection,
+    ObjAvailableList: [u8; 0x88],
+    UObjectCreateListeners: TArray<*const FUObjectCreateListener>,
+    UObjectDeleteListeners: TArray<*const FUObjectDeleteListener>,
+    UObjectDeleteListenersCritical: FWindowsCriticalSection,
+    MasterSerialNumber: std::sync::atomic::AtomicI32,
 }
 impl FUObjectArray {
-    pub fn iter(&self) -> ObjectIterator<'_> {
-        ObjectIterator {
-            array: self,
-            index: 0,
-        }
-    }
-    fn item_ptr(&self, index: ObjectIndex) -> *const FUObjectItem {
-        let per_chunk = self.ObjObjects.MaxElements / self.ObjObjects.MaxChunks;
-
-        unsafe {
-            (*self.ObjObjects.Objects.add((index / per_chunk) as usize))
-                .add((index % per_chunk) as usize)
-        }
-    }
-    fn item(&self, index: ObjectIndex) -> &FUObjectItem {
-        unsafe { &*self.item_ptr(index) }
-    }
-    fn item_mut(&mut self, index: ObjectIndex) -> &mut FUObjectItem {
-        unsafe { &mut *(self.item_ptr(index) as *mut FUObjectItem) }
+    pub fn objects(&self) -> CriticalSectionGuard<'_, '_, FChunkedFixedUObjectArray> {
+        CriticalSectionGuard::lock(&self.ObjObjectsCritical, &self.ObjObjects)
     }
     pub fn allocate_serial_number(&self, index: ObjectIndex) -> i32 {
         use std::sync::atomic::Ordering;
 
-        let item = self.item(index);
+        let objects = unsafe { &*self.ObjObjects.get() };
+        let item = objects.item(index);
 
         let current = item.SerialNumber.load(Ordering::SeqCst);
         if current != 0 {
@@ -177,13 +217,13 @@ impl FUObjectArray {
 }
 
 pub struct ObjectIterator<'a> {
-    array: &'a FUObjectArray,
+    array: &'a FChunkedFixedUObjectArray,
     index: i32,
 }
 impl<'a> Iterator for ObjectIterator<'a> {
     type Item = Option<&'a UObjectBase>;
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let size = self.array.ObjObjects.NumElements as usize;
+        let size = self.array.NumElements as usize;
         (size, Some(size))
     }
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
@@ -194,7 +234,7 @@ impl<'a> Iterator for ObjectIterator<'a> {
         self.next()
     }
     fn next(&mut self) -> Option<Option<&'a UObjectBase>> {
-        if self.index >= self.array.ObjObjects.NumElements {
+        if self.index >= self.array.NumElements {
             None
         } else {
             let obj = unsafe { self.array.item(self.index).Object.as_ref() };
@@ -214,6 +254,27 @@ pub struct FChunkedFixedUObjectArray {
     pub NumElements: i32,
     pub MaxChunks: i32,
     pub NumChunks: i32,
+}
+impl FChunkedFixedUObjectArray {
+    pub fn iter(&self) -> ObjectIterator<'_> {
+        ObjectIterator {
+            array: self,
+            index: 0,
+        }
+    }
+    fn item_ptr(&self, index: ObjectIndex) -> *const FUObjectItem {
+        let per_chunk = self.MaxElements / self.MaxChunks;
+
+        unsafe {
+            (*self.Objects.add((index / per_chunk) as usize)).add((index % per_chunk) as usize)
+        }
+    }
+    fn item(&self, index: ObjectIndex) -> &FUObjectItem {
+        unsafe { &*self.item_ptr(index) }
+    }
+    fn item_mut(&mut self, index: ObjectIndex) -> &mut FUObjectItem {
+        unsafe { &mut *(self.item_ptr(index) as *mut FUObjectItem) }
+    }
 }
 
 #[derive(Debug)]
@@ -244,8 +305,11 @@ impl FWeakObjectPtr {
     }
     pub fn get(&self, object_array: &FUObjectArray) -> Option<&UObjectBase> {
         // TODO check valid
-        let item = object_array.item(self.ObjectIndex);
-        unsafe { Some(&*item.Object) }
+        unsafe {
+            let objects = &*object_array.ObjObjects.get();
+            let item = objects.item(self.ObjectIndex);
+            Some(&*item.Object)
+        }
     }
 }
 

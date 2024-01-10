@@ -1,4 +1,4 @@
-use std::sync::{mpsc::Receiver, Arc};
+use std::sync::{mpsc::Receiver, Arc, Mutex, OnceLock, RwLock};
 
 use eframe::egui;
 
@@ -29,15 +29,14 @@ pub fn run() -> Result<(), eframe::Error> {
 
 type ObjectIndex = i32;
 #[derive(Debug, Clone)]
-struct ObjectProxy {
+struct ObjectCache {
     name: String,
-    flags: i32,
     //weak_ptr: FWeakObjectPtr,
 }
 
 #[derive(Debug)]
 enum Event {
-    CreateUObject(ObjectIndex, ObjectProxy),
+    CreateUObject(ObjectIndex, ObjectCache),
     DeleteUObject(ObjectIndex),
     KismetMessage {
         message: String,
@@ -61,7 +60,7 @@ struct ObjectFilter {
     name_search: String,
 }
 impl ObjectFilter {
-    fn matches(&self, object: &ObjectProxy) -> bool {
+    fn matches(&self, object: &ObjectCache) -> bool {
         if self.name_search.is_empty() {
             true
         } else {
@@ -70,45 +69,98 @@ impl ObjectFilter {
     }
 }
 
+#[derive(Default, Clone)]
+struct ObjectNameCache {
+    names: IndexMap<ObjectIndex, ObjectCache>,
+}
+impl ObjectNameCache {
+    fn get(&self, index: ObjectIndex) -> Option<&ObjectCache> {
+        self.names.get(&index)
+    }
+    fn remove(&mut self, index: ObjectIndex) {
+        self.names.remove(&index);
+    }
+    fn get_or_init<'a>(&'a mut self, object: &ue::UObjectBase) -> &'a ObjectCache {
+        self.names
+            .entry(object.InternalIndex)
+            .or_insert_with(|| ObjectCache {
+                name: ue::FName_ToString(&object.NamePrivate),
+            })
+    }
+}
+
 struct MyApp {
     filter: ObjectFilter,
+    filter2: String,
     events: Receiver<Event>,
     listeners: Listeners,
-    objects: IndexMap<ObjectIndex, ObjectProxy>,
-    filtered: IndexMap<ObjectIndex, ObjectProxy>,
+    objects: Arc<RwLock<ObjectNameCache>>,
+    filtered: IndexMap<ObjectIndex, ObjectCache>,
     kismet_log: String,
+    ctx: Arc<OnceLock<egui::Context>>,
+}
+
+macro_rules! move_clone {
+    ( ( $($($arg:ident)+$(,)?)* ), $expr:expr) => {
+        {
+            $( $(
+                    let $arg = $arg.clone();
+            )*)*
+            $expr
+        }
+    };
 }
 
 impl MyApp {
     fn new() -> Self {
         let (tx, events) = std::sync::mpsc::channel();
-        let txc = tx.clone();
-        let create_uobject = Arc::new(move |object: &ue::UObjectBase| {
-            txc.send(Event::CreateUObject(
-                object.InternalIndex,
-                ObjectProxy {
-                    name: ue::FName_ToString(&object.NamePrivate),
-                    flags: 0,
-                    //weak_ptr: ue::FWeakObjectPtr::new(object),
+        let ctx: Arc<OnceLock<egui::Context>> = Default::default();
+        let cache: Arc<RwLock<ObjectNameCache>> = Default::default();
+
+        let create_uobject = move_clone!(
+            (tx, ctx, cache),
+            Arc::new(move |object: &ue::UObjectBase| {
+                //info!("before create_uobject");
+                cache.write().unwrap().get_or_init(object);
+                tx.send(Event::CreateUObject(
+                    object.InternalIndex,
+                    ObjectCache {
+                        name: ue::FName_ToString(&object.NamePrivate),
+                    },
+                ))
+                .unwrap();
+                if let Some(ctx) = ctx.get() {
+                    ctx.request_repaint();
+                }
+            })
+        );
+
+        let delete_uobject = move_clone!(
+            (tx, ctx, cache),
+            Arc::new(move |object: &ue::UObjectBase| {
+                //info!("before delete_uobject");
+                cache.write().unwrap().remove(object.InternalIndex);
+                tx.send(Event::DeleteUObject(object.InternalIndex)).unwrap();
+                if let Some(ctx) = ctx.get() {
+                    ctx.request_repaint();
+                }
+            })
+        );
+        let kismet_message = move_clone!(
+            (tx, ctx),
+            Arc::new(
+                move |message: &widestring::U16CStr, verbosity: u8, warning_id: ue::FName| {
+                    tx.send(Event::KismetMessage {
+                        message: message.to_string().unwrap(),
+                        verbosity,
+                        warning_id,
+                    })
+                    .unwrap();
+                    if let Some(ctx) = ctx.get() {
+                        ctx.request_repaint();
+                    }
                 },
-            ))
-            .unwrap();
-        });
-        let txc = tx.clone();
-        let delete_uobject = Arc::new(move |object: &ue::UObjectBase| {
-            txc.send(Event::DeleteUObject(object.InternalIndex))
-                .unwrap();
-        });
-        let txc = tx.clone();
-        let kismet_message = Arc::new(
-            move |message: &widestring::U16CStr, verbosity: u8, warning_id: ue::FName| {
-                txc.send(Event::KismetMessage {
-                    message: message.to_string().unwrap(),
-                    verbosity,
-                    warning_id,
-                })
-                .unwrap();
-            },
+            )
         );
         let txc = tx.clone();
         let kismet_print = Arc::new(move |message: &str| {
@@ -121,6 +173,7 @@ impl MyApp {
             filter: ObjectFilter {
                 name_search: "".into(),
             },
+            filter2: String::new(),
             events,
             listeners: Listeners {
                 create_uobject: hooks::create_uobject::register(create_uobject),
@@ -128,9 +181,10 @@ impl MyApp {
                 kismet_message: hooks::kismet_execution_message::register(kismet_message),
                 kismet_print_message: hooks::kismet_print_message::register(kismet_print),
             },
-            objects: Default::default(),
+            objects: cache,
             filtered: Default::default(),
             kismet_log: "".into(),
+            ctx,
         }
     }
 }
@@ -139,16 +193,16 @@ impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         //let object_lock = guobject_array();
 
+        self.ctx.get_or_init(|| ctx.clone());
+
         for event in self.events.try_iter() {
             match event {
                 Event::CreateUObject(index, object) => {
                     if self.filter.matches(&object) {
                         self.filtered.insert(index, object.clone());
                     }
-                    self.objects.insert(index, object);
                 }
                 Event::DeleteUObject(index) => {
-                    self.objects.remove(&index);
                     self.filtered.remove(&index);
                 }
                 Event::KismetMessage {
@@ -178,6 +232,9 @@ impl eframe::App for MyApp {
                 if res.changed() {
                     self.filtered = self
                         .objects
+                        .read()
+                        .unwrap()
+                        .names
                         .iter()
                         .filter_map(|(index, obj)| {
                             if self.filter.matches(obj) {
@@ -204,13 +261,67 @@ impl eframe::App for MyApp {
                         .skip(row_range.start)
                         .take(row_range.len())
                     {
-                        ui.label(format!("{i:10} {:?} {}", obj.flags, obj.name));
+                        ui.label(format!("{i:10} {}", obj.name));
                     }
                     ui.allocate_space(ui.available_size());
                 },
             );
 
-            let log_window = |name, mut log: &str| {
+            egui::Window::new("object search 2")
+                .default_height(500.)
+                .show(ctx, |ui| {
+                    let name_label = ui.label("Search: ");
+                    let res = ui
+                        .text_edit_singleline(&mut self.filter2)
+                        .labelled_by(name_label.id);
+
+                    let text_style = egui::TextStyle::Body;
+                    let row_height = ui.text_style_height(&text_style);
+
+                    //info!("before names lock");
+                    let objects = unsafe { guobject_array_unchecked() }.objects();
+                    let mut names = self.objects.write().unwrap();
+
+                    //info!("before filter");
+                    let filtered = objects
+                        .iter()
+                        //.take(100)
+                        .flatten()
+                        .filter_map(|obj| {
+                            let cached = &names.get_or_init(obj);
+                            //let name = ue::FName_ToString(&obj.NamePrivate);
+                            if cached.name.contains(&self.filter2) {
+                                Some(obj)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    //let filtered = vec!["h"];
+
+                    //info!("before print");
+                    egui::ScrollArea::vertical().show_rows(
+                        ui,
+                        row_height,
+                        filtered.len(),
+                        |ui, row_range| {
+                            for (i, obj) in filtered
+                                .iter()
+                                .enumerate()
+                                .skip(row_range.start)
+                                .take(row_range.len())
+                            {
+                                ui.label(format!(
+                                    "{i:10} {}",
+                                    names.get(obj.InternalIndex).unwrap().name
+                                ));
+                            }
+                            ui.allocate_space(ui.available_size());
+                        },
+                    );
+                });
+
+            let log_window = |name: &str, mut log: &str| {
                 egui::Window::new(name)
                     .default_height(500.)
                     .show(ctx, |ui| {
@@ -227,9 +338,7 @@ impl eframe::App for MyApp {
                     });
             };
 
-            log_window("Kismet Messages", &self.kismet_log);
+            //log_window("Kismet Messages", &self.kismet_log);
         });
-
-        ctx.request_repaint();
     }
 }
