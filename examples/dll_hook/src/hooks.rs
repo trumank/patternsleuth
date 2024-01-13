@@ -184,22 +184,22 @@ pub unsafe fn initialize() -> Result<()> {
             HookUFunctionBind.call(function);
             if let Some(function) = function.as_mut() {
                 let path = function
-                    .UStruct
-                    .UField
-                    .UObject
-                    .UObjectBaseUtility
-                    .UObjectBase
+                    .ustruct
+                    .ufield
+                    .uobject
+                    .uobject_base_utility
+                    .uobject_base
                     .get_path_name(None);
                 if let Some(hook) = hooks.get(path.as_str()) {
                     simple_log::info!(
                         "UFunction::Bind({path}) func = {:?} flags = {:?}",
-                        function.Func,
-                        function.FunctionFlags
+                        function.func,
+                        function.function_flags
                     );
                     function
-                        .FunctionFlags
+                        .function_flags
                         .insert(ue::EFunctionFlags::FUNC_Native | ue::EFunctionFlags::FUNC_Final);
-                    function.Func = *hook;
+                    function.func = *hook;
                 }
             }
         },

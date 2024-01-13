@@ -1,4 +1,4 @@
-use std::sync::{mpsc::Receiver, Arc, Mutex, OnceLock, RwLock};
+use std::sync::{mpsc::Receiver, Arc, OnceLock, RwLock};
 
 use eframe::egui;
 
@@ -82,9 +82,9 @@ impl ObjectNameCache {
     }
     fn get_or_init<'a>(&'a mut self, object: &ue::UObjectBase) -> &'a ObjectCache {
         self.names
-            .entry(object.InternalIndex)
+            .entry(object.internal_index)
             .or_insert_with(|| ObjectCache {
-                name: object.NamePrivate.to_string(),
+                name: object.name_private.to_string()
             })
     }
 }
@@ -123,9 +123,9 @@ impl MyApp {
                 //info!("before create_uobject");
                 cache.write().unwrap().get_or_init(object);
                 tx.send(Event::CreateUObject(
-                    object.InternalIndex,
+                    object.internal_index,
                     ObjectCache {
-                        name: object.NamePrivate.to_string(),
+                        name: object.name_private.to_string()
                     },
                 ))
                 .unwrap();
@@ -139,8 +139,8 @@ impl MyApp {
             (tx, ctx, cache),
             Arc::new(move |object: &ue::UObjectBase| {
                 //info!("before delete_uobject");
-                cache.write().unwrap().remove(object.InternalIndex);
-                tx.send(Event::DeleteUObject(object.InternalIndex)).unwrap();
+                cache.write().unwrap().remove(object.internal_index);
+                tx.send(Event::DeleteUObject(object.internal_index)).unwrap();
                 if let Some(ctx) = ctx.get() {
                     ctx.request_repaint();
                 }
@@ -207,8 +207,8 @@ impl eframe::App for MyApp {
                 }
                 Event::KismetMessage {
                     message,
-                    verbosity,
-                    warning_id,
+                    verbosity: _,
+                    warning_id: _,
                 } => {
                     self.kismet_log.push_str(&format!("Kismet VM: {message}\n"));
                 }
@@ -271,7 +271,7 @@ impl eframe::App for MyApp {
                 .default_height(500.)
                 .show(ctx, |ui| {
                     let name_label = ui.label("Search: ");
-                    let res = ui
+                    let _res = ui
                         .text_edit_singleline(&mut self.filter2)
                         .labelled_by(name_label.id);
 
@@ -313,7 +313,7 @@ impl eframe::App for MyApp {
                             {
                                 ui.label(format!(
                                     "{i:10} {}",
-                                    names.get(obj.InternalIndex).unwrap().name
+                                    names.get(obj.internal_index).unwrap().name
                                 ));
                             }
                             ui.allocate_space(ui.available_size());
@@ -321,7 +321,7 @@ impl eframe::App for MyApp {
                     );
                 });
 
-            let log_window = |name: &str, mut log: &str| {
+            let _log_window = |name: &str, mut log: &str| {
                 egui::Window::new(name)
                     .default_height(500.)
                     .show(ctx, |ui| {

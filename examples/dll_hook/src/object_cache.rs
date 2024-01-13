@@ -16,16 +16,16 @@ fn objects() -> &'static Mutex<Objects> {
 // call from main thread
 pub fn object_created(object: &ue::UObjectBase) {
     let proxy = ObjectProxy {
-        name: object.NamePrivate.to_string(),
+        name: object.name_private.to_string(),
     };
     objects()
         .lock()
         .unwrap()
-        .insert(object.InternalIndex, proxy);
+        .insert(object.internal_index, proxy);
 }
 // call from main thread
 pub fn object_deleted(object: &ue::UObjectBase) {
-    objects().lock().unwrap().remove(&object.InternalIndex);
+    objects().lock().unwrap().remove(&object.internal_index);
 }
 
 #[derive(Debug)]

@@ -1,11 +1,8 @@
-#![allow(non_snake_case, non_camel_case_types)]
-
 use std::{
     cell::UnsafeCell,
     ffi::c_void,
     fmt::Display,
     ops::{Deref, DerefMut},
-    sync::Mutex,
 };
 
 use windows::Win32::System::Threading::{
@@ -54,50 +51,50 @@ unsafe impl Sync for FMalloc {}
 unsafe impl Send for FMalloc {}
 impl FMalloc {
     pub fn malloc(&self, count: usize, alignment: u32) -> *mut c_void {
-        unsafe { ((*self.vtable).Malloc)(self, count, alignment) }
+        unsafe { ((*self.vtable).malloc)(self, count, alignment) }
     }
     pub fn realloc(&self, original: *mut c_void, count: usize, alignment: u32) -> *mut c_void {
-        unsafe { ((*self.vtable).Realloc)(self, original, count, alignment) }
+        unsafe { ((*self.vtable).realloc)(self, original, count, alignment) }
     }
     pub fn free(&self, original: *mut c_void) {
-        unsafe { ((*self.vtable).Free)(self, original) }
+        unsafe { ((*self.vtable).free)(self, original) }
     }
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub struct FMallocVTable {
-    pub __vecDelDtor: unsafe extern "system" fn(), // TODO
-    pub Exec: unsafe extern "system" fn(),         // TODO
-    pub Malloc:
+    pub __vec_del_dtor: *const (),
+    pub exec: *const (),
+    pub malloc:
         unsafe extern "system" fn(this: &FMalloc, count: usize, alignment: u32) -> *mut c_void,
-    pub TryMalloc:
+    pub try_malloc:
         unsafe extern "system" fn(this: &FMalloc, count: usize, alignment: u32) -> *mut c_void,
-    pub Realloc: unsafe extern "system" fn(
+    pub realloc: unsafe extern "system" fn(
         this: &FMalloc,
         original: *mut c_void,
         count: usize,
         alignment: u32,
     ) -> *mut c_void,
-    pub TryRealloc: unsafe extern "system" fn(
+    pub try_realloc: unsafe extern "system" fn(
         this: &FMalloc,
         original: *mut c_void,
         count: usize,
         alignment: u32,
     ) -> *mut c_void,
-    pub Free: unsafe extern "system" fn(this: &FMalloc, original: *mut c_void),
-    pub QuantizeSize: unsafe extern "system" fn(), // TODO
-    pub GetAllocationSize: unsafe extern "system" fn(), // TODO
-    pub Trim: unsafe extern "system" fn(),         // TODO
-    pub SetupTLSCachesOnCurrentThread: unsafe extern "system" fn(), // TODO
-    pub ClearAndDisableTLSCachesOnCurrentThread: unsafe extern "system" fn(), // TODO
-    pub InitializeStatsMetadata: unsafe extern "system" fn(), // TODO
-    pub UpdateStats: unsafe extern "system" fn(),  // TODO
-    pub GetAllocatorStats: unsafe extern "system" fn(), // TODO
-    pub DumpAllocatorStats: unsafe extern "system" fn(), // TODO
-    pub IsInternallyThreadSafe: unsafe extern "system" fn(), // TODO
-    pub ValidateHeap: unsafe extern "system" fn(), // TODO
-    pub GetDescriptiveName: unsafe extern "system" fn(), // TODO
+    pub free: unsafe extern "system" fn(this: &FMalloc, original: *mut c_void),
+    pub quantize_size: *const (),
+    pub get_allocation_size: *const (),
+    pub trim: *const (),
+    pub setup_tls_caches_on_current_thread: *const (),
+    pub clear_and_disable_tlscaches_on_current_thread: *const (),
+    pub initialize_stats_metadata: *const (),
+    pub update_stats: *const (),
+    pub get_allocator_stats: *const (),
+    pub dump_allocator_stats: *const (),
+    pub is_internally_thread_safe: *const (),
+    pub validate_heap: *const (),
+    pub get_descriptive_name: *const (),
 }
 
 #[derive(Debug)]
@@ -163,37 +160,37 @@ type ObjectIndex = i32;
 #[derive(Debug)]
 #[repr(C)]
 pub struct FUObjectArray {
-    ObjFirstGCIndex: i32,
-    ObjLastNonGCIndex: i32,
-    MaxObjectsNotConsideredByGC: i32,
-    OpenForDisregardForGC: bool,
+    obj_first_gcindex: i32,
+    obj_last_non_gcindex: i32,
+    max_objects_not_considered_by_gc: i32,
+    open_for_disregard_for_gc: bool,
 
-    ObjObjects: UnsafeCell<FChunkedFixedUObjectArray>,
-    ObjObjectsCritical: FWindowsCriticalSection,
-    ObjAvailableList: [u8; 0x88],
-    UObjectCreateListeners: TArray<*const FUObjectCreateListener>,
-    UObjectDeleteListeners: TArray<*const FUObjectDeleteListener>,
-    UObjectDeleteListenersCritical: FWindowsCriticalSection,
-    MasterSerialNumber: std::sync::atomic::AtomicI32,
+    obj_objects: UnsafeCell<FChunkedFixedUObjectArray>,
+    obj_objects_critical: FWindowsCriticalSection,
+    obj_available_list: [u8; 0x88],
+    uobject_create_listeners: TArray<*const FUObjectCreateListener>,
+    uobject_delete_listeners: TArray<*const FUObjectDeleteListener>,
+    uobject_delete_listeners_critical: FWindowsCriticalSection,
+    master_serial_number: std::sync::atomic::AtomicI32,
 }
 impl FUObjectArray {
     pub fn objects(&self) -> CriticalSectionGuard<'_, '_, FChunkedFixedUObjectArray> {
-        CriticalSectionGuard::lock(&self.ObjObjectsCritical, &self.ObjObjects)
+        CriticalSectionGuard::lock(&self.obj_objects_critical, &self.obj_objects)
     }
     pub fn allocate_serial_number(&self, index: ObjectIndex) -> i32 {
         use std::sync::atomic::Ordering;
 
-        let objects = unsafe { &*self.ObjObjects.get() };
+        let objects = unsafe { &*self.obj_objects.get() };
         let item = objects.item(index);
 
-        let current = item.SerialNumber.load(Ordering::SeqCst);
+        let current = item.serial_number.load(Ordering::SeqCst);
         if current != 0 {
             current
         } else {
-            let new = self.MasterSerialNumber.fetch_add(1, Ordering::SeqCst);
+            let new = self.master_serial_number.fetch_add(1, Ordering::SeqCst);
 
             let exchange =
-                item.SerialNumber
+                item.serial_number
                     .compare_exchange(0, new, Ordering::SeqCst, Ordering::SeqCst);
             match exchange {
                 Ok(_) => new,
@@ -210,7 +207,7 @@ pub struct ObjectIterator<'a> {
 impl<'a> Iterator for ObjectIterator<'a> {
     type Item = Option<&'a UObjectBase>;
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let size = self.array.NumElements as usize;
+        let size = self.array.num_elements as usize;
         (size, Some(size))
     }
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
@@ -221,10 +218,10 @@ impl<'a> Iterator for ObjectIterator<'a> {
         self.next()
     }
     fn next(&mut self) -> Option<Option<&'a UObjectBase>> {
-        if self.index >= self.array.NumElements {
+        if self.index >= self.array.num_elements {
             None
         } else {
-            let obj = unsafe { self.array.item(self.index).Object.as_ref() };
+            let obj = unsafe { self.array.item(self.index).object.as_ref() };
 
             self.index += 1;
             Some(obj)
@@ -235,12 +232,12 @@ impl<'a> Iterator for ObjectIterator<'a> {
 #[derive(Debug)]
 #[repr(C)]
 pub struct FChunkedFixedUObjectArray {
-    pub Objects: *const *const FUObjectItem,
-    pub PreAllocatedObjects: *const FUObjectItem,
-    pub MaxElements: i32,
-    pub NumElements: i32,
-    pub MaxChunks: i32,
-    pub NumChunks: i32,
+    pub objects: *const *const FUObjectItem,
+    pub pre_allocated_objects: *const FUObjectItem,
+    pub max_elements: i32,
+    pub num_elements: i32,
+    pub max_chunks: i32,
+    pub num_chunks: i32,
 }
 impl FChunkedFixedUObjectArray {
     pub fn iter(&self) -> ObjectIterator<'_> {
@@ -250,10 +247,10 @@ impl FChunkedFixedUObjectArray {
         }
     }
     fn item_ptr(&self, index: ObjectIndex) -> *const FUObjectItem {
-        let per_chunk = self.MaxElements / self.MaxChunks;
+        let per_chunk = self.max_elements / self.max_chunks;
 
         unsafe {
-            (*self.Objects.add((index / per_chunk) as usize)).add((index % per_chunk) as usize)
+            (*self.objects.add((index / per_chunk) as usize)).add((index % per_chunk) as usize)
         }
     }
     fn item(&self, index: ObjectIndex) -> &FUObjectItem {
@@ -267,27 +264,27 @@ impl FChunkedFixedUObjectArray {
 #[derive(Debug)]
 #[repr(C)]
 pub struct FUObjectItem {
-    pub Object: *const UObjectBase,
-    pub Flags: i32,
-    pub ClusterRootIndex: i32,
-    pub SerialNumber: std::sync::atomic::AtomicI32,
+    pub object: *const UObjectBase,
+    pub flags: i32,
+    pub cluster_root_index: i32,
+    pub serial_number: std::sync::atomic::AtomicI32,
 }
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct FWeakObjectPtr {
-    ObjectIndex: i32,
-    ObjectSerialNumber: i32,
+    object_index: i32,
+    object_serial_number: i32,
 }
 impl FWeakObjectPtr {
     pub fn new(object: &UObjectBase) -> Self {
-        Self::new_from_index(object.InternalIndex)
+        Self::new_from_index(object.internal_index)
     }
     pub fn new_from_index(index: ObjectIndex) -> Self {
         Self {
-            ObjectIndex: index,
+            object_index: index,
             // serial allocation performs only atomic operations
-            ObjectSerialNumber: unsafe {
+            object_serial_number: unsafe {
                 globals()
                     .guobject_array_unchecked()
                     .allocate_serial_number(index)
@@ -297,9 +294,9 @@ impl FWeakObjectPtr {
     pub fn get(&self, object_array: &FUObjectArray) -> Option<&UObjectBase> {
         // TODO check valid
         unsafe {
-            let objects = &*object_array.ObjObjects.get();
-            let item = objects.item(self.ObjectIndex);
-            Some(&*item.Object)
+            let objects = &*object_array.obj_objects.get();
+            let item = objects.item(self.object_index);
+            Some(&*item.object)
         }
     }
 }
@@ -379,153 +376,129 @@ bitflags::bitflags! {
 #[derive(Debug)]
 #[repr(C)]
 pub struct UObjectBase {
-    pub vftable: *const std::ffi::c_void,
-    /* offset 0x0008 */ pub ObjectFlags: EObjectFlags,
-    /* offset 0x000c */ pub InternalIndex: i32,
-    /* offset 0x0010 */ pub ClassPrivate: *const UClass,
-    /* offset 0x0018 */ pub NamePrivate: FName,
-    /* offset 0x0020 */ pub OuterPrivate: *const UObject,
+    pub vtable: *const c_void,
+    pub object_flags: EObjectFlags,
+    pub internal_index: i32,
+    pub class_private: *const UClass,
+    pub name_private: FName,
+    pub outer_private: *const UObject,
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub struct UObjectBaseUtility {
-    pub UObjectBase: UObjectBase,
+    pub uobject_base: UObjectBase,
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub struct UObject {
-    pub UObjectBaseUtility: UObjectBaseUtility,
+    pub uobject_base_utility: UObjectBaseUtility,
 }
 
 #[derive(Debug)]
 #[repr(C)]
 struct FOutputDevice {
     vtable: *const c_void,
-    /* offset 0x0008 */ bSuppressEventTag: bool,
-    /* offset 0x0009 */ bAutoEmitLineTerminator: bool,
+    b_suppress_event_tag: bool,
+    b_auto_emit_line_terminator: bool,
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub struct UField {
-    pub UObject: UObject,
-    pub Next: *const UField,
+    pub uobject: UObject,
+    pub next: *const UField,
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub struct FStructBaseChain {
-    /* offset 0x0000 */ pub StructBaseChainArray: *const *const FStructBaseChain,
-    /* offset 0x0008 */ pub NumStructBasesInChainMinusOne: i32,
+    pub struct_base_chain_array: *const *const FStructBaseChain,
+    pub num_struct_bases_in_chain_minus_one: i32,
 }
 
 #[derive(Debug)]
 #[repr(C)]
 struct FFieldClass {
     // TODO
-    /* offset 0x0000 */
-    Name: FName,
-    /* offset 0x0008 */ //unhandled_primitive.kind /* UQuad */ Id;
-    /* offset 0x0010 */ //unhandled_primitive.kind /* UQuad */ CastFlags;
-    /* offset 0x0018 */ //EClassFlags ClassFlags;
-    /* offset 0x0020 */ //FFieldClass* SuperClass;
-    /* offset 0x0028 */ //FField* DefaultObject;
-    /* offset 0x0030 */ //Type0x1159e /* TODO: figure out how to name it */* ConstructFn;
-    /* offset 0x0038 */ //FThreadSafeCounter UnqiueNameIndexCounter;
+    name: FName,
 }
 
 #[derive(Debug)]
 #[repr(C)]
 struct FFieldVariant {
-    /* offset 0x0000 */ container: *const c_void,
-    /* offset 0x0008 */ bIsUObject: bool,
+    container: *const c_void,
+    b_is_uobject: bool,
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub struct FField {
-    /* offset 0x0008 */ ClassPrivate: *const FFieldClass,
-    /* offset 0x0010 */ Owner: FFieldVariant,
-    /* offset 0x0020 */ Next: *const FField,
-    /* offset 0x0028 */ NamePrivate: FName,
-    /* offset 0x0030 */ FlagsPrivate: EObjectFlags,
+    class_private: *const FFieldClass,
+    owner: FFieldVariant,
+    next: *const FField,
+    name_private: FName,
+    flags_private: EObjectFlags,
 }
 
 pub struct FProperty {
     // TODO
-    /* offset 0x0000 */ //pub FField: FField,
-    /* offset 0x0038 */ //pub ArrayDim: i32,
-    /* offset 0x003c */ //pub ElementSize: i32,
-    /* offset 0x0040 */ //EPropertyFlags PropertyFlags;
-    /* offset 0x0048 */ //unhandled_primitive.kind /* UShort */ RepIndex;
-    /* offset 0x004a */ //TEnumAsByte<enum ELifetimeCondition> BlueprintReplicationCondition;
-    /* offset 0x004c */ //int32_t Offset_Internal;
-    /* offset 0x0050 */ //FName RepNotifyFunc;
-    /* offset 0x0058 */ //FProperty* PropertyLinkNext;
-    /* offset 0x0060 */ //FProperty* NextRef;
-    /* offset 0x0068 */ //FProperty* DestructorLinkNext;
-    /* offset 0x0070 */ //FProperty* PostConstructLinkNext;
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub struct UStruct {
-    /* offset 0x0000 */ pub UField: UField,
-    /* offset 0x0030 */ pub FStructBaseChain: FStructBaseChain,
-    /* offset 0x0040 */ pub SuperStruct: *const UStruct,
-    /* offset 0x0048 */ pub Children: *const UField,
-    /* offset 0x0050 */ pub ChildProperties: *const FField,
-    /* offset 0x0058 */ pub PropertiesSize: i32,
-    /* offset 0x005c */ pub MinAlignment: i32,
-    /* offset 0x0060 */ pub Script: TArray<u8>,
-    /* offset 0x0070 */ pub PropertyLink: *const FProperty,
-    /* offset 0x0078 */ pub RefLink: *const FProperty,
-    /* offset 0x0080 */ pub DestructorLink: *const FProperty,
-    /* offset 0x0088 */ pub PostConstructLink: *const FProperty,
-    /* offset 0x0090 */
-    pub ScriptAndPropertyObjectReferences: TArray<*const UObject>,
-    /* offset 0x00a0 */
-    pub UnresolvedScriptProperties: *const (), //TODO pub TArray<TTuple<TFieldPath<FField>,int>,TSizedDefaultAllocator<32> >*
-    /* offset 0x00a8 */
-    pub UnversionedSchema: *const (), //TODO const FUnversionedStructSchema*
+    pub ufield: UField,
+    pub fstruct_base_chain: FStructBaseChain,
+    pub super_struct: *const UStruct,
+    pub children: *const UField,
+    pub child_properties: *const FField,
+    pub properties_size: i32,
+    pub min_alignment: i32,
+    pub script: TArray<u8>,
+    pub property_link: *const FProperty,
+    pub ref_link: *const FProperty,
+    pub destructor_link: *const FProperty,
+    pub post_construct_link: *const FProperty,
+    pub script_and_property_object_references: TArray<*const UObject>,
+    pub unresolved_script_properties: *const (), //TODO pub TArray<TTuple<TFieldPath<FField>,int>,TSizedDefaultAllocator<32> >*
+    pub unversioned_schema: *const (),           //TODO const FUnversionedStructSchema*
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub struct UFunction {
-    pub UStruct: UStruct,
-    /* offset 0x0b0 */ pub FunctionFlags: EFunctionFlags,
-    /* offset 0x0b4 */ pub NumParms: u8,
-    /* offset 0x0b6 */ pub ParmsSize: u16,
-    /* offset 0x0b8 */ pub ReturnValueOffset: u16,
-    /* offset 0x0ba */ pub RPCId: u16,
-    /* offset 0x0bc */ pub RPCResponseId: u16,
-    /* offset 0x0c0 */ pub FirstPropertyToInit: *const FProperty,
-    /* offset 0x0c8 */ pub EventGraphFunction: *const UFunction,
-    /* offset 0x0d0 */ pub EventGraphCallOffset: i32,
-    /* offset 0x0d8 */
-    pub Func: unsafe extern "system" fn(*mut UObject, *mut kismet::FFrame, *mut c_void),
+    pub ustruct: UStruct,
+    pub function_flags: EFunctionFlags,
+    pub num_parms: u8,
+    pub parms_size: u16,
+    pub return_value_offset: u16,
+    pub rpc_id: u16,
+    pub rpc_response_id: u16,
+    pub first_property_to_init: *const FProperty,
+    pub event_graph_function: *const UFunction,
+    pub event_graph_call_offset: i32,
+    pub func: unsafe extern "system" fn(*mut UObject, *mut kismet::FFrame, *mut c_void),
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub struct UClass {
-    /* offset 0x0000 */ pub UStruct: UStruct,
+    pub ustruct: UStruct,
 }
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct FName {
-    /* offset 0x0000 */ pub ComparisonIndex: FNameEntryId,
-    /* offset 0x0004 */ pub Number: u32,
+    pub comparison_index: FNameEntryId,
+    pub number: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct FNameEntryId {
-    /* offset 0x0000 */ pub Value: u32,
+    pub value: u32,
 }
 
 #[derive(Debug)]
@@ -695,19 +668,19 @@ pub mod kismet {
     #[derive(Debug)]
     #[repr(C)]
     pub struct FFrame {
-        /* offset 0x0000 */ pub base: FOutputDevice,
-        /* offset 0x0010 */ pub node: *const c_void,
-        /* offset 0x0018 */ pub object: *mut UObject,
-        /* offset 0x0020 */ pub code: *const c_void,
-        /* offset 0x0028 */ pub locals: *const c_void,
-        /* offset 0x0030 */ pub most_recent_property: *const FProperty,
-        /* offset 0x0038 */ pub most_recent_property_address: *const c_void,
-        /* offset 0x0040 */ pub flow_stack: [u8; 0x30],
-        /* offset 0x0070 */ pub previous_frame: *const FFrame,
-        /* offset 0x0078 */ pub out_parms: *const c_void,
-        /* offset 0x0080 */ pub property_chain_for_compiled_in: *const FField,
-        /* offset 0x0088 */ pub current_native_function: *const c_void,
-        /* offset 0x0090 */ pub b_array_context_failed: bool,
+        pub base: FOutputDevice,
+        pub node: *const c_void,
+        pub object: *mut UObject,
+        pub code: *const c_void,
+        pub locals: *const c_void,
+        pub most_recent_property: *const FProperty,
+        pub most_recent_property_address: *const c_void,
+        pub flow_stack: [u8; 0x30],
+        pub previous_frame: *const FFrame,
+        pub out_parms: *const c_void,
+        pub property_chain_for_compiled_in: *const FField,
+        pub current_native_function: *const c_void,
+        pub b_array_context_failed: bool,
     }
 
     pub fn arg<T: Sized>(stack: &mut FFrame, output: &mut T) {
@@ -715,7 +688,7 @@ pub mod kismet {
         unsafe {
             if stack.code.is_null() {
                 let cur = stack.property_chain_for_compiled_in;
-                stack.property_chain_for_compiled_in = (*cur).Next;
+                stack.property_chain_for_compiled_in = (*cur).next;
                 (globals().fframe_step_explicit_property())(stack, output, cur as *const FProperty);
             } else {
                 (globals().fframe_step())(stack, stack.object, output);
