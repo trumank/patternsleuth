@@ -1,3 +1,4 @@
+pub mod blueprint_library;
 pub mod engine_version;
 pub mod fname;
 pub mod ftext;
