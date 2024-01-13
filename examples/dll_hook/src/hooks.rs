@@ -14,6 +14,7 @@ retour::static_detour! {
     static HookFreeUObject: unsafe extern "system" fn(*mut ue::UObjectBase, *const c_void); // inlined into UObject dtor so args are messed up
     static HookKismetPrintString: unsafe extern "system" fn(*mut ue::UObjectBase, *mut ue::kismet::FFrame, *mut c_void);
     static HookKismetExecutionMessage: unsafe extern "system" fn(*const u16, u8, ue::FName);
+    static HookUFunctionBind: unsafe extern "system" fn(*mut ue::UFunction);
 }
 
 macro_rules! event {
@@ -162,5 +163,105 @@ pub unsafe fn initialize() -> Result<()> {
     )?;
     HookKismetExecutionMessage.enable()?;
 
+    type execFn = unsafe extern "system" fn(*mut ue::UObject, *mut ue::kismet::FFrame, *mut c_void);
+
+    let hooks = [
+        (
+            "/Game/_AssemblyStorm/TestMod/BPL_NativeTest.BPL_NativeTest_C:Do Stuff",
+            do_stuff as execFn,
+        ),
+        (
+            "/Game/_AssemblyStorm/TestMod/BPL_NativeTest.BPL_NativeTest_C:Regex",
+            exec_regex as execFn,
+        ),
+    ]
+    .into_iter()
+    .collect::<std::collections::HashMap<_, execFn>>();
+
+    HookUFunctionBind.initialize(
+        std::mem::transmute(globals().resolution.ufunction_bind.0),
+        move |function| {
+            HookUFunctionBind.call(function);
+            if let Some(function) = function.as_mut() {
+                let path = ue::UObjectBase_GetPathName(
+                    &function
+                        .UStruct
+                        .UField
+                        .UObject
+                        .UObjectBaseUtility
+                        .UObjectBase,
+                    None,
+                );
+                if let Some(hook) = hooks.get(path.as_str()) {
+                    simple_log::info!(
+                        "UFunction::Bind({path}) func = {:?} flags = {:?}",
+                        function.Func,
+                        function.FunctionFlags
+                    );
+                    function
+                        .FunctionFlags
+                        .insert(ue::EFunctionFlags::FUNC_Native | ue::EFunctionFlags::FUNC_Final);
+                    function.Func = *hook;
+                }
+            }
+        },
+    )?;
+    HookUFunctionBind.enable()?;
+
     Ok(())
+}
+
+unsafe extern "system" fn do_stuff(
+    _context: *mut ue::UObject,
+    stack: *mut ue::kismet::FFrame,
+    _result: *mut c_void,
+) {
+    let stack = stack.as_mut().unwrap();
+    let mut ctx: Option<&ue::UObject> = None;
+    ue::kismet::arg(stack, &mut ctx);
+
+    simple_log::info!("doing stuff!!");
+
+    stack.code = stack.code.add(1);
+}
+
+unsafe extern "system" fn exec_regex(
+    _context: *mut ue::UObject,
+    stack: *mut ue::kismet::FFrame,
+    _result: *mut c_void,
+) {
+    let stack = stack.as_mut().unwrap();
+
+    let mut ctx: Option<&ue::UObject> = None;
+    let mut regex = ue::FString::default();
+    let mut input = ue::FString::default();
+    let mut matches: ue::TArray<ue::FString> = Default::default();
+
+    ue::kismet::arg(stack, &mut regex);
+    ue::kismet::arg(stack, &mut input);
+    ue::kismet::arg(stack, &mut ctx);
+    ue::kismet::arg(stack, &mut matches);
+    let matches_address = (stack.most_recent_property_address as *mut ue::TArray<ue::FString>)
+        .as_mut()
+        .unwrap();
+
+    matches_address.clear();
+    if let Ok(re) = regex::Regex::new(&regex.to_string()) {
+        for cap in re.captures(&input.to_string()).iter() {
+            for cap in cap.iter() {
+                let new_str = ue::FString::from(
+                    widestring::U16CString::from_str(
+                        cap.as_ref().map(|m| m.as_str()).unwrap_or_default(),
+                    )
+                    .unwrap()
+                    .as_slice_with_nul(),
+                );
+                matches_address.push(new_str);
+            }
+        }
+    }
+
+    std::mem::forget(matches);
+
+    stack.code = stack.code.add(1);
 }

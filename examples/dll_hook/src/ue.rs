@@ -42,6 +42,19 @@ pub fn FName_ToString(name: &FName) -> String {
     }
 }
 
+pub fn UObjectBase_GetPathName(this: &UObjectBase, stop_outer: Option<&UObject>) -> String {
+    unsafe {
+        type FnUObjectBaseUtilityGetPathName =
+            unsafe extern "system" fn(&UObjectBase, Option<&UObject>, &mut FString);
+
+        let get_path_name: FnUObjectBaseUtilityGetPathName =
+            std::mem::transmute(globals().resolution.uobject_base_utility_get_path_name.0);
+        let mut string = FString::new();
+        get_path_name(this, stop_outer, &mut string);
+        string.to_string()
+    }
+}
+
 #[derive(Debug)]
 #[repr(C)]
 pub struct GMalloc {
@@ -347,6 +360,43 @@ bitflags::bitflags! {
         const RF_WillBeLoaded = 0x08000000;
     }
 }
+bitflags::bitflags! {
+    #[derive(Debug, Clone)]
+    pub struct EFunctionFlags: u32 {
+        const FUNC_None = 0x0000;
+        const FUNC_Final = 0x0001;
+        const FUNC_RequiredAPI = 0x0002;
+        const FUNC_BlueprintAuthorityOnly = 0x0004;
+        const FUNC_BlueprintCosmetic = 0x0008;
+        const FUNC_Net = 0x0040;
+        const FUNC_NetReliable = 0x0080;
+        const FUNC_NetRequest = 0x0100;
+        const FUNC_Exec = 0x0200;
+        const FUNC_Native = 0x0400;
+        const FUNC_Event = 0x0800;
+        const FUNC_NetResponse = 0x1000;
+        const FUNC_Static = 0x2000;
+        const FUNC_NetMulticast = 0x4000;
+        const FUNC_UbergraphFunction = 0x8000;
+        const FUNC_MulticastDelegate = 0x00010000;
+        const FUNC_Public = 0x00020000;
+        const FUNC_Private = 0x00040000;
+        const FUNC_Protected = 0x00080000;
+        const FUNC_Delegate = 0x00100000;
+        const FUNC_NetServer = 0x00200000;
+        const FUNC_HasOutParms = 0x00400000;
+        const FUNC_HasDefaults = 0x00800000;
+        const FUNC_NetClient = 0x01000000;
+        const FUNC_DLLImport = 0x02000000;
+        const FUNC_BlueprintCallable = 0x04000000;
+        const FUNC_BlueprintEvent = 0x08000000;
+        const FUNC_BlueprintPure = 0x10000000;
+        const FUNC_EditorOnly = 0x20000000;
+        const FUNC_Const = 0x40000000;
+        const FUNC_NetValidate = 0x80000000;
+        const FUNC_AllFlags = 0xffffffff;
+    }
+}
 
 #[derive(Debug)]
 #[repr(C)]
@@ -466,6 +516,23 @@ pub struct UStruct {
 
 #[derive(Debug)]
 #[repr(C)]
+pub struct UFunction {
+    pub UStruct: UStruct,
+    /* offset 0x0b0 */ pub FunctionFlags: EFunctionFlags,
+    /* offset 0x0b4 */ pub NumParms: u8,
+    /* offset 0x0b6 */ pub ParmsSize: u16,
+    /* offset 0x0b8 */ pub ReturnValueOffset: u16,
+    /* offset 0x0ba */ pub RPCId: u16,
+    /* offset 0x0bc */ pub RPCResponseId: u16,
+    /* offset 0x0c0 */ pub FirstPropertyToInit: *const FProperty,
+    /* offset 0x0c8 */ pub EventGraphFunction: *const UFunction,
+    /* offset 0x0d0 */ pub EventGraphCallOffset: i32,
+    /* offset 0x0d8 */
+    pub Func: unsafe extern "system" fn(*mut UObject, *mut kismet::FFrame, *mut c_void),
+}
+
+#[derive(Debug)]
+#[repr(C)]
 pub struct UClass {
     /* offset 0x0000 */ pub UStruct: UStruct,
 }
@@ -502,9 +569,9 @@ pub type FString = TArray<u16>;
 #[derive(Debug)]
 #[repr(C)]
 pub struct TArray<T> {
-    pub data: *const T,
-    pub num: i32,
-    pub max: i32,
+    data: *const T,
+    num: i32,
+    max: i32,
 }
 impl<T> TArray<T> {
     fn new() -> Self {
@@ -517,6 +584,12 @@ impl<T> TArray<T> {
 }
 impl<T> Drop for TArray<T> {
     fn drop(&mut self) {
+        unsafe {
+            std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(
+                self.data.cast_mut(),
+                self.num as usize,
+            ))
+        }
         GMALLOC.get().free(self.data as *mut c_void);
     }
 }
@@ -530,6 +603,25 @@ impl<T> Default for TArray<T> {
     }
 }
 impl<T> TArray<T> {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            data: GMALLOC.get().malloc(
+                capacity * std::mem::size_of::<T>(),
+                std::mem::align_of::<T>() as u32,
+            ) as *const T,
+            num: 0,
+            max: capacity as i32,
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.num as usize
+    }
+    pub fn capacity(&self) -> usize {
+        self.max as usize
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     pub fn as_slice(&self) -> &[T] {
         if self.num == 0 {
             &[]
@@ -537,28 +629,65 @@ impl<T> TArray<T> {
             unsafe { std::slice::from_raw_parts(self.data, self.num as usize) }
         }
     }
-    pub fn as_slice_mut(&mut self) -> &mut [T] {
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
         if self.num == 0 {
             &mut []
         } else {
             unsafe { std::slice::from_raw_parts_mut(self.data as *mut _, self.num as usize) }
         }
     }
-    pub fn from_slice(slice: &[T]) -> TArray<T> {
-        TArray {
-            data: slice.as_ptr(),
-            num: slice.len() as i32,
-            max: slice.len() as i32,
+    pub fn clear(&mut self) {
+        let elems: *mut [T] = self.as_mut_slice();
+
+        unsafe {
+            self.num = 0;
+            std::ptr::drop_in_place(elems);
         }
+    }
+    pub fn push(&mut self, new_value: T) {
+        if self.num >= self.max {
+            self.max = u32::next_power_of_two((self.max + 1) as u32) as i32;
+            let new = GMALLOC.get().realloc(
+                self.data as *mut c_void,
+                self.max as usize * std::mem::size_of::<T>(),
+                std::mem::align_of::<T>() as u32,
+            ) as *const T;
+            self.data = new;
+        }
+        unsafe {
+            std::ptr::write(self.data.add(self.num as usize).cast_mut(), new_value);
+        }
+        self.num += 1;
+    }
+}
+
+impl<T> From<&[T]> for TArray<T>
+where
+    T: Copy,
+{
+    fn from(value: &[T]) -> Self {
+        let mut new = Self::with_capacity(value.len());
+        // TODO this is probably unsound
+        new.num = value.len() as i32;
+        new.as_mut_slice().copy_from_slice(value);
+        new
     }
 }
 
 impl Display for FString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let slice = self.as_slice();
+        let last = slice.len()
+            - slice
+                .iter()
+                .cloned()
+                .rev()
+                .position(|c| c != 0)
+                .unwrap_or_default();
         write!(
             f,
             "{}",
-            widestring::U16Str::from_slice(self.as_slice())
+            widestring::U16Str::from_slice(&slice[..last])
                 .to_string()
                 .unwrap()
         )
@@ -604,10 +733,8 @@ pub mod kismet {
     }
 
     pub fn arg<T: Sized>(stack: &mut FFrame, output: &mut T) {
-        //dbg!(&stack);
         let output = output as *const _ as *mut _;
         unsafe {
-            //simple_log::info!("{:x?}", stack);
             if stack.code.is_null() {
                 let cur = stack.property_chain_for_compiled_in;
                 stack.property_chain_for_compiled_in = (*cur).Next;

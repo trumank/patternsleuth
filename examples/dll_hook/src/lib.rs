@@ -10,6 +10,8 @@ use std::{ffi::c_void, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use patternsleuth::resolvers::impl_try_collector;
+use patternsleuth::resolvers::unreal::blueprint_library::UFunctionBind;
+use patternsleuth::resolvers::unreal::UObjectBaseUtilityGetPathName;
 use patternsleuth::resolvers::unreal::{
     fname::FNameToString,
     game_loop::{FEngineLoopInit, UGameEngineTick},
@@ -182,6 +184,8 @@ impl_try_collector! {
         fframe_step: FFrameStep,
         fframe_step_explicit_property: FFrameStepExplicitProperty,
         fframe_kismet_execution_message: FFrameKismetExecutionMessage,
+        ufunction_bind: UFunctionBind,
+        uobject_base_utility_get_path_name: UObjectBaseUtilityGetPathName,
     }
 }
 

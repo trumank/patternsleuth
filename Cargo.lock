@@ -1150,6 +1150,7 @@ dependencies = [
  "itertools 0.12.0",
  "parking_lot 0.12.1",
  "patternsleuth",
+ "regex",
  "retour",
  "simple-log",
  "thread_local",

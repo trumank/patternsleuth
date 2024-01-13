@@ -20,6 +20,7 @@ indexmap = "2.1.0"
 itertools.workspace = true
 parking_lot = "0.12.1"
 patternsleuth = { path = "../../patternsleuth", features = ["process-internal"] }
+regex.workspace = true
 retour = { git = "https://github.com/Hpmason/retour-rs", features = ["static-detour"] }
 simple-log = "1.6.0"
 thread_local = "1.1.7"

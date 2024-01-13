@@ -54,7 +54,7 @@ unsafe fn testing() {
                 if class == "Function" {
                     // TODO safe casting
                     let s = &*((*obj as *const _) as *const ue::UStruct);
-                    if s.Script.num > 0 {
+                    if !s.Script.is_empty() {
                         info!("{:x?}", s.Script);
                         info!("{i:10} {} {}", class, name.to_string());
                     }
