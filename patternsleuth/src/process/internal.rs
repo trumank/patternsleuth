@@ -55,7 +55,7 @@ mod windows {
 
         let mut sections = vec![];
         for section in object.sections() {
-            let addr = section.address() as usize - image_base_address as usize;
+            let addr = section.address() as usize - image_base_address;
             let size = section.size() as usize;
             sections.push((section, &memory[addr..addr + size]));
         }
