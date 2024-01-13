@@ -279,7 +279,7 @@ impl eframe::App for MyApp {
                     let row_height = ui.text_style_height(&text_style);
 
                     //info!("before names lock");
-                    let objects = unsafe { guobject_array_unchecked() }.objects();
+                    let objects = unsafe { globals().guobject_array_unchecked() }.objects();
                     let mut names = self.objects.write().unwrap();
 
                     //info!("before filter");

@@ -12,15 +12,7 @@ use windows::Win32::System::Threading::{
     EnterCriticalSection, LeaveCriticalSection, CRITICAL_SECTION,
 };
 
-use crate::{globals, guobject_array_unchecked};
-
-pub static GMALLOC: GMalloc = GMalloc {
-    ptr: Mutex::new(None),
-};
-
-pub static FFRAME_STEP_EXPLICIT_PROPERTY: Mutex<Option<FnFFrame_StepExplicitProperty>> =
-    Mutex::new(None);
-pub static FFRAME_STEP: Mutex<Option<FnFFrame_Step>> = Mutex::new(None);
+use crate::globals;
 
 pub type FnFFrame_Step =
     unsafe extern "system" fn(stack: &mut kismet::FFrame, *mut UObject, result: *mut c_void);
@@ -30,44 +22,22 @@ pub type FnFFrame_StepExplicitProperty = unsafe extern "system" fn(
     property: *const FProperty,
 );
 
+pub type FnFNameToString = unsafe extern "system" fn(&FName, &mut FString);
 pub fn FName_ToString(name: &FName) -> String {
     unsafe {
-        type FnFNameToString = unsafe extern "system" fn(&FName, &mut FString);
-
-        let fnametostring: FnFNameToString =
-            std::mem::transmute(globals().resolution.fnametostring.0);
         let mut string = FString::new();
-        fnametostring(name, &mut string);
+        (globals().fname_to_string())(name, &mut string);
         string.to_string()
     }
 }
 
+pub type FnUObjectBaseUtilityGetPathName =
+    unsafe extern "system" fn(&UObjectBase, Option<&UObject>, &mut FString);
 pub fn UObjectBase_GetPathName(this: &UObjectBase, stop_outer: Option<&UObject>) -> String {
     unsafe {
-        type FnUObjectBaseUtilityGetPathName =
-            unsafe extern "system" fn(&UObjectBase, Option<&UObject>, &mut FString);
-
-        let get_path_name: FnUObjectBaseUtilityGetPathName =
-            std::mem::transmute(globals().resolution.uobject_base_utility_get_path_name.0);
         let mut string = FString::new();
-        get_path_name(this, stop_outer, &mut string);
+        (globals().uobject_base_utility_get_path_name())(this, stop_outer, &mut string);
         string.to_string()
-    }
-}
-
-#[derive(Debug)]
-#[repr(C)]
-pub struct GMalloc {
-    ptr: Mutex<Option<*const *const FMalloc>>,
-}
-unsafe impl Sync for GMalloc {}
-unsafe impl Send for GMalloc {}
-impl GMalloc {
-    pub fn set(&self, gmalloc: *const c_void) {
-        *self.ptr.lock().unwrap() = Some(gmalloc as *const *const FMalloc);
-    }
-    pub fn get(&self) -> &FMalloc {
-        unsafe { &**self.ptr.lock().unwrap().unwrap() }
     }
 }
 
@@ -313,7 +283,11 @@ impl FWeakObjectPtr {
         Self {
             ObjectIndex: index,
             // serial allocation performs only atomic operations
-            ObjectSerialNumber: unsafe { guobject_array_unchecked().allocate_serial_number(index) },
+            ObjectSerialNumber: unsafe {
+                globals()
+                    .guobject_array_unchecked()
+                    .allocate_serial_number(index)
+            },
         }
     }
     pub fn get(&self, object_array: &FUObjectArray) -> Option<&UObjectBase> {
@@ -590,7 +564,7 @@ impl<T> Drop for TArray<T> {
                 self.num as usize,
             ))
         }
-        GMALLOC.get().free(self.data as *mut c_void);
+        globals().gmalloc().free(self.data as *mut c_void);
     }
 }
 impl<T> Default for TArray<T> {
@@ -605,7 +579,7 @@ impl<T> Default for TArray<T> {
 impl<T> TArray<T> {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            data: GMALLOC.get().malloc(
+            data: globals().gmalloc().malloc(
                 capacity * std::mem::size_of::<T>(),
                 std::mem::align_of::<T>() as u32,
             ) as *const T,
@@ -647,7 +621,7 @@ impl<T> TArray<T> {
     pub fn push(&mut self, new_value: T) {
         if self.num >= self.max {
             self.max = u32::next_power_of_two((self.max + 1) as u32) as i32;
-            let new = GMALLOC.get().realloc(
+            let new = globals().gmalloc().realloc(
                 self.data as *mut c_void,
                 self.max as usize * std::mem::size_of::<T>(),
                 std::mem::align_of::<T>() as u32,
@@ -738,13 +712,9 @@ pub mod kismet {
             if stack.code.is_null() {
                 let cur = stack.property_chain_for_compiled_in;
                 stack.property_chain_for_compiled_in = (*cur).Next;
-                FFRAME_STEP_EXPLICIT_PROPERTY.lock().unwrap().unwrap()(
-                    stack,
-                    output,
-                    cur as *const FProperty,
-                );
+                (globals().fframe_step_explicit_property())(stack, output, cur as *const FProperty);
             } else {
-                FFRAME_STEP.lock().unwrap().unwrap()(stack, stack.object, output);
+                (globals().fframe_step())(stack, stack.object, output);
             }
         }
     }

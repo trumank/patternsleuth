@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Result;
 
-use crate::{assert_main_thread, globals, guobject_array, object_cache, ue};
+use crate::{assert_main_thread, globals, object_cache, ue};
 
 retour::static_detour! {
     static HookUGameEngineTick: unsafe extern "system" fn(*mut c_void, f32, u8);
@@ -56,7 +56,7 @@ static mut GUOBJECT_LOCK: Option<UObjectLock> = None;
 pub unsafe fn initialize() -> Result<()> {
     assert_main_thread!();
 
-    GUOBJECT_LOCK = Some(guobject_array());
+    GUOBJECT_LOCK = Some(globals().guobject_array());
 
     HookFEngineLoopInit.initialize(
         std::mem::transmute(globals().resolution.engine_loop_init.0),
@@ -78,7 +78,7 @@ pub unsafe fn initialize() -> Result<()> {
 
             GUOBJECT_LOCK.take();
             HookUGameEngineTick.call(game_engine, delta_seconds, idle_mode);
-            GUOBJECT_LOCK = Some(globals().guobject_array.lock());
+            GUOBJECT_LOCK = Some(globals().guobject_array());
         },
     )?;
     HookUGameEngineTick.enable()?;

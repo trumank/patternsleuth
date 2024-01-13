@@ -189,10 +189,40 @@ impl_try_collector! {
     }
 }
 
+static mut GLOBALS: Option<Globals> = None;
+
 struct Globals {
     resolution: DllHookResolution,
     guobject_array: parking_lot::FairMutex<&'static ue::FUObjectArray>,
     main_thread_id: std::thread::ThreadId,
+}
+
+impl Globals {
+    fn gmalloc(&self) -> &ue::FMalloc {
+        unsafe { &**(self.resolution.gmalloc.0 as *const *const ue::FMalloc) }
+    }
+    pub fn fframe_step(&self) -> ue::FnFFrame_Step {
+        unsafe { std::mem::transmute(self.resolution.fframe_step.0) }
+    }
+    pub fn fframe_step_explicit_property(&self) -> ue::FnFFrame_StepExplicitProperty {
+        unsafe { std::mem::transmute(self.resolution.fframe_step_explicit_property.0) }
+    }
+    pub fn fname_to_string(&self) -> ue::FnFNameToString {
+        unsafe { std::mem::transmute(self.resolution.fnametostring.0) }
+    }
+    pub fn uobject_base_utility_get_path_name(&self) -> ue::FnUObjectBaseUtilityGetPathName {
+        unsafe { std::mem::transmute(self.resolution.uobject_base_utility_get_path_name.0) }
+    }
+    pub fn guobject_array(&self) -> parking_lot::FairMutexGuard<'static, &ue::FUObjectArray> {
+        self.guobject_array.lock()
+    }
+    pub unsafe fn guobject_array_unchecked(&self) -> &ue::FUObjectArray {
+        *self.guobject_array.data_ptr()
+    }
+}
+
+pub fn globals() -> &'static Globals {
+    unsafe { GLOBALS.as_ref().unwrap() }
 }
 
 #[macro_export]
@@ -213,18 +243,6 @@ fn dump_backtrace() {
     }
 }
 
-static mut GLOBALS: Option<Globals> = None;
-
-pub fn globals() -> &'static Globals {
-    unsafe { GLOBALS.as_ref().unwrap() }
-}
-pub fn guobject_array() -> parking_lot::FairMutexGuard<'static, &'static ue::FUObjectArray> {
-    globals().guobject_array.lock()
-}
-pub unsafe fn guobject_array_unchecked() -> &'static ue::FUObjectArray {
-    *globals().guobject_array.data_ptr()
-}
-
 unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
     let exe = patternsleuth::process::internal::read_image()?;
 
@@ -242,13 +260,6 @@ unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
         resolution,
         main_thread_id: std::thread::current().id(),
     });
-
-    ue::GMALLOC.set(globals().resolution.gmalloc.0 as *const c_void);
-    *ue::FFRAME_STEP.lock().unwrap() =
-        Some(std::mem::transmute(globals().resolution.fframe_step.0));
-    *ue::FFRAME_STEP_EXPLICIT_PROPERTY.lock().unwrap() = Some(std::mem::transmute(
-        globals().resolution.fframe_step_explicit_property.0,
-    ));
 
     hooks::initialize()?;
 
