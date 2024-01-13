@@ -183,15 +183,13 @@ pub unsafe fn initialize() -> Result<()> {
         move |function| {
             HookUFunctionBind.call(function);
             if let Some(function) = function.as_mut() {
-                let path = ue::UObjectBase_GetPathName(
-                    &function
-                        .UStruct
-                        .UField
-                        .UObject
-                        .UObjectBaseUtility
-                        .UObjectBase,
-                    None,
-                );
+                let path = function
+                    .UStruct
+                    .UField
+                    .UObject
+                    .UObjectBaseUtility
+                    .UObjectBase
+                    .get_path_name(None);
                 if let Some(hook) = hooks.get(path.as_str()) {
                     simple_log::info!(
                         "UFunction::Bind({path}) func = {:?} flags = {:?}",

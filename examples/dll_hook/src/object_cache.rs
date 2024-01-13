@@ -16,7 +16,7 @@ fn objects() -> &'static Mutex<Objects> {
 // call from main thread
 pub fn object_created(object: &ue::UObjectBase) {
     let proxy = ObjectProxy {
-        name: ue::FName_ToString(&object.NamePrivate),
+        name: object.NamePrivate.to_string(),
     };
     objects()
         .lock()

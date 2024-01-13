@@ -23,20 +23,24 @@ pub type FnFFrame_StepExplicitProperty = unsafe extern "system" fn(
 );
 
 pub type FnFNameToString = unsafe extern "system" fn(&FName, &mut FString);
-pub fn FName_ToString(name: &FName) -> String {
-    unsafe {
+impl Display for FName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut string = FString::new();
-        (globals().fname_to_string())(name, &mut string);
-        string.to_string()
+        unsafe {
+            (globals().fname_to_string())(self, &mut string);
+        };
+        write!(f, "{string}")
     }
 }
 
 pub type FnUObjectBaseUtilityGetPathName =
     unsafe extern "system" fn(&UObjectBase, Option<&UObject>, &mut FString);
-pub fn UObjectBase_GetPathName(this: &UObjectBase, stop_outer: Option<&UObject>) -> String {
-    unsafe {
+impl UObjectBase {
+    pub fn get_path_name(&self, stop_outer: Option<&UObject>) -> String {
         let mut string = FString::new();
-        (globals().uobject_base_utility_get_path_name())(this, stop_outer, &mut string);
+        unsafe {
+            (globals().uobject_base_utility_get_path_name())(self, stop_outer, &mut string);
+        }
         string.to_string()
     }
 }

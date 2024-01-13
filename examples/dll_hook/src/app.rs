@@ -3,10 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 use simple_log::info;
 
-use crate::{
-    globals, gui,
-    ue::{self, FName_ToString},
-};
+use crate::{globals, gui, ue};
 
 pub fn run(_bin_dir: impl AsRef<Path>) -> Result<()> {
     std::thread::spawn(move || {
@@ -24,7 +21,7 @@ unsafe fn testing() {
             .iter()
             .filter(|obj| {
                 if let Some(obj) = obj {
-                    ue::FName_ToString(&obj.NamePrivate)
+                    obj.NamePrivate
                         .to_string()
                         .to_ascii_lowercase()
                         .contains("get")
@@ -35,18 +32,16 @@ unsafe fn testing() {
             .collect::<Vec<_>>();
         for (i, obj) in refs.iter().enumerate() {
             if let Some(obj) = obj {
-                let name = ue::FName_ToString(&obj.NamePrivate);
+                let name = obj.NamePrivate.to_string();
 
-                let class = FName_ToString(
-                    &(*obj.ClassPrivate)
-                        .UStruct
-                        .UField
-                        .UObject
-                        .UObjectBaseUtility
-                        .UObjectBase
-                        .NamePrivate,
-                )
-                .to_string();
+                let class = &(*obj.ClassPrivate)
+                    .UStruct
+                    .UField
+                    .UObject
+                    .UObjectBaseUtility
+                    .UObjectBase
+                    .NamePrivate
+                    .to_string();
 
                 if class == "Function" {
                     // TODO safe casting

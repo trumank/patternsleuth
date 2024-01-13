@@ -84,7 +84,7 @@ impl ObjectNameCache {
         self.names
             .entry(object.InternalIndex)
             .or_insert_with(|| ObjectCache {
-                name: ue::FName_ToString(&object.NamePrivate),
+                name: object.NamePrivate.to_string(),
             })
     }
 }
@@ -125,7 +125,7 @@ impl MyApp {
                 tx.send(Event::CreateUObject(
                     object.InternalIndex,
                     ObjectCache {
-                        name: ue::FName_ToString(&object.NamePrivate),
+                        name: object.NamePrivate.to_string(),
                     },
                 ))
                 .unwrap();
