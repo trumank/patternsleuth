@@ -299,6 +299,21 @@ impl_resolver_singleton!(ConsoleManagerSingleton, |ctx| async {
     Ok(ConsoleManagerSingleton(ensure_one(fns)?))
 });
 
+/// void UObjectBaseUtility::GetPathName(class UObjectBaseUtility const* this, class UObject const* StopOuter, class FString* ResultString)
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct UObjectBaseUtilityGetPathName(pub usize);
+impl_resolver_singleton!(UObjectBaseUtilityGetPathName, |ctx| async {
+    let patterns = [
+        "40 53 48 81 EC 50 02 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 48 8D 44 24",
+    ];
+    let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+    Ok(Self(ensure_one(res.into_iter().flatten())?))
+});
+
 /// useful for extracting strings from common patterns for analysis
 #[derive(Debug, PartialEq)]
 #[cfg_attr(
