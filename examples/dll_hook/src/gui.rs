@@ -84,7 +84,7 @@ impl ObjectNameCache {
         self.names
             .entry(object.internal_index)
             .or_insert_with(|| ObjectCache {
-                name: object.name_private.to_string()
+                name: object.name_private.to_string(),
             })
     }
 }
@@ -125,7 +125,7 @@ impl MyApp {
                 tx.send(Event::CreateUObject(
                     object.internal_index,
                     ObjectCache {
-                        name: object.name_private.to_string()
+                        name: object.name_private.to_string(),
                     },
                 ))
                 .unwrap();
@@ -140,7 +140,8 @@ impl MyApp {
             Arc::new(move |object: &ue::UObjectBase| {
                 //info!("before delete_uobject");
                 cache.write().unwrap().remove(object.internal_index);
-                tx.send(Event::DeleteUObject(object.internal_index)).unwrap();
+                tx.send(Event::DeleteUObject(object.internal_index))
+                    .unwrap();
                 if let Some(ctx) = ctx.get() {
                     ctx.request_repaint();
                 }
@@ -287,14 +288,9 @@ impl eframe::App for MyApp {
                         .iter()
                         //.take(100)
                         .flatten()
-                        .filter_map(|obj| {
+                        .filter(|obj| {
                             let cached = &names.get_or_init(obj);
-                            //let name = ue::FName_ToString(&obj.NamePrivate);
-                            if cached.name.contains(&self.filter2) {
-                                Some(obj)
-                            } else {
-                                None
-                            }
+                            cached.name.contains(&self.filter2)
                         })
                         .collect::<Vec<_>>();
                     //let filtered = vec!["h"];

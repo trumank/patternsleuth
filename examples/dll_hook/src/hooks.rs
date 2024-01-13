@@ -163,20 +163,20 @@ pub unsafe fn initialize() -> Result<()> {
     )?;
     HookKismetExecutionMessage.enable()?;
 
-    type execFn = unsafe extern "system" fn(*mut ue::UObject, *mut ue::kismet::FFrame, *mut c_void);
+    type ExecFn = unsafe extern "system" fn(*mut ue::UObject, *mut ue::kismet::FFrame, *mut c_void);
 
     let hooks = [
         (
             "/Game/_AssemblyStorm/TestMod/BPL_NativeTest.BPL_NativeTest_C:Do Stuff",
-            do_stuff as execFn,
+            do_stuff as ExecFn,
         ),
         (
             "/Game/_AssemblyStorm/TestMod/BPL_NativeTest.BPL_NativeTest_C:Regex",
-            exec_regex as execFn,
+            exec_regex as ExecFn,
         ),
     ]
     .into_iter()
-    .collect::<std::collections::HashMap<_, execFn>>();
+    .collect::<std::collections::HashMap<_, ExecFn>>();
 
     HookUFunctionBind.initialize(
         std::mem::transmute(globals().resolution.ufunction_bind.0),

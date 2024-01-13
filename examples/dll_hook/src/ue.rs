@@ -11,9 +11,9 @@ use windows::Win32::System::Threading::{
 
 use crate::globals;
 
-pub type FnFFrame_Step =
+pub type FnFFrameStep =
     unsafe extern "system" fn(stack: &mut kismet::FFrame, *mut UObject, result: *mut c_void);
-pub type FnFFrame_StepExplicitProperty = unsafe extern "system" fn(
+pub type FnFFrameStepExplicitProperty = unsafe extern "system" fn(
     stack: &mut kismet::FFrame,
     result: *mut c_void,
     property: *const FProperty,

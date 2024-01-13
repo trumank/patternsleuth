@@ -6,7 +6,7 @@ mod hooks;
 mod object_cache;
 mod ue;
 
-use std::{ffi::c_void, path::PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
 use patternsleuth::resolvers::impl_try_collector;
@@ -141,20 +141,20 @@ impl_try_collector! {
 
 static mut GLOBALS: Option<Globals> = None;
 
-struct Globals {
+pub struct Globals {
     resolution: DllHookResolution,
     guobject_array: parking_lot::FairMutex<&'static ue::FUObjectArray>,
     main_thread_id: std::thread::ThreadId,
 }
 
 impl Globals {
-    fn gmalloc(&self) -> &ue::FMalloc {
+    pub fn gmalloc(&self) -> &ue::FMalloc {
         unsafe { &**(self.resolution.gmalloc.0 as *const *const ue::FMalloc) }
     }
-    pub fn fframe_step(&self) -> ue::FnFFrame_Step {
+    pub fn fframe_step(&self) -> ue::FnFFrameStep {
         unsafe { std::mem::transmute(self.resolution.fframe_step.0) }
     }
-    pub fn fframe_step_explicit_property(&self) -> ue::FnFFrame_StepExplicitProperty {
+    pub fn fframe_step_explicit_property(&self) -> ue::FnFFrameStepExplicitProperty {
         unsafe { std::mem::transmute(self.resolution.fframe_step_explicit_property.0) }
     }
     pub fn fname_to_string(&self) -> ue::FnFNameToString {
