@@ -42,8 +42,6 @@ impl_resolver_singleton!(FTextFString, |ctx| async {
     )
     .await;
 
-    println!("{:#x?}", res);
-
     let mem = &ctx.image().memory;
 
     Ok(FTextFString(try_ensure_one(res.iter().flat_map(
