@@ -1154,21 +1154,22 @@ pub mod disassemble {
                 }
                 println!(" {}", output);
             }
-            fn start(&mut self, address: usize) {
+            fn start(&mut self, address: usize) -> Result<(), MemoryAccessError> {
                 //println!("starting at {address:x}");
                 self.address = address;
-                self.block = self.exe.memory.range_from(self.address..).unwrap();
+                self.block = self.exe.memory.range_from(self.address..)?;
                 self.decoder =
                     Decoder::with_ip(64, self.block, self.address as u64, DecoderOptions::NONE);
+                Ok(())
             }
             /// Returns true if pop was successful
-            fn pop(&mut self) -> bool {
-                if let Some(next) = self.queue.pop() {
-                    self.start(next);
+            fn pop(&mut self) -> Result<bool, MemoryAccessError> {
+                Ok(if let Some(next) = self.queue.pop() {
+                    self.start(next)?;
                     true
                 } else {
                     false
-                }
+                })
             }
         }
 
@@ -1178,7 +1179,7 @@ pub mod disassemble {
             let addr = ctx.instruction.ip() as usize;
 
             if ctx.visited.contains(&addr) {
-                if ctx.pop() {
+                if ctx.pop()? {
                     continue;
                 } else {
                     break;
@@ -1188,7 +1189,7 @@ pub mod disassemble {
                 match visitor(&ctx.instruction)? {
                     Control::Continue => {}
                     Control::Break => {
-                        if ctx.pop() {
+                        if ctx.pop()? {
                             continue;
                         } else {
                             break;
@@ -1214,7 +1215,7 @@ pub mod disassemble {
                 FlowControl::Next => {}
                 FlowControl::UnconditionalBranch => {
                     // TODO figure out how to handle tail calls
-                    ctx.start(ctx.instruction.near_branch_target() as usize);
+                    ctx.start(ctx.instruction.near_branch_target() as usize)?;
                 }
                 //FlowControl::IndirectBranch => todo!(),
                 FlowControl::ConditionalBranch => {
@@ -1222,15 +1223,15 @@ pub mod disassemble {
                         .push(ctx.instruction.near_branch_target() as usize);
                 }
                 FlowControl::Return => {
-                    if !ctx.pop() {
+                    if !ctx.pop()? {
                         break;
                     }
                 }
                 //FlowControl::Call => todo!(),
                 //FlowControl::IndirectCall => todo!(),
                 //FlowControl::Interrupt => todo!(),
-                FlowControl::XbeginXabortXend => todo!(),
-                FlowControl::Exception => todo!(),
+                //FlowControl::XbeginXabortXend => todo!(),
+                //FlowControl::Exception => todo!(),
                 _ => {}
             }
         }
