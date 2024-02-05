@@ -10,12 +10,10 @@ pub mod scanner {
 }
 
 use std::{
-    borrow::Cow,
-    collections::HashMap,
-    ops::{Index, Range, RangeFrom, RangeTo},
-    path::Path,
+    borrow::Cow, cmp::Ordering, collections::HashMap, ops::{Index, Range, RangeFrom, RangeTo}, path::Path
 };
 
+use itertools::Itertools;
 use scanner::{Pattern, Xref};
 
 use anyhow::{bail, Context, Result};
@@ -279,6 +277,7 @@ impl<P: AsRef<Path>> ImageBuilderWithSymbols<P> {
     }
 }
 
+#[cfg(target_os="windows")]
 pub struct Image<'data> {
     pub base_address: usize,
     pub exception_directory_range: Range<usize>,
@@ -287,10 +286,8 @@ pub struct Image<'data> {
     pub symbols: Option<HashMap<usize, String>>,
     pub imports: HashMap<String, HashMap<String, usize>>,
 }
+#[cfg(target_os="windows")]
 impl<'data> Image<'data> {
-    pub fn builder() -> ImageBuilder {
-        Default::default()
-    }
     fn read<P: AsRef<Path>>(
         data: &'data [u8],
         exe_path: Option<P>,
@@ -524,7 +521,78 @@ impl<'data> Image<'data> {
         }
         Ok(all_children)
     }
+}
 
+
+#[cfg(target_os="linux")]
+pub struct Image<'data> {
+    pub base_address: usize,
+    pub memory: Memory<'data>,
+    pub symbols: Vec<Range<usize>>,
+}
+
+#[cfg(target_os="linux")]
+impl<'data> Image<'data> {
+    fn read<P: AsRef<Path>>(
+        data: &'data [u8],
+        exe_path: Option<P>,
+        load_functions: bool,
+    ) -> Result<Image<'data>> {
+        todo!("Not supported on Linux")
+    }
+    
+    fn read_inner<'memory, P: AsRef<Path>>(
+        exe_path: Option<P>,
+        load_functions: bool,
+        memory: Memory<'memory>,
+        object: object::File,
+    ) -> Result<Image<'memory>> {
+        todo!("Not supported on Linux")
+    }
+
+    pub fn get_function(
+        &self,
+        address: usize,
+    ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
+        self.get_root_function(address)
+    }
+
+    pub fn get_root_function(
+        &self,
+        address: usize,
+    ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
+        let idx = self.symbols.binary_search_by(|p| match p.start.cmp(&address) {
+            Ordering::Equal => Ordering::Greater,
+            ord => ord,
+        }).unwrap_err();
+        if idx >= self.symbols.len() {
+            Ok(None)
+        } else {
+            let range = &self.symbols[idx];
+            if range.contains(&address) {
+                Ok(Some(RuntimeFunction {
+                    range: range.clone(),
+                    unwind: 0
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    pub fn get_child_functions(
+        &self,
+        address: usize,
+    ) -> Result<Vec<RuntimeFunction>, MemoryAccessError> {
+        todo!("Not supported on Linux")
+    }
+}
+
+// OS-independent
+impl<'data> Image<'data> {
+    pub fn builder() -> ImageBuilder {
+        Default::default()
+    }
     pub fn resolve<T: Send + Sync>(
         &self,
         resolver: &'static resolvers::ResolverFactory<T>,

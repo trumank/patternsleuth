@@ -25,6 +25,7 @@ typetag = { version = "0.2.15", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { version = "0.2.152", optional = true }
+gimli = "0.28.1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, optional = true, features = [
