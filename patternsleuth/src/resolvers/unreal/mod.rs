@@ -70,6 +70,15 @@ mod util {
                     [
                         ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
                         ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
+                        //ctx.scan(Pattern::new(format!("10111??? 0x{s:X}")).unwrap()), // mov reg, imm32
+                        ctx.scan(Pattern::new(format!("b8 0x{s:X}")).unwrap()),
+                        ctx.scan(Pattern::new(format!("b9 0x{s:X}")).unwrap()),
+                        ctx.scan(Pattern::new(format!("ba 0x{s:X}")).unwrap()),
+                        ctx.scan(Pattern::new(format!("bb 0x{s:X}")).unwrap()),
+                        ctx.scan(Pattern::new(format!("bc 0x{s:X}")).unwrap()),
+                        ctx.scan(Pattern::new(format!("bd 0x{s:X}")).unwrap()),
+                        ctx.scan(Pattern::new(format!("be 0x{s:X}")).unwrap()),
+                        ctx.scan(Pattern::new(format!("bf 0x{s:X}")).unwrap()),
                     ]
                 }),
         )
@@ -77,6 +86,36 @@ mod util {
 
         refs.into_iter().flatten().collect()
     }
+    
+    pub(crate) async fn scan_xcalls(
+        ctx: &AsyncContext<'_>,
+        addresses: impl IntoIterator<Item = &usize> + Copy,
+    ) -> Vec<usize> {
+        let refs_indirect = join_all(
+            addresses
+                .into_iter()
+                .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
+        )
+        .await;
+
+        let refs = join_all(
+            addresses
+                .into_iter()
+                .copied()
+                .chain(refs_indirect.into_iter().flatten())
+                .flat_map(|s| {
+                    [
+                        //ctx.scan(Pattern::new(format!("10111??? 0x{s:X}")).unwrap()), // mov reg, imm32
+                        ctx.scan(Pattern::new(format!("e8 X0x{s:X}")).unwrap()),
+                        ctx.scan(Pattern::new(format!("e9 X0x{s:X}")).unwrap()),
+                    ]
+                }),
+        )
+        .await;
+
+        refs.into_iter().flatten().collect()
+    }
+    
     pub(crate) fn root_functions<'a, I>(ctx: &AsyncContext<'_>, addresses: I) -> Result<Vec<usize>>
     where
         I: IntoIterator<Item = &'a usize> + Copy,
