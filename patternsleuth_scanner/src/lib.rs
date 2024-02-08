@@ -120,6 +120,16 @@ impl Pattern {
                                 mask.push(0);
                             }
                             i += 4;
+                        } else if w.starts_with("0x") {
+                            let mut addr = Self::parse_maybe_hex(w).with_context(|| {
+                                format!("failed to parse 4-bytes hex {w}")
+                            })?;
+                            for _ in 0..4 {
+                                sig.push((addr & 0xff) as u8);
+                                addr = addr >> 8;
+                                mask.push(0xff);
+                            }
+                            i += 4;
                         } else {
                             bail!("bad pattern word \"{}\"", w)
                         }
