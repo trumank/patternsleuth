@@ -30,6 +30,8 @@ impl_resolver_singleton!(GMalloc, |ctx| async {
     )?))
 });
 
+
+
 #[derive(Debug, PartialEq)]
 #[cfg_attr(
     feature = "serde-resolvers",
@@ -67,9 +69,10 @@ impl_resolver_singleton!(GMallocPatterns, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct GMallocString(pub usize);
+
+#[cfg(target_os="windows")]
 impl_resolver_singleton!(GMallocString, |ctx| async {
     let strings = ctx.scan(util::utf16_pattern("DeleteFile %s\0")).await;
-
     let refs = util::scan_xrefs(ctx, &strings).await;
 
     let fns = util::root_functions(ctx, &refs)?;
@@ -172,3 +175,93 @@ impl_resolver_singleton!(GMallocString, |ctx| async {
 
     Ok(Self(try_ensure_one(fns)?))
 });
+
+
+
+#[cfg(target_os="linux")]
+impl_resolver_singleton!(GMallocString, |ctx| async {
+    let strings = ctx.scan(util::utf8_pattern("/proc/meminfo\0")).await;
+    //eprintln!("Found /proc/meminfo @ {:?} ", strings);
+    let refs = util::scan_xrefs(ctx, &strings).await;
+    //eprintln!("Found {} refs", refs.len());
+
+    let fns = util::root_functions(ctx, &refs)?;
+    //eprintln!("Found related functions @ {:?}", fns);
+
+    let fns = util::scan_xcalls(ctx, &fns).await; 
+    // found an addree for FMemory::GCreateMalloc
+    //eprintln!("Found {} xcall fns @ {:?}", fns.len(), fns);
+
+    // Cross exam use another string pattern
+    let strings2 = ctx.scan(util::utf8_pattern("Refusing to run with the root privileges.\n\0")).await;
+    // eprintln!("Found Refusing to run with the root privileges @ {:?} ", strings2);
+    let refs2 = util::scan_xrefs(ctx, &strings2).await;
+    // eprintln!("Found {} refs2 @ {:?}", refs2.len(), refs2);
+    let fns2 = util::root_functions(ctx, &refs2)?;
+    // eprintln!("Found related functions @ {:?}", fns2);
+    let fns2 = util::scan_xcalls(ctx, &fns2).await;
+    // eprintln!("Found {} xcall fns2 @ {:?}", fns2.len(), fns2);
+    let fns2 = fns2.iter().map(|&x| x .. (x + 24)).collect_vec(); 
+    // another possible address for FMemory::GCreateMalloc
+
+    let fns = fns.into_iter().filter(|x| {
+        fns2.iter().any(|y| y.contains(x))
+    } ).map(|f| -> Result<Option<usize>> {
+        let mut possible_gmalloc = vec![];
+        // eprintln!("disassemble @ {}", f);
+        disassemble(ctx.image(), f, |inst| {
+            let cur = inst.ip() as usize;
+            if !(f..f + 20).contains(&cur)
+            {
+                return Ok(Control::Break);
+            }
+            
+            // find mov rdi
+            if inst.code() == Code::Mov_r64_rm64 
+                && inst.memory_base() == Register::RIP
+                && inst.op0_kind() == OpKind::Register
+                && inst.op1_kind() == OpKind::Memory
+            {
+                // eprintln!("Found one possible gmlaaoc @ {:#08X}", inst.ip_rel_memory_address() as usize);
+                possible_gmalloc.push(inst.ip_rel_memory_address() as usize);
+            }
+            Ok(Control::Continue)
+        })?;
+        if possible_gmalloc.len() == 2 {
+            if possible_gmalloc[0] == possible_gmalloc[1] {
+                return Ok(Some(possible_gmalloc[0]));
+            }
+        }
+        Ok(None)
+    }).flatten_ok();
+
+    Ok(Self(try_ensure_one(fns)?))
+});
+
+
+// pattern Linux
+// string -> "MemAvailable:" -> func FUnixPlatformMemory::GetStats() -> FMemory::GCreateMalloc 
+/*  
+        06b602dc e8  5f  e7       CALL       FUN_06cdea40                                     undefined FUN_06cdea40() <- fn2
+                 17  00
+        06b602e1 48  89  05       MOV        qword ptr [GMalloc ],RAX
+                 10  05  e8 
+                 04
+        06b602e8 48  8d  7c       LEA        RDI => local_88 ,[RSP  + 0x10 ]
+                 24  10
+        06b602ed e8  9e  f7       CALL       FUnixPlatformMemory::GetStats                    undefined GetStats() <- fn1
+                 17  00
+        06b602f2 48  8b  3d       MOV        RDI ,qword ptr [GMalloc ]
+                 ff  04  e8 
+                 04
+        06b602f9 e8  a2  bf       CALL       FUN_06b1c2a0                                     undefined FUN_06b1c2a0()
+                 fb  ff
+        06b602fe 48  8b  3d       MOV        RDI ,qword ptr [GMalloc ]
+                 f3  04  e8 
+                 04
+        06b60305 48  8b  07       MOV        RAX ,qword ptr [RDI ]
+        06b60308 ff  90  88       CALL       qword ptr [RAX  + 0x88 ]
+                 00  00  00
+        06b6030e 84  c0           TEST       AL ,AL
+
+*/
