@@ -3,7 +3,7 @@ pub use linux::*;
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::{mem, ops::Range, ptr::{null, null_mut}};
+    use std::{collections::HashMap, default, mem, ops::Range, ptr::{null, null_mut}};
 
     use anyhow::{Context, Error, Result};
     use gimli::{BaseAddresses, CieOrFde, EhFrame, EhFrameHdr, NativeEndian, Pointer, UnwindSection};
@@ -127,7 +127,7 @@ mod linux {
             };
             
             // find GNU_EH_FRAME for debug info
-            let ehframe = phdr_slice.iter().find(|p| p.p_type == PT_GNU_EH_FRAME).map(|p| -> Result<Vec<Range<usize>>, Error>{
+            let mut ehframe = phdr_slice.iter().find(|p| p.p_type == PT_GNU_EH_FRAME).map(|p| -> Result<Vec<Range<usize>>, Error>{
                 let ehframe_hdr_start = base_addr + p.p_vaddr as usize;
                 let bases = BaseAddresses::default()
                     .set_eh_frame_hdr(ehframe_hdr_start as _)
@@ -164,11 +164,15 @@ mod linux {
                 }
                 Ok(result)
             }).context("Cannot find eh_frame")??;
-
+            ehframe.sort_by(|a,b| {
+                a.start.cmp(&b.start)
+            });
             Ok(Image {
                 base_address: map_start,
                 memory,
-                symbols: ehframe,
+                functions: Some(ehframe),
+                symbols: None,
+                exception_children_cache: HashMap::default(),
             })
         }
     }
