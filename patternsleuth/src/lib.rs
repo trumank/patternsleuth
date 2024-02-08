@@ -13,7 +13,9 @@ use std::{
     borrow::Cow, cmp::Ordering, collections::HashMap, ops::{Index, Range, RangeFrom, RangeTo}, path::Path
 };
 
+use gimli::{CieOrFde, UnwindSection};
 use itertools::Itertools;
+use libc::printf;
 use scanner::{Pattern, Xref};
 
 use anyhow::{bail, Context, Result};
@@ -288,15 +290,6 @@ pub struct Image<'data> {
 }
 #[cfg(target_os="windows")]
 impl<'data> Image<'data> {
-    fn read<P: AsRef<Path>>(
-        data: &'data [u8],
-        exe_path: Option<P>,
-        load_functions: bool,
-    ) -> Result<Image<'data>> {
-        let object = object::File::parse(data)?;
-        let memory = Memory::new(&object)?;
-        Self::read_inner(exe_path, load_functions, memory, object)
-    }
     fn read_inner<'memory, P: AsRef<Path>>(
         exe_path: Option<P>,
         load_functions: bool,
@@ -528,26 +521,62 @@ impl<'data> Image<'data> {
 pub struct Image<'data> {
     pub base_address: usize,
     pub memory: Memory<'data>,
-    pub symbols: Vec<Range<usize>>,
+    pub functions: Option<Vec<Range<usize>>>,
+    pub symbols: Option<HashMap<usize, String>>,
+    pub exception_children_cache: HashMap<usize, Vec<RuntimeFunction>>,
 }
 
 #[cfg(target_os="linux")]
+use gimli::{BaseAddresses, EhFrame, NativeEndian};
+#[cfg(target_os="linux")]
 impl<'data> Image<'data> {
-    fn read<P: AsRef<Path>>(
-        data: &'data [u8],
-        exe_path: Option<P>,
-        load_functions: bool,
-    ) -> Result<Image<'data>> {
-        todo!("Not supported on Linux")
-    }
-    
     fn read_inner<'memory, P: AsRef<Path>>(
         exe_path: Option<P>,
         load_functions: bool,
         memory: Memory<'memory>,
         object: object::File,
     ) -> Result<Image<'memory>> {
-        todo!("Not supported on Linux")
+        print!("Readinner called\n");
+        let base_address = object.relative_address_base() as usize;
+        let eh_frame = object.section_by_name(".eh_frame").unwrap();
+        let eh_frame_hdr = object.section_by_name(".eh_frame_hdr").unwrap();
+        let text = object.section_by_name(".text").unwrap();
+        let bases = BaseAddresses::default()
+                    .set_eh_frame_hdr(eh_frame_hdr.address() as _)
+                    .set_eh_frame(eh_frame.address())
+                    .set_text(text.address() as _);
+        let eh_frameparsed = EhFrame::new(
+            eh_frame.data().unwrap(), 
+            NativeEndian
+        );
+        let mut entries = eh_frameparsed.entries(&bases);
+
+        let mut result = Vec::<Range<usize>>::new();
+        let mut syms = HashMap::default();
+        
+        while let Some(entry) = entries.next().context("Iter over entry failed")? {
+            match entry {
+                CieOrFde::Fde(partial) => {
+                    let fde = partial
+                        .parse(&mut EhFrame::cie_from_offset)
+                        .context("Failed parse fde item")?;
+                    // right now it's real address
+                    let start = fde.initial_address() as usize;
+                    let len = fde.len() as usize;
+                    result.push(start .. (start + len));
+                    syms.insert(start, format!("sub_{}", start));
+                }
+                CieOrFde::Cie(_) => {},
+            }
+        }
+        result.sort_by(|a,b| a.start.cmp(&b.start));
+        Ok(Image {
+            base_address: base_address,
+            memory: memory,
+            functions: Some(result),
+            symbols: Some(syms),
+            exception_children_cache: HashMap::default(),
+        })
     }
 
     pub fn get_function(
@@ -561,14 +590,18 @@ impl<'data> Image<'data> {
         &self,
         address: usize,
     ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
-        let idx = self.symbols.binary_search_by(|p| match p.start.cmp(&address) {
+        let x = self.functions.as_ref().unwrap();
+        eprintln!("Finding {:#08x} within {} functions", address, x.len());
+        /*
+        let idx = x.binary_search_by(|p| match p.start.cmp(&address) {
             Ordering::Equal => Ordering::Greater,
             ord => ord,
-        }).unwrap_err();
-        if idx >= self.symbols.len() {
+        }).unwrap_or(x.len()); 
+
+        if idx >= x.len() {
             Ok(None)
         } else {
-            let range = &self.symbols[idx];
+            let range = &x[idx];
             if range.contains(&address) {
                 Ok(Some(RuntimeFunction {
                     range: range.clone(),
@@ -578,19 +611,47 @@ impl<'data> Image<'data> {
                 Ok(None)
             }
         }
+        */
+        x.iter().find(|p| p.contains(&address)).map(|a| 
+            Ok(Some(
+                RuntimeFunction {
+                    range: a.clone(),
+                    unwind: 0
+                }
+            ))
+        ).unwrap_or(Ok(None))
     }
 
     pub fn get_child_functions(
         &self,
         address: usize,
     ) -> Result<Vec<RuntimeFunction>, MemoryAccessError> {
-        todo!("Not supported on Linux")
+        match self.get_function(address) {
+            Ok(Some(f)) => Ok(vec![f]),
+            Ok(None) => Ok(vec![]),
+            Err(e) => Err(e)
+        }
     }
 }
 
 // OS-independent
 impl<'data> Image<'data> {
+    fn read<P: AsRef<Path>>(
+        data: &'data [u8],
+        exe_path: Option<P>,
+        load_functions: bool,
+    ) -> Result<Image<'data>> {
+        print!("Image::read called\n");
+        let object = object::File::parse(data)?;
+        let memory = Memory::new(&object)?;
+        /*
+        for mem in memory.sections() {
+            eprintln!("Section {} @ {:#08x}", mem.name(), mem.address());
+        }*/
+        Self::read_inner(exe_path, load_functions, memory, object)
+    }
     pub fn builder() -> ImageBuilder {
+        print!("Builder called!\n");
         Default::default()
     }
     pub fn resolve<T: Send + Sync>(
@@ -706,7 +767,7 @@ impl<'data> Image<'data> {
             }
             scan_queue = new_queue;
         }
-
+        
         Ok(ScanResult { results })
     }
 }
