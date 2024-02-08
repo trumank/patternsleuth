@@ -9,7 +9,7 @@ use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{bail_out, impl_resolver, try_ensure_one},
+    resolvers::{bail_out, ensure_one, impl_resolver, try_ensure_one, unreal::util},
     Addressable, Matchable, MemoryAccessorTrait, MemoryTrait,
 };
 
@@ -32,6 +32,7 @@ impl Debug for EngineVersion {
         write!(f, "EngineVersion({}.{})", self.major, self.minor)
     }
 }
+
 impl_resolver!(EngineVersion, |ctx| async {
     let patterns = [
         "C7 03 | 04 00 ?? 00 66 89 4B 04 48 3B F8 74 ?? 48",
@@ -50,6 +51,8 @@ impl_resolver!(EngineVersion, |ctx| async {
         "41 C7 06 | 05 00 ?? ?? 48 8B 5C 24 ?? 49 8D 76 ?? 33 ED 41 89 46",
         "C7 06 | 05 00 ?? ?? 48 8B 5C 24 20 4C 8D 76 10 33 ED",
         "11 76 30 c7 46 20 | 04 00 ?? 00",
+        // maybe better go from BuildSettings::GetBranchName -> FGlobalEngineVersions::FGlobalEngineVersions
+        "0f 57 c0 0f 11 43 10 c7 03 | 05 ?? ?? ?? 66 c7 43 04 ?? ??" // <- last one is patch
     ];
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
@@ -83,6 +86,45 @@ pub struct EngineVersionStrings {
     pub build_date: String,
     pub build_version: String,
 }
+// "++UE5+Release-{}.{}"
+#[cfg(target_os="linux")]
+impl_resolver!(EngineVersionStrings, |ctx| async {
+    let pattern_name = util::utf16_pattern("++UE5+Release-");
+    let name_scan = ctx.scan(pattern_name).await;
+
+    let mut name_scan:Vec<_> = name_scan.iter().map(|&addr| ctx.image().memory.read_wstring(addr)).flatten().collect();
+    
+    if name_scan.len() != 2 {
+        bail_out!("not found");
+    }
+
+    name_scan.sort_by(|x,y| x.cmp(&y));
+    let (branch_name, build_version) = (name_scan[0].clone(), name_scan[1].clone());
+
+    let build_date = join_all([
+        "Jan ", "Feb ", "Mar ", "Apr ", "May ", "Jun ", "Jul ", "Aug ", "Sep ", "Oct ", "Nov ", "Dec ",
+    ].map(|p| ctx.scan(util::utf16_pattern(p)))).await.into_iter().flatten()
+     .map(|addr| ctx.image().memory.read_wstring(addr)).flatten().filter(|p|  {
+        let sp = p.split_whitespace().collect_vec();
+        if sp.len() == 3 {
+            let (dd, yyyy) = (sp[1].parse::<u32>().unwrap_or(0), sp[2].parse::<u32>().unwrap_or(0));
+            if dd <= 0 || dd >= 32 || yyyy >= 2100 || yyyy <= 2000 {
+                false
+            } else {
+                true
+            }
+        } else {
+            false
+        }
+    });
+
+    let build_date = ensure_one(build_date)?;
+
+    Ok(Self {branch_name:branch_name, build_date: build_date, build_version: build_version })
+
+});
+
+#[cfg(target_os="windows")]
 impl_resolver!(EngineVersionStrings, |ctx| async {
     let patterns = [
         "48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC 48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC 48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC",
