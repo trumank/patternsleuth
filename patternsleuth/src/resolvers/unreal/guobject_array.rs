@@ -138,5 +138,11 @@ impl_resolver_singleton!(UObjectBaseShutdown, |ctx| async {
         .await;
     let refs = util::scan_xrefs(ctx, &strings).await;
     let fns = util::root_functions(ctx, &refs)?;
+    #[cfg(target_os="linux")]
+    let fns = {
+        // on linux both functions are not inlined, we need to find the caller
+        let callsites = util::scan_xcalls(ctx, &fns).await;
+        util::root_functions(ctx, &callsites)?
+    };
     Ok(UObjectBaseShutdown(ensure_one(fns)?))
 });

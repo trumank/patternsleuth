@@ -179,6 +179,7 @@ impl_resolver!(BlueprintLibraryInit, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct UFunctionBind(pub usize);
+#[cfg(target_os="windows")]
 impl_resolver_singleton!(UFunctionBind, |ctx| async {
     let strings = ctx
         .scan(util::utf16_pattern(
@@ -187,5 +188,14 @@ impl_resolver_singleton!(UFunctionBind, |ctx| async {
         .await;
     let refs = util::scan_xrefs(ctx, &strings).await;
     let fns = util::root_functions(ctx, &refs)?;
+    Ok(Self(ensure_one(fns)?))
+});
+
+
+#[cfg(target_os="linux")]
+impl_resolver_singleton!(UFunctionBind, |ctx| async {
+    // maybe find symbol of vtable?
+    let pattern = Pattern::new("41 56 53 50 49 89 fe 48 89 fb 66 0f 1f 44 00 00 e8 ?? ?? ?? ?? 48 8b 4b 10 48 63 50 38 3b 51 38 7e ?? 31 c0 48 8b 5b 20 48 85 db 75 ?? eb ?? 90 48 83 c0 30").unwrap();
+    let fns = ctx.scan(pattern).await;
     Ok(Self(ensure_one(fns)?))
 });

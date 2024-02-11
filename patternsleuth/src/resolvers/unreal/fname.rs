@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{collections::HashSet, fmt::Debug};
 
 use futures::{future::join_all, join};
 use iced_x86::{Code, Decoder, DecoderOptions};
@@ -6,11 +6,9 @@ use iced_x86::{Code, Decoder, DecoderOptions};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{
-        ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util, Context,
-        Result,
-    },
-    MemoryAccessorTrait, MemoryTrait,
+    disassemble::{disassemble, Control}, resolvers::{
+        ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util, Context, ResolveError, Result
+    }, MemoryAccessorTrait, MemoryTrait
 };
 
 /// public: __cdecl FName::FName(wchar_t const *, enum EFindName)
@@ -20,6 +18,84 @@ use crate::{
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FNameCtorWchar(pub usize);
+// for linux we find a function caontains following strings
+/*
+FEngineLoop::LoadPreInitModules:
+ FModuleManager::LoadModule called with following FName 
+    Engine
+    Renderer
+    AnimGraphRuntime
+    Landscape
+    RenderCore
+*/
+#[cfg(target_os="linux")]
+impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
+    let strings = [
+        "\0Engine\0",
+        "\0Renderer\0",
+        "\0AnimGraphRuntime\0",
+        "\0Landscape\0",
+        "\0RenderCore\0",
+    ];
+    
+    // find the strings
+    let strings = join_all(strings.iter().map(|s| ctx.scan(util::utf16_pattern(s)))).await;
+    let strings:Vec<Vec<_>> = strings.into_iter().map(|pats| pats.into_iter().map(|addr| addr + 2).collect() ).collect();
+    //eprintln!("Find each pattern @ {:?}", strings);
+    // find refs to them
+    let refs:Vec<_> = join_all(strings.iter().map(|addr| util::scan_xrefs(ctx, addr))).await;
+    //eprintln!("Find pattern refs @ {:?}", refs);
+    let fns:Vec<_> = refs.into_iter().map(|addr| util::root_functions(ctx, &addr).ok()).flatten().collect();
+    //eprintln!("Find pattern fns @ {:?}", fns);
+    //strings.into_iter().map(|addr| async move { util::root_functions(ctx, &util::scan_xrefs(ctx, &addr).await ) } ).collect();
+    
+    // find fns of these refs
+    let fns = fns.into_iter().reduce(|x, y| {
+        let x: HashSet<usize> = HashSet::from_iter(x.into_iter());
+        let y: HashSet<usize> = HashSet::from_iter(y.into_iter());
+        x.intersection(&y).cloned().collect::<Vec<_>>()
+    }).unwrap();
+
+    // output fns
+    //eprintln!("Found all fns at {:?}", fns);
+    let fnLoadPreInitModules = ensure_one(fns)?;
+    let pattern = Pattern::new("ba 01 00 00 00 e8 | ?? ?? ?? ??").unwrap();
+    // found fLoadPreInitModules, try find target
+    /* 
+        03f30310 53              PUSH       RBX
+        03f30311 48  83  ec       SUB        RSP ,0x30
+                 30
+        03f30315 e8  c6  25       CALL       FUN_06c928e0                                     undefined FUN_06c928e0()
+                 d6  02
+        03f3031a 48  89  c3       MOV        RBX ,RAX
+        03f3031d 48  8d  7c       LEA        RDI => local_10 ,[RSP  + 0x28 ]
+                 24  28
+        03f30322 be  38  8a       MOV        ESI ,u_Engine_00868a38                           = u"Engine"
+                 86  00
+        03f30327 ba  01  00       MOV        EDX ,0x1 <--- pat
+                 00  00
+        03f3032c e8  af  71       CALL       FName::FName     <- call                                void FName(undefined8 * this, us
+                 dc  02
+    */
+    let mem = ctx.image().memory.get_section_containing(fnLoadPreInitModules).unwrap();
+    let index = fnLoadPreInitModules - mem.address();
+    let mut result = None;
+    for i in 0..48 {
+        if pattern.is_match(mem.data(), mem.address(), index + i) {
+            result = ctx.image().memory.rip4(fnLoadPreInitModules + i + pattern.custom_offset).ok();
+        }
+    }
+    // how to scan code from X?
+    let result = result.ok_or(ResolveError::Msg("cannot find address".into()))?;
+    /*
+    Post check
+    if util::root_functions(ctx, &[result]).unwrap()[0] == result {
+        eprintln!("ok!!");
+    }
+    */
+    Ok(Self(result))
+});
+#[cfg(target_os="windows")]
 impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
     let strings = async {
         let strings = ["TGPUSkinVertexFactoryUnlimited\0", "MovementComponent0\0"];
@@ -100,6 +176,44 @@ impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FNameToString(pub usize);
+
+// function contains string u16"User."
+impl_resolver_singleton!(FNameToString, |ctx| async {
+    let strings = ctx.scan(util::utf16_pattern("User.\0")).await;
+    //eprintln!("Found User. in {strings:?} {}", ctx.image().memory.read_wstring(strings[0]).unwrap());
+    let refs = util::scan_xrefs(ctx, &strings).await;
+    //eprintln!("Found refs in {refs:?}");
+    let fns = util::root_functions(ctx, &refs)?;
+    //eprintln!("Found refs in {fns:?}");
+
+    let addr = ensure_one(fns.iter().zip(refs.iter()).map(|(&addr, &xrefa)| -> Option<usize> {
+        let mut callsite = None;
+        disassemble(ctx.image(), addr, |inst| {
+            let cur = inst.ip() as usize;
+            if !(addr..addr + 32).contains(&cur) {
+                return Ok(Control::Break);
+            }
+            if  !inst.is_call_near_indirect() 
+                && inst.is_call_near() {
+                    // eprintln!("next ip = {}, xref = {}", inst.next_ip(), xrefa);
+                    if inst.next_ip() as usize == xrefa {
+                        // next instruction is fetch the address of the string
+                        // eprint!("Found!\n");
+                        callsite = Some(inst.ip_rel_memory_address() as usize);
+                        return Ok(Control::Break);
+                    }
+            }
+            Ok(Control::Continue)
+        }).ok()?;
+        //eprintln!("{callsite:?}");
+        return callsite;
+    }).flatten())?;
+    Ok(Self(addr))
+});
+
+#[cfg(target_os="linux")]
+
+#[cfg(target_os="windows")]
 impl_resolver_singleton!(FNameToString, |ctx| async {
     let patterns = async {
         let patterns = ["56 57 48 83 EC 28 48 89 D6 48 89 CF 83 79 ?? 00 74"];
