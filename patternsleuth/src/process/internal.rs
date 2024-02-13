@@ -39,14 +39,15 @@ mod linux {
     unsafe extern "C" fn dl_iterate_phdr_callback(
         info: *mut libc::dl_phdr_info,
         _size: usize,
-        _data: *mut std::ffi::c_void,
+        data: *mut std::ffi::c_void,
     ) -> i32{
         let name = unsafe { std::ffi::CStr::from_ptr((*info).dlpi_name) };
         let name = name.to_str().unwrap();
-        let image = _data as *mut *mut libc::dl_phdr_info;
+        let image = data as *mut libc::dl_phdr_info;
         if name.is_empty() {
             // find the main
-            *image = info;
+            eprintln!("Base addr from iter = {:08x}", (*info).dlpi_addr);
+            *image = *info;
         }
         0
     }
@@ -69,24 +70,32 @@ mod linux {
 
     pub fn read_image<'data>() -> Result<Image<'data>> {
         unsafe {
-            let mut info: *mut libc::dl_phdr_info = std::ptr::null_mut();
-            dl_iterate_phdr(Some(dl_iterate_phdr_callback), &mut info as *mut *mut libc::dl_phdr_info as *mut std::ffi::c_void);
-            
-            if info.is_null() {
-                return Err(Error::msg("could not find main module"))
-            }
+            let mut info = libc::dl_phdr_info {
+                dlpi_addr: 0,
+                dlpi_name: null(),
+                dlpi_phdr: null(),
+                dlpi_phnum: 0,
+                dlpi_adds: 0,
+                dlpi_subs: 0,
+                dlpi_tls_modid: 0,
+                dlpi_tls_data: null_mut(),
+            };
+            dl_iterate_phdr(Some(dl_iterate_phdr_callback), (&mut info) as *mut libc::dl_phdr_info as *mut std::ffi::c_void);
             
             // base addr is the offset to the real map from the vaddr in elf
-            let base_addr = (*info).dlpi_addr as usize;
+            let base_addr = (info).dlpi_addr as usize;
+            eprintln!("Base addr {} (should be zero)", base_addr);
             
 
-            let phdr_slice = std::slice::from_raw_parts_mut((*info).dlpi_phdr as *mut Elf64_Phdr , (*info).dlpi_phnum as usize);
+            let phdr_slice = std::slice::from_raw_parts_mut((info).dlpi_phdr as *mut Elf64_Phdr , (info).dlpi_phnum as usize);
             let map_end = phdr_slice.iter().filter(|p| p.p_type == PT_LOAD).map(|p|p.p_vaddr+p.p_memsz).max().unwrap_or_default() as usize;
             let map_start = phdr_slice.iter().filter(|p| p.p_type == PT_LOAD).map(|p|p.p_vaddr).min().unwrap_or_default() as usize;
             
+            eprintln!("Map Start -- Map End = {:08x} -- {:08x}", map_start, map_end);
             // find entrypoint
             let ehdr = (base_addr + map_start) as * const Elf64_Ehdr;
             let entrypoint_vaddr = (*ehdr).e_entry;
+            eprintln!("entrypoint_vaddr = {:08x}", entrypoint_vaddr);
             
             let memory = std::slice::from_raw_parts(
                     (base_addr + map_start) as *mut u8,
@@ -112,9 +121,10 @@ mod linux {
                 let size = p.p_memsz as usize;
                 let section_name =  if ! vrange.contains(&entrypoint_vaddr) { format!("FakeSection {}", idx + 1) } else {".text".to_owned()};
                 text_vaddr = p.p_vaddr as usize;
+                eprintln!("Section {} {:08x} -- {:08x} Size = {:08x}", section_name, p.p_vaddr, p.p_vaddr, p.p_memsz);
                 NamedMemorySection::new(
                     section_name,
-                    p.p_vaddr as usize + base_addr, // TODO: What address is this relative to? real address space? image 0? image map start? 
+                    p.p_vaddr as usize + base_addr,
                     calc_kind(p.p_flags),
                     &memory[addr..addr + size]
                 )
@@ -125,9 +135,10 @@ mod linux {
             let memory = Memory {
                 sections: sections
             };
-            
+            eprintln!("Finding GNU_EH_FRAME");
             // find GNU_EH_FRAME for debug info
             let mut ehframe = phdr_slice.iter().find(|p| p.p_type == PT_GNU_EH_FRAME).map(|p| -> Result<Vec<Range<usize>>, Error>{
+                eprintln!("Found GNU_EH_FRAME");
                 let ehframe_hdr_start = base_addr + p.p_vaddr as usize;
                 let bases = BaseAddresses::default()
                     .set_eh_frame_hdr(ehframe_hdr_start as _)
@@ -164,6 +175,7 @@ mod linux {
                 }
                 Ok(result)
             }).context("Cannot find eh_frame")??;
+            eprintln!("Total {} Functions found.", ehframe.len());
             ehframe.sort_by(|a,b| {
                 a.start.cmp(&b.start)
             });
