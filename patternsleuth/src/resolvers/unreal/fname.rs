@@ -170,14 +170,29 @@ impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
 /// `public: void __cdecl FName::ToString(class FString &) const`
 ///
 /// They take the same arguments and either can be used as long as the return value isn't used.
+/// 
+/// !! Be aware anyone try play with this code in Linux, they're different and you should stick with the
+/// second one.
+/// 
 #[derive(Debug, PartialEq)]
 #[cfg_attr(
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FNameToString(pub usize);
+impl_resolver_singleton!(FNameToString, |ctx| async {
+    let strings = ctx.scan(util::utf16_pattern("SkySphereMesh\0")).await;
+    let str_addr = ensure_one(strings)?;
+    let pattern = Pattern::new(format!("e8 | ?? ?? ?? ?? 49 8b 5f 10 48 8d 7c 24 30 be 0x{str_addr:08x}")).unwrap();
+    let refs = ctx.scan(pattern).await;
+    Ok(Self(try_ensure_one(refs.into_iter().map(|a| Ok(ctx.image().memory.rip4(a)?)  ))?))
+});
 
+#[cfg(target_os="linux")]
+/* Following code find `public: class FString __cdecl FName::ToString(void) const`
 // function contains string u16"User."
+// will fail on linux
+#[cfg(target_os="linux")]
 impl_resolver_singleton!(FNameToString, |ctx| async {
     let strings = ctx.scan(util::utf16_pattern("User.\0")).await;
     //eprintln!("Found User. in {strings:?} {}", ctx.image().memory.read_wstring(strings[0]).unwrap());
@@ -210,9 +225,7 @@ impl_resolver_singleton!(FNameToString, |ctx| async {
     }).flatten())?;
     Ok(Self(addr))
 });
-
-#[cfg(target_os="linux")]
-
+*/
 #[cfg(target_os="windows")]
 impl_resolver_singleton!(FNameToString, |ctx| async {
     let patterns = async {
