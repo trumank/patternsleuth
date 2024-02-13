@@ -18,6 +18,7 @@ use crate::{
 )]
 pub struct GMalloc(pub usize);
 impl_resolver_singleton!(GMalloc, |ctx| async {
+    eprintln!("GMalloc Scan Start!");
     let any = join!(
         ctx.resolve(GMallocPatterns::resolver()),
         ctx.resolve(GMallocString::resolver()),
@@ -180,27 +181,28 @@ impl_resolver_singleton!(GMallocString, |ctx| async {
 
 #[cfg(target_os="linux")]
 impl_resolver_singleton!(GMallocString, |ctx| async {
+    eprintln!("GMalloc String Scan");
     let strings = ctx.scan(util::utf8_pattern("/proc/meminfo\0")).await;
-    //eprintln!("Found /proc/meminfo @ {:?} ", strings);
+    eprintln!("Found /proc/meminfo @ {:?} ", strings);
     let refs = util::scan_xrefs(ctx, &strings).await;
-    //eprintln!("Found {} refs", refs.len());
+    eprintln!("Found {} refs", refs.len());
 
     let fns = util::root_functions(ctx, &refs)?;
-    //eprintln!("Found related functions @ {:?}", fns);
+    eprintln!("Found related functions @ {:?}", fns);
 
     let fns = util::scan_xcalls(ctx, &fns).await; 
     // found an addree for FMemory::GCreateMalloc
-    //eprintln!("Found {} xcall fns @ {:?}", fns.len(), fns);
+    eprintln!("Found {} xcall fns @ {:?}", fns.len(), fns);
 
     // Cross exam use another string pattern
     let strings2 = ctx.scan(util::utf8_pattern("Refusing to run with the root privileges.\n\0")).await;
-    // eprintln!("Found Refusing to run with the root privileges @ {:?} ", strings2);
+    eprintln!("Found Refusing to run with the root privileges @ {:?} ", strings2);
     let refs2 = util::scan_xrefs(ctx, &strings2).await;
-    // eprintln!("Found {} refs2 @ {:?}", refs2.len(), refs2);
+    eprintln!("Found {} refs2 @ {:?}", refs2.len(), refs2);
     let fns2 = util::root_functions(ctx, &refs2)?;
-    // eprintln!("Found related functions @ {:?}", fns2);
+    eprintln!("Found related functions @ {:?}", fns2);
     let fns2 = util::scan_xcalls(ctx, &fns2).await;
-    // eprintln!("Found {} xcall fns2 @ {:?}", fns2.len(), fns2);
+    eprintln!("Found {} xcall fns2 @ {:?}", fns2.len(), fns2);
     let fns2 = fns2.iter().map(|&x| x .. (x + 24)).collect_vec(); 
     // another possible address for FMemory::GCreateMalloc
 
@@ -222,7 +224,7 @@ impl_resolver_singleton!(GMallocString, |ctx| async {
                 && inst.op0_kind() == OpKind::Register
                 && inst.op1_kind() == OpKind::Memory
             {
-                // eprintln!("Found one possible gmlaaoc @ {:#08X}", inst.ip_rel_memory_address() as usize);
+                eprintln!("Found one possible gmlaaoc @ {:#08X}", inst.ip_rel_memory_address() as usize);
                 possible_gmalloc.push(inst.ip_rel_memory_address() as usize);
             }
             Ok(Control::Continue)

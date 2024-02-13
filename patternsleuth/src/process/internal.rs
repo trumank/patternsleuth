@@ -3,6 +3,7 @@ pub use linux::*;
 
 #[cfg(target_os = "linux")]
 mod linux {
+    use core::panic;
     use std::{collections::HashMap, default, mem, ops::Range, ptr::{null, null_mut}};
 
     use anyhow::{Context, Error, Result};
@@ -11,7 +12,7 @@ mod linux {
     use object::{elf::{DT_HASH, DT_STRTAB, DT_SYMTAB}, Object, ObjectSection, SectionKind};
 
     use crate::{Image, Memory, NamedMemorySection};
-    use libc::{c_void, dl_iterate_phdr, dladdr1, Dl_info, Elf64_Addr, Elf64_Ehdr, Elf64_Phdr, Elf64_Sxword, Elf64_Sym, Elf64_Xword, PF_R, PF_W, PF_X, PT_GNU_EH_FRAME, PT_LOAD, RTLD_DI_LINKMAP};
+    use libc::{c_void, dl_iterate_phdr, dladdr1, readlink, Dl_info, Elf64_Addr, Elf64_Ehdr, Elf64_Phdr, Elf64_Sxword, Elf64_Sym, Elf64_Xword, PF_R, PF_W, PF_X, PT_GNU_EH_FRAME, PT_LOAD, RTLD_DI_LINKMAP};
     
     #[repr(C)]
     #[derive(Debug)]
@@ -44,6 +45,8 @@ mod linux {
         let name = unsafe { std::ffi::CStr::from_ptr((*info).dlpi_name) };
         let name = name.to_str().unwrap();
         let image = data as *mut libc::dl_phdr_info;
+        eprintln!("Name: {}", name);
+        eprintln!("BaseAddr: {:08x}", (*info).dlpi_addr);
         if name.is_empty() {
             // find the main
             eprintln!("Base addr from iter = {:08x}", (*info).dlpi_addr);
@@ -86,8 +89,13 @@ mod linux {
             let base_addr = (info).dlpi_addr as usize;
             eprintln!("Base addr {} (should be zero)", base_addr);
             
-
+            eprintln!("ph num = {}", info.dlpi_phnum);
             let phdr_slice = std::slice::from_raw_parts_mut((info).dlpi_phdr as *mut Elf64_Phdr , (info).dlpi_phnum as usize);
+            // print all phdr
+            for p in phdr_slice.iter() {
+                eprintln!("Range: {:08x} -- {:08x} ", p.p_vaddr, p.p_vaddr + p.p_memsz);
+                eprintln!("P_TYPE: {} (load = 1)", p.p_type);
+            }
             let map_end = phdr_slice.iter().filter(|p| p.p_type == PT_LOAD).map(|p|p.p_vaddr+p.p_memsz).max().unwrap_or_default() as usize;
             let map_start = phdr_slice.iter().filter(|p| p.p_type == PT_LOAD).map(|p|p.p_vaddr).min().unwrap_or_default() as usize;
             
@@ -121,7 +129,7 @@ mod linux {
                 let size = p.p_memsz as usize;
                 let section_name =  if ! vrange.contains(&entrypoint_vaddr) { format!("FakeSection {}", idx + 1) } else {".text".to_owned()};
                 text_vaddr = p.p_vaddr as usize;
-                eprintln!("Section {} {:08x} -- {:08x} Size = {:08x}", section_name, p.p_vaddr, p.p_vaddr, p.p_memsz);
+                eprintln!("Section {} {:08x} -- {:08x} Size = {:08x}", section_name, p.p_vaddr, p.p_vaddr + p.p_memsz, p.p_memsz);
                 NamedMemorySection::new(
                     section_name,
                     p.p_vaddr as usize + base_addr,
@@ -129,6 +137,13 @@ mod linux {
                     &memory[addr..addr + size]
                 )
             }).collect_vec();
+
+            // collect map info from /proc/self/maps
+            //let mut map = std::fs::read_to_string("/proc/self/maps").context("Cannot read /proc/self/maps")?;
+            //eprintln!("Map: {}", map);
+
+            // print readlink(/proc/self/exe)
+           // panic!("Bye! {:?}",path);
 
             sections.iter().find(|s| s.kind == SectionKind::Text);
 
