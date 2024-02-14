@@ -591,7 +591,7 @@ impl<'data> Image<'data> {
         address: usize,
     ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
         let x = self.functions.as_ref().unwrap();
-        eprintln!("Finding {:#08x} within {} functions", address, x.len());
+        // eprintln!("Finding {:#08x} within {} functions", address, x.len());
         /*
         let idx = x.binary_search_by(|p| match p.start.cmp(&address) {
             Ordering::Equal => Ordering::Greater,

@@ -89,7 +89,7 @@ impl_resolver_singleton!(StaticConstructObjectInternalString, |ctx| async {
             }
             if  !inst.is_call_near_indirect() 
                 && inst.is_call_near() {    
-                eprintln!("Found call to @ {:08x}", inst.ip_rel_memory_address());
+                // eprintln!("Found call to @ {:08x}", inst.ip_rel_memory_address());
                 callsites.push(inst.ip_rel_memory_address() as usize);
             }
             Ok(Control::Continue)

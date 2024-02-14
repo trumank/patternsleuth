@@ -1035,7 +1035,6 @@ struct GameProcessEntry {
 }
 
 fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameFileEntry>> {
-    eprintln!("XXXXXXXXXXXXX");
     let games_filter = filter
         .as_ref()
         .iter()
@@ -1046,12 +1045,12 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameFileEntry>> {
                 .compile_matcher())
         })
         .collect::<Result<Vec<_>>>()?;
-    eprintln!("{}", std::env::current_dir().unwrap().to_str().unwrap());
+    //eprintln!("{}", std::env::current_dir().unwrap().to_str().unwrap());
     fs::read_dir("games")?
         .collect::<Result<Vec<_>, _>>()?
         .iter()
         .map(|entry| -> Result<Option<(String, PathBuf)>> {
-            eprintln!("FSOK!");
+            //eprintln!("FSOK!");
             let dir_name = entry.file_name();
             let name = dir_name.to_string_lossy().to_string();
             if !games_filter
@@ -1059,20 +1058,16 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameFileEntry>> {
                 .then_some(true)
                 .unwrap_or_else(|| games_filter.iter().any(|g| g.is_match(&name)))
             {
-                eprintln!("Get X{}!", name);
                 return Ok(None);
             }
 
-            eprintln!("Get A{}!", name);
             let Some(exe_path) = find_ext(entry.path(), "exe")
                 .transpose()
                 .or_else(|| find_ext(entry.path(), "elf").transpose())
                 .transpose()?
             else {
-                eprintln!("Get D{}!", name);
                 return Ok(None);
             };
-            eprintln!("Get B{}!", name);
             Ok(Some((name, exe_path)))
         })
         .filter_map(|r| r.transpose())
