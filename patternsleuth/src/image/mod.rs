@@ -7,6 +7,9 @@ use anyhow::Error;
 use pe::PEImage;
 use elf::ElfImage;
 
+/// Define a set of functions that dispatch to the appropriate image type as its inner type
+/// @define_imagetype accepts enum name and its variants inside a block, and defines the enum
+/// @define_matcharm accepts the enum name and its variants inside a block, self to avoid hygienic issues, the function name, and the function arguments
 macro_rules! image_type_dispatch {
     (
         @enum $enum_name_it:ident $enum_tt:tt
@@ -30,10 +33,10 @@ macro_rules! image_type_dispatch {
             )*
         }
     };
-    (@define_matcharm $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }, $self:ident, $name:ident, $args_tt:tt) => {
+    (@define_matcharm $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }, $self:ident, $fnname_it:ident, $args_tt:tt) => {
         match &$self.image_type {
             $(
-                $enum_name_it::$img_ident(inner) => inner.$name($self, $args_tt),
+                $enum_name_it::$img_ident(inner) => inner.$fnname_it($self, $args_tt),
             )*
         }
     };
