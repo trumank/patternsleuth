@@ -66,6 +66,7 @@ pub struct Image<'data> {
 // Type-independent
 impl<'data> Image<'data> {
     fn read<P: AsRef<Path>>(
+        base_addr: Option<usize>,
         data: &'data [u8],
         exe_path: Option<P>,
         load_functions: bool,
@@ -73,8 +74,8 @@ impl<'data> Image<'data> {
         let object = object::File::parse(data)?;
         let memory = Memory::new(&object)?;
         match object {
-            object::File::Elf64(_) => ElfImage::read_inner(exe_path, load_functions, memory, object),
-            object::File::Pe64(_) => PEImage::read_inner(exe_path, load_functions, memory, object),
+            object::File::Elf64(_) => ElfImage::read_inner(base_addr, exe_path, load_functions, memory, object),
+            object::File::Pe64(_) => PEImage::read_inner(base_addr, exe_path, load_functions, memory, object),
             _ => Err(Error::msg("Unsupported file format")),
         }
     }
@@ -222,7 +223,7 @@ impl ImageBuilder {
         }
     }
     pub fn build(self, data: &[u8]) -> Result<Image<'_>> {
-        Image::read::<&str>(data, None, self.functions)
+        Image::read::<&str>(None, data, None, self.functions)
     }
 }
 impl<P: AsRef<Path>> ImageBuilderWithSymbols<P> {
@@ -236,6 +237,6 @@ impl<P: AsRef<Path>> ImageBuilderWithSymbols<P> {
         self
     }
     pub fn build(self, data: &[u8]) -> Result<Image<'_>> {
-        Image::read(data, self.symbols, self.functions)
+        Image::read(None, data, self.symbols, self.functions)
     }
 }
