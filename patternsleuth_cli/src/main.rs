@@ -13,7 +13,7 @@ use indicatif::ProgressBar;
 use itertools::Itertools;
 use patricia_tree::StringPatriciaMap;
 use patternsleuth::resolvers::{resolve_self, resolvers, NamedResolver};
-use patternsleuth::Image;
+use patternsleuth::image::Image;
 
 use patternsleuth::scanner::Xref;
 use patternsleuth::{
