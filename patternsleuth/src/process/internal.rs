@@ -99,6 +99,71 @@ mod linux {
             let map_end = phdr_slice.iter().filter(|p| p.p_type == PT_LOAD).map(|p|p.p_vaddr+p.p_memsz).max().unwrap_or_default() as usize;
             let map_start = phdr_slice.iter().filter(|p| p.p_type == PT_LOAD).map(|p|p.p_vaddr).min().unwrap_or_default() as usize;
             
+            let data = std::slice::from_raw_parts(base_addr as *const u8, map_end - map_start);
+
+            let exe_path = std::fs::read_link("/proc/self/exe").ok();
+
+            Image::read(Some(base_addr), data, exe_path, false)
+        }
+    }
+}
+
+#[cfg(windows)]
+pub use windows::*;
+
+#[cfg(windows)]
+mod windows {
+    use anyhow::{Context, Result};
+    use object::{Object, ObjectSection};
+    use windows::Win32::System::{
+        LibraryLoader::GetModuleHandleA,
+        ProcessStatus::{GetModuleInformation, MODULEINFO},
+        Threading::GetCurrentProcess,
+    };
+
+    use crate::{Image, Memory};
+
+    pub fn read_image<'data>() -> Result<Image<'data>> {
+        let main_module =
+            unsafe { GetModuleHandleA(None) }.context("could not find main module")?;
+        let process = unsafe { GetCurrentProcess() };
+
+        let mut mod_info = MODULEINFO::default();
+        unsafe {
+            GetModuleInformation(
+                process,
+                main_module,
+                &mut mod_info as *mut _,
+                std::mem::size_of::<MODULEINFO>() as u32,
+            )?
+        };
+
+        let memory = unsafe {
+            std::slice::from_raw_parts(
+                mod_info.lpBaseOfDll as *mut u8,
+                mod_info.SizeOfImage as usize,
+            )
+        };
+
+        let object = object::File::parse(memory)?;
+
+        let image_base_address = object.relative_address_base() as usize;
+
+        let mut sections = vec![];
+        for section in object.sections() {
+            let addr = section.address() as usize - image_base_address;
+            let size = section.size() as usize;
+            sections.push((section, &memory[addr..addr + size]));
+        }
+
+        let memory = Memory::new_internal_data(sections)?;
+
+        Image::read_inner::<String>(None, false, memory, object)
+    }
+}
+
+/*
+
             //eprintln!("Map Start -- Map End = {:08x} -- {:08x}", map_start, map_end);
             // find entrypoint
             let ehdr = (base_addr + map_start) as * const Elf64_Ehdr;
@@ -201,60 +266,4 @@ mod linux {
                 symbols: None,
                 exception_children_cache: HashMap::default(),
             })
-        }
-    }
-}
-
-#[cfg(windows)]
-pub use windows::*;
-
-#[cfg(windows)]
-mod windows {
-    use anyhow::{Context, Result};
-    use object::{Object, ObjectSection};
-    use windows::Win32::System::{
-        LibraryLoader::GetModuleHandleA,
-        ProcessStatus::{GetModuleInformation, MODULEINFO},
-        Threading::GetCurrentProcess,
-    };
-
-    use crate::{Image, Memory};
-
-    pub fn read_image<'data>() -> Result<Image<'data>> {
-        let main_module =
-            unsafe { GetModuleHandleA(None) }.context("could not find main module")?;
-        let process = unsafe { GetCurrentProcess() };
-
-        let mut mod_info = MODULEINFO::default();
-        unsafe {
-            GetModuleInformation(
-                process,
-                main_module,
-                &mut mod_info as *mut _,
-                std::mem::size_of::<MODULEINFO>() as u32,
-            )?
-        };
-
-        let memory = unsafe {
-            std::slice::from_raw_parts(
-                mod_info.lpBaseOfDll as *mut u8,
-                mod_info.SizeOfImage as usize,
-            )
-        };
-
-        let object = object::File::parse(memory)?;
-
-        let image_base_address = object.relative_address_base() as usize;
-
-        let mut sections = vec![];
-        for section in object.sections() {
-            let addr = section.address() as usize - image_base_address;
-            let size = section.size() as usize;
-            sections.push((section, &memory[addr..addr + size]));
-        }
-
-        let memory = Memory::new_internal_data(sections)?;
-
-        Image::read_inner::<String>(None, false, memory, object)
-    }
-}
+*/
