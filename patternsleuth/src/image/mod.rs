@@ -9,38 +9,38 @@ use elf::ElfImage;
 
 macro_rules! image_type_dispatch {
     (
-        @enum $enum_tt:tt
+        @enum $enum_name_it:ident $enum_tt:tt
         @fns {
-            $(fn $name:ident($($arg:ident: $arg_ty:ty),*) -> $ret:ty);* $(;)?
+            $(fn $fnname_it:ident($($arg:ident: $arg_ty:ty),*) -> $ret:ty);* $(;)?
         }
     ) => {
-        image_type_dispatch!(@define_imagetype $enum_tt);
+        image_type_dispatch!(@define_imagetype $enum_name_it $enum_tt);
         impl<'data> Image<'data> {
             $(
-                pub fn $name(&self, $($arg: $arg_ty),*) -> $ret {
-                    image_type_dispatch!(@define_matcharm $enum_tt, self, $name, $($arg),*)
+                pub fn $fnname_it(&self, $($arg: $arg_ty),*) -> $ret {
+                    image_type_dispatch!(@define_matcharm $enum_name_it $enum_tt, self, $fnname_it, $($arg),*)
                 }
             )*
         }
     };
-    (@define_imagetype { $( $img_ident:ident( $img_ty:ty )),* $(,)? }) => {
-        pub enum ImageType {
+    (@define_imagetype $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }) => {
+        pub enum $enum_name_it {
             $(
                 $img_ident($img_ty),
             )*
         }
     };
-    (@define_matcharm { $( $img_ident:ident( $img_ty:ty )),* $(,)? }, $self:ident, $name:ident, $args_tt:tt) => {
+    (@define_matcharm $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }, $self:ident, $name:ident, $args_tt:tt) => {
         match &$self.image_type {
             $(
-                ImageType::$img_ident(inner) => inner.$name($self, $args_tt),
+                $enum_name_it::$img_ident(inner) => inner.$name($self, $args_tt),
             )*
         }
     };
 }
 
 image_type_dispatch! {
-    @enum {
+    @enum ImageType {
         PEImage(PEImage),
         ElfImage(ElfImage),
     }
