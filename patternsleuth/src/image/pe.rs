@@ -92,60 +92,68 @@ impl PEImage {
     }
 }
 
-impl PEImage {
-    fn populate_exception_cache(&mut self, image: &Image<'_>) -> Result<(), MemoryAccessError> {
-        for i in self.exception_directory_range.clone().step_by(12) {
-            let f = RuntimeFunction::read(&image.memory, image.base_address, i)?;
-            self.exception_children_cache.insert(f.range.start, vec![]);
+impl Image<'_> {
+    // this function is privately used by pe image
+    fn populate_exception_cache(&mut self) -> Result<(), MemoryAccessError> {
+        if let ImageType::PEImage(ref mut pe) = self.image_type {
+            for i in pe.exception_directory_range.clone().step_by(12) {
+                let f = RuntimeFunction::read(&self.memory, self.base_address, i)?;
+                pe.exception_children_cache.insert(f.range.start, vec![]);
 
-            let Ok(section) = image.memory.get_section_containing(f.unwind) else {
-                // TODO disabled cause spammy
-                //println!("invalid unwind info addr {:x}", f.unwind);
-                continue;
-            };
+                let Ok(section) = self.memory.get_section_containing(f.unwind) else {
+                    // TODO disabled cause spammy
+                    //println!("invalid unwind info addr {:x}", f.unwind);
+                    continue;
+                };
 
-            let mut unwind = f.unwind;
-            let has_chain_info = section.section.index(unwind)? >> 3 == 0x4;
-            if has_chain_info {
-                let unwind_code_count = section.section.index(unwind + 2)?;
+                let mut unwind = f.unwind;
+                let has_chain_info = section.section.index(unwind)? >> 3 == 0x4;
+                if has_chain_info {
+                    let unwind_code_count = section.section.index(unwind + 2)?;
 
-                unwind += 4 + 2 * unwind_code_count as usize;
-                if unwind % 4 != 0 {
-                    // align
-                    unwind += 2;
-                }
+                    unwind += 4 + 2 * unwind_code_count as usize;
+                    if unwind % 4 != 0 {
+                        // align
+                        unwind += 2;
+                    }
 
-                if section.address() + section.data().len() > unwind + 12 {
-                    let chained = RuntimeFunction::read(section, image.base_address, unwind)?;
+                    if section.address() + section.data().len() > unwind + 12 {
+                        let chained = RuntimeFunction::read(section, self.base_address, unwind)?;
 
-                    // TODO disabled because it spams the log too much
-                    //let referenced = self.get_function(chained.range.start);
+                        // TODO disabled because it spams the log too much
+                        //let referenced = self.get_function(chained.range.start);
 
-                    //assert_eq!(Some(&chained), referenced.as_ref());
-                    //if Some(&chained) != referenced.as_ref() {
-                    //println!("mismatch {:x?} {referenced:x?}", Some(&chained));
-                    //}
+                        //assert_eq!(Some(&chained), referenced.as_ref());
+                        //if Some(&chained) != referenced.as_ref() {
+                        //println!("mismatch {:x?} {referenced:x?}", Some(&chained));
+                        //}
 
-                    self.exception_children_cache
-                        .entry(chained.range.start)
-                        .or_default()
-                        .push(f);
-                } else {
-                    println!("invalid unwind addr {:x}", unwind);
+                        pe.exception_children_cache
+                            .entry(chained.range.start)
+                            .or_default()
+                            .push(f);
+                    } else {
+                        println!("invalid unwind addr {:x}", unwind);
+                    }
                 }
             }
-        }
 
-        //println!("{:#x?}", self.exception_children_cache);
-        Ok(())
+            //println!("{:#x?}", self.exception_children_cache);
+            Ok(())
+        } else {
+            unreachable!("not a PE image")
+        }
     }
+}
+
+impl PEImage {
 
     /// Read and parse ELF object, using data from memory
     pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
         base_address: usize,
         exe_path: Option<P>,
         load_functions: bool,
-        memory: Memory<'_>,
+        memory: Memory<'data>,
         object: object::File<'_>,
     ) -> Result<Image<'data>, anyhow::Error> {
 
@@ -227,9 +235,7 @@ impl PEImage {
         };
 
         if load_functions {
-            if let ImageType::PEImage(ref mut pe) = new.image_type {
-                pe.populate_exception_cache(&new)?;
-            }
+            new.populate_exception_cache()?;
         }
         Ok(new)
     }
@@ -238,7 +244,7 @@ impl PEImage {
         base_addr: Option<usize>,
         exe_path: Option<P>,
         load_functions: bool,
-        object: object::File<'_>,
+        object: object::File<'data>,
     ) -> Result<Image<'data>, anyhow::Error> {
         let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
         let memory = Memory::new(&object)?;
