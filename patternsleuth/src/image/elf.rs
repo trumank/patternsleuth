@@ -49,7 +49,7 @@ impl ElfImage {
         map_end: usize,
         linked: bool,
         load_functions: bool,
-        memory: Memory<'_>,
+        memory: Memory<'data>,
         object: ElfFile64<'data>,
     ) -> Result<Image<'data>, anyhow::Error> {
         // start to parse eh_frame
@@ -184,7 +184,7 @@ impl ElfImage {
             None
         };
         Ok(Image {
-            base_address: base_address,
+            base_address,
             memory: memory,
             symbols: symbols,
             imports: HashMap::default(),
@@ -200,7 +200,7 @@ impl ElfImage {
         base_addr: Option<usize>,
         exe_path: Option<P>,
         load_functions: bool,
-        object: object::File<'_>,
+        object: object::File<'data>,
     ) -> Result<Image<'data>, anyhow::Error> {
         let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
         let calc_kind = |flag: u32| {
