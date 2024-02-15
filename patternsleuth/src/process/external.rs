@@ -8,7 +8,7 @@ mod linux {
     use anyhow::{bail, Context, Result};
     use object::{Object, ObjectSection};
 
-    use crate::{Image, Memory};
+    use crate::{image, Image, Memory};
 
     fn read_process_mem(pid: i32, address: usize, buffer: &mut [u8]) -> Result<usize> {
         unsafe {
@@ -83,7 +83,7 @@ mod linux {
 
         let memory = Memory::new_external_data(sections)?;
 
-        Image::read_inner::<String>(None, false, memory, object)
+        image::pe::PEImage::read_inner_memory::<String>(object.relative_address_base() as usize, None, false, memory, object)
     }
 }
 
