@@ -65,7 +65,7 @@ pub struct Image<'data> {
 
 // Type-independent
 impl<'data> Image<'data> {
-    fn read<P: AsRef<Path>>(
+    pub fn read<P: AsRef<Path>>(
         base_addr: Option<usize>,
         data: &'data [u8],
         exe_path: Option<P>,
