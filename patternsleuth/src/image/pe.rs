@@ -169,7 +169,7 @@ impl PEImage {
     pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
         base_address: usize,
         exe_path: Option<P>,
-        load_functions: bool,
+        cache_functions: bool,
         memory: Memory<'data>,
         object: object::File<'_>,
     ) -> Result<Image<'data>, anyhow::Error> {
@@ -251,7 +251,7 @@ impl PEImage {
             }),
         };
 
-        if load_functions {
+        if cache_functions {
             new.populate_exception_cache()?;
         }
         Ok(new)
@@ -260,11 +260,11 @@ impl PEImage {
     pub fn read_inner<'data, P: AsRef<std::path::Path>>(
         base_addr: Option<usize>,
         exe_path: Option<P>,
-        load_functions: bool,
+        cache_functions: bool,
         object: object::File<'data>,
     ) -> Result<Image<'data>, anyhow::Error> {
         let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
         let memory = Memory::new(&object)?;
-        Self::read_inner_memory(base_address, exe_path, load_functions, memory, object)
+        Self::read_inner_memory(base_address, exe_path, cache_functions, memory, object)
     }
 }

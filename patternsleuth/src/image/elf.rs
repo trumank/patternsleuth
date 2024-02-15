@@ -5,7 +5,7 @@ use crate::{uesym, Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, 
 use super::{Image, ImageType};
 use gimli::{BaseAddresses, CieOrFde, EhFrame, EhFrameHdr, NativeEndian, UnwindSection};
 use libc::Elf64_Phdr;
-use object::{elf::ProgramHeader64, read::elf::{ElfFile, ElfFile64}, Endianness, File, Object, ObjectSection, SectionKind};
+use object::{elf::ProgramHeader64, read::elf::ElfFile64, Endianness, File, Object, ObjectSection, SectionKind};
 use anyhow::{Context, Result};
 use object::read::elf::ProgramHeader;
 use anyhow::Error;
@@ -18,7 +18,7 @@ impl ElfImage {
     pub fn get_function(&self, image: &Image<'_>, address: usize) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
         self.get_root_function(image, address)
     }
-    pub fn get_root_function(&self, image: &Image<'_>, address: usize) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
+    pub fn get_root_function(&self, _image: &Image<'_>, address: usize) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
         let x = self.functions.as_ref().unwrap();
         x.iter().find(|p| p.contains(&address)).map(|a| 
             Ok(Some(
@@ -50,15 +50,12 @@ impl ElfImage {
     pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
         base_address: usize,
         exe_path: Option<P>,
-        map_start: usize,
-        map_end: usize,
         linked: bool,
-        load_functions: bool,
         memory: Memory<'data>,
         object: ElfFile64<'data>,
     ) -> Result<Image<'data>, anyhow::Error> {
         // start to parse eh_frame
-        
+
         let endian = object.endian();
         let phdr_map = |segment: &ProgramHeader64<Endianness>| {
             Elf64_Phdr {
@@ -204,7 +201,7 @@ impl ElfImage {
     pub fn read_inner<'data, P: AsRef<std::path::Path>>(
         base_addr: Option<usize>,
         exe_path: Option<P>,
-        load_functions: bool,
+        cache_functions: bool,
         object: object::File<'data>,
     ) -> Result<Image<'data>, anyhow::Error> {
         let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
@@ -271,7 +268,7 @@ impl ElfImage {
                 sections: sections,
             };
 
-            Self::read_inner_memory(base_address, exe_path, map_start as _, map_end as _, base_addr.is_some(), load_functions, memory, object)
+            Self::read_inner_memory(base_address, exe_path, base_addr.is_some(), memory, object)
         } else {
             return Err(anyhow::anyhow!("Not a elf file"));
         }

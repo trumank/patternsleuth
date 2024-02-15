@@ -3,20 +3,17 @@ pub use linux::*;
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use core::panic;
-    use std::{collections::HashMap, default, mem, ops::Range, ptr::{null, null_mut}};
+    use std::ptr::{null, null_mut};
 
-    use anyhow::{Context, Error, Result};
-    use gimli::{BaseAddresses, CieOrFde, EhFrame, EhFrameHdr, NativeEndian, Pointer, UnwindSection};
-    use itertools::Itertools;
-    use object::{elf::{DT_HASH, DT_STRTAB, DT_SYMTAB}, Object, ObjectSection, SectionKind};
+    use anyhow::Result;
+    use gimli::Pointer;
 
-    use crate::{Image, Memory, NamedMemorySection};
-    use libc::{c_void, dl_iterate_phdr, dladdr1, readlink, Dl_info, Elf64_Addr, Elf64_Ehdr, Elf64_Phdr, Elf64_Sxword, Elf64_Sym, Elf64_Xword, PF_R, PF_W, PF_X, PT_GNU_EH_FRAME, PT_LOAD, RTLD_DI_LINKMAP};
+    use crate::Image;
+    use libc::{dl_iterate_phdr, Elf64_Addr,  Elf64_Phdr, Elf64_Sxword, Elf64_Xword, PT_LOAD};
     
     #[repr(C)]
     #[derive(Debug)]
-    pub struct Elf64_Dyn {
+    pub struct Elf64Dyn {
         pub d_tag: Elf64_Sxword,
         pub d_val: Elf64_Xword,
     }
@@ -28,13 +25,13 @@ mod linux {
     pub struct LinkMap {
         pub l_addr: Elf64_Addr,
         pub l_name: *const libc::c_char,
-        pub l_ld: *const Elf64_Dyn,
+        pub l_ld: *const Elf64Dyn,
         pub l_next: *const LinkMap,
         pub l_prev: *const LinkMap,
         pub l_real: *const LinkMap,
         pub l_ns: usize,
         pub l_libname: *const libc::c_void,
-        pub l_info: [*const Elf64_Dyn; DT_NUM],
+        pub l_info: [*const Elf64Dyn; DT_NUM],
     }
 
     unsafe extern "C" fn dl_iterate_phdr_callback(
