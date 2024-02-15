@@ -1,11 +1,14 @@
-use std::{collections::HashMap, ops::Range};
+use std::{collections::HashMap, mem, ops::Range};
 
-use crate::{Memory, MemoryAccessError, RuntimeFunction};
+use crate::{uesym, Memory, MemoryAccessError, NamedMemorySection, RuntimeFunction};
 
 use super::{Image, ImageType};
-use gimli::{BaseAddresses, CieOrFde, EhFrame, NativeEndian, UnwindSection};
-use object::{Object, ObjectSection};
+use gimli::{BaseAddresses, CieOrFde, EhFrame, EhFrameHdr, NativeEndian, UnwindSection};
+use libc::Elf64_Phdr;
+use object::{elf::ProgramHeader64, Endianness, File, Object, ObjectSection, SectionKind};
 use anyhow::{Context, Result};
+use object::read::elf::ProgramHeader;
+use anyhow::Error;
 
 pub struct ElfImage {
     pub functions: Option<Vec<Range<usize>>>,
@@ -41,17 +44,212 @@ impl ElfImage {
         base_addr: Option<usize>,
         exe_path: Option<P>,
         load_functions: bool,
-        memory: Memory<'_>,
         object: object::File<'_>,
     ) -> Result<Image<'data>, anyhow::Error> {
-        let base_address = object.relative_address_base() as usize;
+        let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
+        let calc_kind = |flag: u32| {
+            if flag & object::elf::PF_X == object::elf::PF_X {
+                SectionKind::Text
+            } else if flag & object::elf::PF_W == object::elf::PF_W  {
+                SectionKind::Data
+            } else if flag & object::elf::PF_R == object::elf::PF_R {
+                SectionKind::ReadOnlyData
+            } else {
+                SectionKind::Unknown
+            }
+        };
+
+        // the elf may not contains section table if it's in memory, use phdr instead.
+        if let File::Elf64(object) = object {
+            let endian = object.endian();
+            let phdr_map = |segment: &ProgramHeader64<Endianness>| {
+                Elf64_Phdr {
+                    p_type: segment.p_type(endian),
+                    p_flags: segment.p_flags(endian),
+                    p_offset: segment.p_offset(endian),
+                    p_vaddr: segment.p_vaddr(endian),
+                    p_paddr: segment.p_paddr(endian),
+                    p_filesz: segment.p_filesz(endian),
+                    p_memsz: segment.p_memsz(endian),
+                    p_align: segment.p_align(endian),
+                }
+            };
+            let phdrs = object.raw_segments().iter().filter(|segment| {
+                segment.p_type(endian) == object::elf::PT_LOAD
+            }).map(phdr_map).collect::<Vec<_>>();
+            
+            let map_end = phdrs.iter().map(|p|p.p_vaddr + p.p_memsz).max().unwrap_or_default() as u64;
+            let map_start = phdrs.iter().map(|p|p.p_vaddr).min().unwrap_or_default() as u64;
+
+            let get_offset = |segment: &Elf64_Phdr| {
+                if base_addr.is_some() {
+                    // for Elf loaded in memory, the map starts from smallest p_vaddr
+                    (segment.p_vaddr - map_start) as usize .. (segment.p_vaddr + segment.p_memsz - map_start) as usize
+                } else {
+                    // for Elf file loaded as file, the map starts from 0
+                    segment.p_offset as usize .. (segment.p_offset + segment.p_filesz) as usize
+                }
+            };
+
+            let entrypoint = object.entry();
+            let sections = phdrs.iter().enumerate().map(|(idx, segment)| {
+                let vaddr_range = segment.p_vaddr .. (segment.p_vaddr + segment.p_filesz);
+                let offset_range = get_offset(segment);
+                let addr = segment.p_offset as usize;
+                let size = segment.p_filesz as usize;
+                let section_name =  if ! vaddr_range.contains(&entrypoint) { format!("FakeSection {}", idx + 1) } else {".text".to_owned()};
+                NamedMemorySection::new(
+                    section_name,
+                    base_address + segment.p_vaddr as usize,
+                    calc_kind(segment.p_flags),
+                    &object.data()[offset_range]
+                )
+            }).collect::<Vec<_>>();
+            let text_vaddr = sections.iter().find(|s| s.name == ".text").context("Cannot find .text section")?.address();
+
+            let memory = Memory {
+                sections: sections,
+            };
+
+            let readptr_vaddr = |vaddr: usize| {
+                let offset = vaddr - map_start as usize;
+                let data = object.data();
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(&data[offset..offset+8]);
+                usize::from_ne_bytes(buf)
+            };
+
+            // start to parse eh_frame
+            
+            let functions = if base_addr.is_some() {
+                // try get address from phdr only when it's loaded in memory 
+                // otherwise, use section to avoid possible relocation problem with
+                // eh_frame_hdr.
+                // I assume if the encoding for the pointer is DW_EH_PE_indirect
+                // that address might need to be filled by relocation, so if 
+                // the elf is opened as file, the address is not ready to use.
+                let eh_frame_hdr = object.raw_segments().iter().find(|segment| {
+                    segment.p_type(endian) == object::elf::PT_GNU_EH_FRAME
+                }).map(phdr_map).context("Cannot find PT_GNU_EH_FRAME phdr");
+
+                eh_frame_hdr.map(|p| -> Result<Vec<Range<usize>>, Error>{
+                    //eprintln!("Found GNU_EH_FRAME");
+                    let ehframe_hdr_start = base_address + p.p_vaddr as usize;
+                    let bases = BaseAddresses::default()
+                        .set_eh_frame_hdr(ehframe_hdr_start as _)
+                        .set_text((text_vaddr + base_address) as _);
+                    let ehframe_hdr_offset = get_offset(&p);
+                    let ehframe_hdr = EhFrameHdr::new(
+                        &object.data()[ehframe_hdr_offset], 
+                        NativeEndian
+                    ).parse(&bases, mem::size_of::<usize>() as _)
+                    .context("Failed to parse eh_frame_hdr")?;
+                    
+                    let ehframe_realaddr = match ehframe_hdr.eh_frame_ptr() {
+                        gimli::Pointer::Direct(ptr) => ptr as usize,
+                        // should I subtract base_address?
+                        gimli::Pointer::Indirect(ptr) => readptr_vaddr(ptr as usize - base_address),
+                    };
+                    let bases = bases.set_eh_frame(ehframe_realaddr as _);
+                    let eh_frame = EhFrame::new(
+                        &object.data()[(ehframe_realaddr - base_address - map_start as usize)..], 
+                        NativeEndian
+                    );
+
+                    let mut entries = eh_frame.entries(&bases);
+                    
+                    let mut result = Vec::<Range<usize>>::new();
+                    while let Some(entry) = entries.next().context("Iter over entry failed")? {
+                        match entry {
+                            CieOrFde::Fde(partial) => {
+                                let fde = partial
+                                    .parse(&mut EhFrame::cie_from_offset)
+                                    .context("Failed parse fde item")?;
+                                // right now it's real address
+                                let start = fde.initial_address() as usize;
+                                let len = fde.len() as usize;
+                                result.push(start .. (start + len));
+                            }
+                            CieOrFde::Cie(_) => {},
+                        }
+                    }
+                    Ok(result)
+                }).context("Cannot find eh_frame")?
+            } else {
+                let eh_frame = object.section_by_name(".eh_frame").context("Cannot find section .eh_frame in elf")?;
+                let eh_frame_hdr = object.section_by_name(".eh_frame_hdr").context("Cannot find section .eh_frame_hdr in elf")?;
+                let text = object.section_by_name(".text").unwrap();
+                let bases = gimli::BaseAddresses::default()
+                        .set_eh_frame_hdr(eh_frame_hdr.address() as _)
+                        .set_eh_frame(eh_frame.address())
+                        .set_text(text.address() as _);
+                let eh_frameparsed = EhFrame::new(
+                    eh_frame.data().unwrap(), 
+                    NativeEndian
+                );
+                let mut entries = eh_frameparsed.entries(&bases);
+        
+                let mut result = Vec::<Range<usize>>::new();
+                
+                while let Some(entry) = entries.next().context("Iter over entry failed")? {
+                    match entry {
+                        CieOrFde::Fde(partial) => {
+                            let fde = partial
+                                .parse(&mut EhFrame::cie_from_offset)
+                                .context("Failed parse fde item")?;
+                            // right now it's real address
+                            let start = fde.initial_address() as usize;
+                            let len = fde.len() as usize;
+                            result.push(start .. (start + len));
+                        }
+                        CieOrFde::Cie(_) => {},
+                    }
+                }
+                result.sort_by(|a,b| a.start.cmp(&b.start));
+                Ok(result)
+            }?;
+            
+            let symbols = if let Some(exe_path) = exe_path {
+                #[cfg(not(feature = "symbols"))]
+                unreachable!();
+                #[cfg(feature = "symbols")]
+                {
+                    let sym_path = exe_path.as_ref().with_extension("sym");
+                    sym_path
+                        .exists()
+                        .then(|| uesym::dump_ue_symbols(sym_path, base_address))
+                        .transpose()?
+                }
+            } else {
+                None
+            };
+            Ok(Image {
+                base_address: base_address,
+                memory: memory,
+                symbols: symbols,
+                imports: HashMap::default(),
+                image_type: ImageType::ElfImage(ElfImage {
+                    functions: Some(functions)
+                }),
+            })
+        } else {
+            return Err(anyhow::anyhow!("Not a elf file"));
+        }
+
+    }
+}
+
+/*
+
+
+
         let eh_frame = object.section_by_name(".eh_frame").unwrap();
         let eh_frame_hdr = object.section_by_name(".eh_frame_hdr").unwrap();
         let text = object.section_by_name(".text").unwrap();
-        let bases = BaseAddresses::default()
-                    .set_eh_frame_hdr(eh_frame_hdr.address() as _)
-                    .set_eh_frame(eh_frame.address())
-                    .set_text(text.address() as _);
+        let bases = gimli::BaseAddresses::default()
+                .set_eh_frame_hdr(eh_frame_hdr.address() as _)
+                .set_eh_frame(eh_frame.address())
+                .set_text(text.address() as _);
         let eh_frameparsed = EhFrame::new(
             eh_frame.data().unwrap(), 
             NativeEndian
@@ -77,14 +275,5 @@ impl ElfImage {
             }
         }
         result.sort_by(|a,b| a.start.cmp(&b.start));
-        Ok(Image {
-            base_address: base_address,
-            memory: memory,
-            symbols: Some(syms),
-            imports: HashMap::default(),
-            image_type: ImageType::ElfImage(ElfImage {
-                functions: Some(result)
-            }),
-        })
-    }
-}
+        
+*/
