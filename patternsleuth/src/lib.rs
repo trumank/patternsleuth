@@ -21,6 +21,10 @@ use scanner::{Pattern, Xref};
 use anyhow::{bail, Context, Result};
 use object::{File, Object, ObjectSection};
 
+pub mod image;
+
+use image::Image;
+
 pub struct ResolveContext<'data, 'pattern> {
     pub exe: &'data Image<'data>,
     pub memory: &'data Memory<'data>,
@@ -237,45 +241,6 @@ impl<'a, S: std::fmt::Debug + PartialEq> ScanResult<'a, S> {
             }
         }
         address.with_context(|| format!("sig {sig:?} not found"))
-    }
-}
-
-#[derive(Default)]
-pub struct ImageBuilder {
-    functions: bool,
-}
-pub struct ImageBuilderWithSymbols<P: AsRef<Path>> {
-    symbols: Option<P>,
-    functions: bool,
-}
-impl ImageBuilder {
-    pub fn functions(mut self, functions: bool) -> Self {
-        self.functions = functions;
-        self
-    }
-    #[cfg(feature = "symbols")]
-    pub fn symbols<P: AsRef<Path>>(self, exe_path: P) -> ImageBuilderWithSymbols<P> {
-        ImageBuilderWithSymbols {
-            symbols: Some(exe_path),
-            functions: self.functions,
-        }
-    }
-    pub fn build(self, data: &[u8]) -> Result<Image<'_>> {
-        Image::read::<&str>(data, None, self.functions)
-    }
-}
-impl<P: AsRef<Path>> ImageBuilderWithSymbols<P> {
-    pub fn functions(mut self, functions: bool) -> Self {
-        self.functions = functions;
-        self
-    }
-    #[cfg(feature = "symbols")]
-    pub fn symbols(mut self, exe_path: P) -> Self {
-        self.symbols = Some(exe_path);
-        self
-    }
-    pub fn build(self, data: &[u8]) -> Result<Image<'_>> {
-        Image::read(data, self.symbols, self.functions)
     }
 }
 
@@ -518,17 +483,8 @@ impl<'data> Image<'data> {
 
 
 #[cfg(target_os="linux")]
-pub struct Image<'data> {
-    pub base_address: usize,
-    pub memory: Memory<'data>,
-    pub functions: Option<Vec<Range<usize>>>,
-    pub symbols: Option<HashMap<usize, String>>,
-    pub exception_children_cache: HashMap<usize, Vec<RuntimeFunction>>,
-}
-
-#[cfg(target_os="linux")]
 use gimli::{BaseAddresses, EhFrame, NativeEndian};
-#[cfg(target_os="linux")]
+#[cfg(target_os="xxx")]
 impl<'data> Image<'data> {
     fn read_inner<'memory, P: AsRef<Path>>(
         exe_path: Option<P>,
@@ -631,144 +587,6 @@ impl<'data> Image<'data> {
             Ok(None) => Ok(vec![]),
             Err(e) => Err(e)
         }
-    }
-}
-
-// OS-independent
-impl<'data> Image<'data> {
-    fn read<P: AsRef<Path>>(
-        data: &'data [u8],
-        exe_path: Option<P>,
-        load_functions: bool,
-    ) -> Result<Image<'data>> {
-        print!("Image::read called\n");
-        let object = object::File::parse(data)?;
-        let memory = Memory::new(&object)?;
-        /*
-        for mem in memory.sections() {
-            eprintln!("Section {} @ {:#08x}", mem.name(), mem.address());
-        }*/
-        Self::read_inner(exe_path, load_functions, memory, object)
-    }
-    pub fn builder() -> ImageBuilder {
-        print!("Builder called!\n");
-        Default::default()
-    }
-    pub fn resolve<T: Send + Sync>(
-        &self,
-        resolver: &'static resolvers::ResolverFactory<T>,
-    ) -> resolvers::Result<T> {
-        resolvers::resolve(self, resolver)
-    }
-
-    pub fn resolve_many(
-        &self,
-        resolvers: &[fn() -> &'static resolvers::DynResolverFactory],
-    ) -> Vec<resolvers::Result<std::sync::Arc<dyn resolvers::Resolution>>> {
-        resolvers::resolve_many(self, resolvers)
-    }
-
-    pub fn scan<'patterns, S>(
-        &self,
-        pattern_configs: &'patterns [PatternConfig<S>],
-    ) -> Result<ScanResult<'patterns, S>> {
-        let mut results = vec![];
-
-        struct PendingScan {
-            original_config_index: usize,
-            stages: ResolveStages,
-            scan: Scan,
-        }
-
-        let mut scan_queue = pattern_configs
-            .iter()
-            .enumerate()
-            .map(|(index, config)| PendingScan {
-                original_config_index: index,
-                stages: ResolveStages(vec![]),
-                scan: config.scan.clone(), // TODO clone isn't ideal but makes handling multi-stage scans a lot easier
-            })
-            .collect::<Vec<_>>();
-
-        while !scan_queue.is_empty() {
-            let mut new_queue = vec![];
-            for section in self.memory.sections() {
-                let base_address = section.address();
-                let section_name = section.name();
-                let data = section.data();
-
-                let (pattern_scans, patterns): (Vec<_>, Vec<_>) = scan_queue
-                    .iter()
-                    .filter_map(|scan| {
-                        scan.scan
-                            .section
-                            .map(|s| s == section.kind())
-                            .unwrap_or(true)
-                            .then(|| {
-                                scan.scan
-                                    .scan_type
-                                    .get_pattern()
-                                    .map(|pattern| (scan, pattern))
-                            })
-                            .flatten()
-                    })
-                    .unzip();
-
-                let (xref_scans, xrefs): (Vec<_>, Vec<_>) = scan_queue
-                    .iter()
-                    .filter_map(|scan| {
-                        scan.scan
-                            .section
-                            .map(|s| s == section.kind())
-                            .unwrap_or(true)
-                            .then(|| scan.scan.scan_type.get_xref().map(|xref| (scan, xref)))
-                            .flatten()
-                    })
-                    .unzip();
-
-                let scan_results = scanner::scan_pattern(&patterns, base_address, data)
-                    .into_iter()
-                    .chain(scanner::scan_xref(&xrefs, base_address, data))
-                    .zip(pattern_scans.iter().chain(xref_scans.iter()));
-
-                for (addresses, scan) in scan_results {
-                    for address in addresses {
-                        let mut stages = scan.stages.clone();
-                        let action = (scan.scan.resolve)(
-                            ResolveContext {
-                                exe: self,
-                                memory: &self.memory,
-                                section: section_name.to_owned(),
-                                match_address: address,
-                                scan: &scan.scan,
-                            },
-                            &mut stages,
-                        );
-                        match action {
-                            ResolutionAction::Continue(new_scan) => {
-                                new_queue.push(PendingScan {
-                                    original_config_index: scan.original_config_index,
-                                    stages,
-                                    scan: new_scan,
-                                });
-                            }
-                            ResolutionAction::Finish(res) => {
-                                results.push((
-                                    &pattern_configs[scan.original_config_index],
-                                    Resolution {
-                                        stages: stages.0,
-                                        res,
-                                    },
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-            scan_queue = new_queue;
-        }
-        
-        Ok(ScanResult { results })
     }
 }
 
