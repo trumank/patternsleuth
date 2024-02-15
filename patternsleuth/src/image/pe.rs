@@ -140,6 +140,7 @@ impl PEImage {
         Ok(())
     }
 
+    /// Read and parse ELF object, using data from memory
     pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
         base_address: usize,
         exe_path: Option<P>,

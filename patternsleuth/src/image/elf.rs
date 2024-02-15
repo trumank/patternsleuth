@@ -40,8 +40,11 @@ impl ElfImage {
 
 // read_inner 
 impl ElfImage {
+
+    /// Read and parse ELF object, using data from memory
     pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
         base_address: usize,
+        exe_path: Option<P>,
         map_start: usize,
         map_end: usize,
         linked: bool,
@@ -68,7 +71,7 @@ impl ElfImage {
         let get_offset = |segment: &Elf64_Phdr| {
             if linked {
                 // for Elf loaded in memory, the map starts from smallest p_vaddr
-                (segment.p_vaddr as _ + base_address) .. (segment.p_vaddr + segment.p_memsz as _ + base_address)
+                (segment.p_vaddr as usize + base_address) .. (segment.p_vaddr as usize + segment.p_memsz as usize + base_address)
             } else {
                 // for Elf file loaded as file, the map starts from 0
                 segment.p_offset as usize .. (segment.p_offset + segment.p_filesz) as usize
@@ -191,6 +194,8 @@ impl ElfImage {
         })
     }
 
+
+    /// Read and parse ELF object, using data from object.data()
     pub fn read_inner<'data, P: AsRef<std::path::Path>>(
         base_addr: Option<usize>,
         exe_path: Option<P>,
@@ -261,7 +266,7 @@ impl ElfImage {
                 sections: sections,
             };
 
-            Self::read_inner_memory(base_address, map_start as _, map_end as _, base_addr.is_some(), load_functions, memory, object)
+            Self::read_inner_memory(base_address, exe_path, map_start as _, map_end as _, base_addr.is_some(), load_functions, memory, object)
         } else {
             return Err(anyhow::anyhow!("Not a elf file"));
         }
