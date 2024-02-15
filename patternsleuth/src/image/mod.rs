@@ -40,6 +40,14 @@ macro_rules! image_type_dispatch {
             )*
         }
     };
+
+    (@define_matcharm $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }, $self:ident, $fnname_it:ident, ) => {
+        match &$self.image_type {
+            $(
+                $enum_name_it::$img_ident(inner) => inner.$fnname_it($self),
+            )*
+        }
+    };
 }
 
 image_type_dispatch! {
@@ -52,6 +60,7 @@ image_type_dispatch! {
         fn get_function(address: usize) -> Result<Option<RuntimeFunction>, MemoryAccessError>;
         fn get_root_function(address: usize) -> Result<Option<RuntimeFunction>, MemoryAccessError>;
         fn get_child_functions(address: usize) -> Result<Vec<RuntimeFunction>, MemoryAccessError>;
+        fn get_root_functions() -> Result<Vec<Range<usize>>, MemoryAccessError>;
     }
 }
 

@@ -36,6 +36,11 @@ impl ElfImage {
             Err(e) => Err(e)
         }
     }
+    pub fn get_root_functions(&self, _: &Image<'_>) -> Result<Vec<Range<usize>>, MemoryAccessError> {
+        Ok(self.functions.as_ref().unwrap().iter().map(|addr_range| 
+            addr_range.clone()
+        ).collect())
+    }
 }
 
 // read_inner 

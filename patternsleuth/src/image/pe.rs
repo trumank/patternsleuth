@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use anyhow::{bail, Context, Result};
+use itertools::Itertools;
 
 use super::{Image, ImageType};
 use crate::{Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, RuntimeFunction, symbols};
@@ -89,6 +90,22 @@ impl PEImage {
             }
         }
         Ok(all_children)
+    }
+
+    pub fn get_root_functions(&self, image: &Image<'_>) -> Result<Vec<Range<usize>>, MemoryAccessError> {
+        let mut functions = self.exception_children_cache.keys().collect::<HashSet<_>>();
+        for e in self.exception_children_cache.values() {
+            for c in e {
+                functions.remove(&c.range.start);
+            }
+        }
+        Ok(functions.iter().map(|function| -> Result<Range<usize>, MemoryAccessError> {
+                let fns = self.get_child_functions(image, self.get_function(image, **function)?.ok_or(MemoryAccessError::MemoryOutOfBoundsError)?.range.start).unwrap();
+                let min = fns.iter().map(|f| f.range.start).min().unwrap();
+                let max = fns.iter().map(|f| f.range.end).max().unwrap();
+                Ok(min..max)
+            }
+        ).try_collect()?)
     }
 }
 
