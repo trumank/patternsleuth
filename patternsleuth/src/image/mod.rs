@@ -72,10 +72,13 @@ impl<'data> Image<'data> {
         load_functions: bool,
     ) -> Result<Image<'data>> {
         let object = object::File::parse(data)?;
-        let memory = Memory::new(&object)?;
         match object {
-            object::File::Elf64(_) => ElfImage::read_inner(base_addr, exe_path, load_functions, memory, object),
-            object::File::Pe64(_) => PEImage::read_inner(base_addr, exe_path, load_functions, memory, object),
+            object::File::Elf64(_) => {
+                ElfImage::read_inner(base_addr, exe_path, load_functions, object)
+            },
+            object::File::Pe64(_) => {
+                PEImage::read_inner(base_addr, exe_path, load_functions, object)
+            },
             _ => Err(Error::msg("Unsupported file format")),
         }
     }

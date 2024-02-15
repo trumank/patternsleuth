@@ -144,11 +144,11 @@ impl PEImage {
         base_addr: Option<usize>,
         exe_path: Option<P>,
         load_functions: bool,
-        memory: Memory<'_>,
         object: object::File<'_>,
     ) -> Result<Image<'data>, anyhow::Error> {
         let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
-
+        let memory = Memory::new(&object)?;
+        
         #[allow(unused_variables)]
         let symbols = if let Some(exe_path) = exe_path {
             #[cfg(not(feature = "symbols"))]
