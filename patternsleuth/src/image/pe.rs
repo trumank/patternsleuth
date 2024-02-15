@@ -140,15 +140,14 @@ impl PEImage {
         Ok(())
     }
 
-    pub fn read_inner<'data, P: AsRef<std::path::Path>>(
-        base_addr: Option<usize>,
+    pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
+        base_address: usize,
         exe_path: Option<P>,
         load_functions: bool,
+        memory: Memory<'_>,
         object: object::File<'_>,
     ) -> Result<Image<'data>, anyhow::Error> {
-        let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
-        let memory = Memory::new(&object)?;
-        
+
         #[allow(unused_variables)]
         let symbols = if let Some(exe_path) = exe_path {
             #[cfg(not(feature = "symbols"))]
@@ -232,5 +231,16 @@ impl PEImage {
             }
         }
         Ok(new)
+    }
+
+    pub fn read_inner<'data, P: AsRef<std::path::Path>>(
+        base_addr: Option<usize>,
+        exe_path: Option<P>,
+        load_functions: bool,
+        object: object::File<'_>,
+    ) -> Result<Image<'data>, anyhow::Error> {
+        let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
+        let memory = Memory::new(&object)?;
+        Self::read_inner_memory(base_address, exe_path, load_functions, memory, object)
     }
 }
