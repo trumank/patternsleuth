@@ -80,6 +80,24 @@ impl PEImage {
             Ok(None)
         }
     }
+
+    pub fn get_root_function_range(&self, image: &Image<'_>, address: usize) -> Result<Option<Range<usize>>, MemoryAccessError> {
+        let exception = self.get_root_function(image, address)?;
+        if let Some(exception) = exception {
+            let fns = self.get_child_functions(image, exception.range.start).unwrap();
+            let min = fns.iter().map(|f| f.range.start).min().unwrap();
+            let max = fns.iter().map(|f| f.range.end).max().unwrap();
+            if exception.range.start != address {
+                // why comapreing exception but not min?
+                Err(MemoryAccessError::MisalginedAddress(exception.range.start, address))
+            } else {
+                Ok(Some(min..max))  // TODO does not handle sparse ranges
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn get_child_functions(&self, image: &Image<'_>, address: usize) -> Result<Vec<RuntimeFunction>, MemoryAccessError> {
         let mut queue = vec![address];
         let mut all_children = vec![self.get_function(image, address)?.unwrap()];

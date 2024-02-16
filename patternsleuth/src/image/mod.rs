@@ -59,6 +59,7 @@ image_type_dispatch! {
     @fns {
         fn get_function(address: usize) -> Result<Option<RuntimeFunction>, MemoryAccessError>;
         fn get_root_function(address: usize) -> Result<Option<RuntimeFunction>, MemoryAccessError>;
+        fn get_root_function_range(address: usize) -> Result<Option<Range<usize>>, MemoryAccessError>;
         fn get_child_functions(address: usize) -> Result<Vec<RuntimeFunction>, MemoryAccessError>;
         fn get_root_functions() -> Result<Vec<Range<usize>>, MemoryAccessError>;
     }
