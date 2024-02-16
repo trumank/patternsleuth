@@ -27,11 +27,10 @@ unsafe impl Pod for Header {}
 
 struct RawUESymbols<'data> {
     records: &'data [Record],
-    address_map: HashMap<usize, usize>,
     data: &'data [u8],
 }
 
-struct WrapRecord<'a, 'data> {
+pub struct WrapRecord<'a, 'data> {
     record: &'a Record,
     symbol: &'a RawUESymbols<'data>,
 }
@@ -42,19 +41,9 @@ impl<'data> RawUESymbols<'data> {
         let (records, data) = 
             slice_from_bytes::<Record>(data, header.record_count as usize)
             .map_err(|_| anyhow!("Can't read Records"))?;
-        let address_map: HashMap<usize, usize> = HashMap::from_iter(records.iter().enumerate().map(|(i, r)| (r.address as usize, i)));
         Ok(RawUESymbols {
             records,
-            address_map,
             data,
-        })
-    }
-
-    fn get_address(&self, address: usize) -> Option<WrapRecord<'_, 'data>> {
-        let index = self.address_map.get(&address)?;
-        Some(WrapRecord {
-            record: &self.records[*index],
-            symbol: self,
         })
     }
 
@@ -76,6 +65,14 @@ impl WrapRecord<'_, '_> {
 
     fn filename(&self) -> &'_ str {
         self.read_str(self.record.file_relative_offset as usize)
+    }
+
+    fn line(&self) -> u32 {
+        self.record.line_number
+    }
+
+    fn address(&self) -> usize {
+        self.record.address as usize
     }
 }
 
