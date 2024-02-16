@@ -121,6 +121,7 @@ mod windows {
     };
 
     use crate::{Image, Memory};
+    use crate::image::pe::PEImage;
 
     pub fn read_image<'data>() -> Result<Image<'data>> {
         let main_module =
@@ -157,7 +158,7 @@ mod windows {
 
         let memory = Memory::new_internal_data(sections)?;
 
-        Image::read_inner::<String>(None, false, memory, object)
+        PEImage::read_inner_memory::<String>(image_base_address, None, false, memory, object)
     }
 }
 
