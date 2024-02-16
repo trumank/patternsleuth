@@ -28,7 +28,6 @@ unsafe impl Pod for Header {}
 struct RawUESymbols<'data> {
     records: &'data [Record],
     address_map: HashMap<usize, usize>,
-    header_size: usize,
     data: &'data [u8],
 }
 
@@ -43,12 +42,10 @@ impl<'data> RawUESymbols<'data> {
         let (records, data) = 
             slice_from_bytes::<Record>(data, header.record_count as usize)
             .map_err(|_| anyhow!("Can't read Records"))?;
-        let header_size = std::mem::size_of::<u32>() + std::mem::size_of::<Record>() * header.record_count as usize;
         let address_map: HashMap<usize, usize> = HashMap::from_iter(records.iter().enumerate().map(|(i, r)| (r.address as usize, i)));
         Ok(RawUESymbols {
             records,
             address_map,
-            header_size,
             data,
         })
     }
@@ -68,7 +65,7 @@ impl<'data> RawUESymbols<'data> {
 
 impl WrapRecord<'_, '_> {
     fn read_str(&self, relative_offset: usize) -> &'_ str {
-        let start = relative_offset - self.symbol.header_size;
+        let start = relative_offset;
         let end = self.symbol.data[start..].iter().position(|&b| b == 0 || b == '\n' as _).unwrap();
         std::str::from_utf8(&self.symbol.data[start..start + end]).unwrap()
     }
