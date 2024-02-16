@@ -5,8 +5,10 @@ use anyhow::{bail, Context, Result};
 use itertools::Itertools;
 
 use super::{Image, ImageType};
-use crate::{Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, RuntimeFunction, symbols};
+use crate::{Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, RuntimeFunction};
 use object::Object;
+#[cfg(feature = "symbols")]
+use crate::symbols;
 
 pub struct PEImage {
     pub exception_directory_range: Range<usize>,
