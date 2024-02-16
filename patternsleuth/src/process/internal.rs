@@ -51,22 +51,6 @@ mod linux {
         }
         0
     }
-    
-    pub unsafe fn deref_pointer(ptr: Pointer) -> usize {
-        match ptr {
-            Pointer::Direct(x) => x as _,
-            Pointer::Indirect(x) => unsafe { *(x as *const _) },
-        }
-    }
-    
-    // in theory, can use the phdr length to limit this size
-    pub unsafe fn cast_slice_todo_remove_me<'a>(start: *const u8) -> &'a [u8] {
-        let start = start as usize;
-        let end = usize::MAX;
-        let len = end - start;
-        unsafe { std::slice::from_raw_parts(start as *const _, len) }
-    }
-    
 
     pub fn read_image<'data>() -> Result<Image<'data>> {
         unsafe {
