@@ -352,7 +352,7 @@ macro_rules! _impl_try_collector {
                 $member_vis $member_name: ::std::sync::Arc<$resolver>,
             )*
         }
-        $crate::_impl_resolver!($struct_name, |ctx| async {
+        $crate::_impl_resolver!(@all $struct_name, |ctx| async {
             #[allow(non_snake_case)]
             let (
                 $( $member_name, )*
@@ -385,7 +385,7 @@ macro_rules! _impl_collector {
                 $member_vis $member_name: $crate::resolvers::Result<::std::sync::Arc<$resolver>>,
             )*
         }
-        $crate::_impl_resolver!($struct_name, |ctx| async {
+        $crate::_impl_resolver!(@all $struct_name, |ctx| async {
             #[allow(non_snake_case)]
             let (
                 $( $member_name, )*
