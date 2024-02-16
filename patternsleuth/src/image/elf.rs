@@ -182,7 +182,7 @@ impl ElfImage {
                 }
             }
             result.sort_by(|a,b| a.start.cmp(&b.start));
-            eprintln!("Found {} fde", result.len());
+            // eprintln!("Found {} fde", result.len());
             Ok(result)
         }?;
         
