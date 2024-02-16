@@ -92,7 +92,6 @@ impl<'data> Image<'data> {
         }
     }
     pub fn builder() -> ImageBuilder {
-        print!("Builder called!\n");
         Default::default()
     }
     pub fn resolve<T: Send + Sync>(
