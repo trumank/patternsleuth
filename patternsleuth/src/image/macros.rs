@@ -4,7 +4,7 @@
 /// @define_matcharm accepts the enum name and its variants inside a block, self to avoid hygienic issues, the function name, and the function arguments
 macro_rules! image_type_dispatch {
     (
-        @enum $enum_name_it:ident $enum_tt:tt
+        @enum $enum_name_it:ident as $enum_name_macro_it:ident $enum_tt:tt
         @fns {
             $(fn $fnname_it:ident($($arg:ident: $arg_ty:ty),*) -> $ret:ty);* $(;)?
         }
@@ -17,6 +17,7 @@ macro_rules! image_type_dispatch {
                 }
             )*
         }
+        image_type_dispatch!(@generate_macro_for_enum $enum_name_macro_it $enum_tt);
     };
     (@define_imagetype $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }) => {
         pub enum $enum_name_it {
@@ -41,6 +42,24 @@ macro_rules! image_type_dispatch {
         }
     };
 
+    (@generate_macro_for_enum $enum_name_macro_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }) => {
+        #[allow(unused_macros)]
+        macro_rules! $enum_name_macro_it {
+            (@foreach $macroname:ident) => {
+                $(
+                    $macroname!($img_ident, $img_ty);
+                )*
+            };
+            (@foreach $macroname:ident, $args:tt) => {
+                $(
+                    $macroname!($img_ident, $img_ty, $args);
+                )*
+            };
+        }
+        
+        #[allow(unused_imports)]
+        pub(crate) use $enum_name_macro_it;
+    };
 }
 
 pub(crate) use image_type_dispatch;

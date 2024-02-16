@@ -11,7 +11,7 @@ use elf::ElfImage;
 use macros::*;
 
 image_type_dispatch! {
-    @enum ImageType {
+    @enum ImageType as image_type_macro {
         PEImage(PEImage),
         ElfImage(ElfImage),
     }
