@@ -4,8 +4,7 @@ use crate::{Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, NamedMe
 
 use super::{Image, ImageType};
 use gimli::{BaseAddresses, CieOrFde, EhFrame, EhFrameHdr, NativeEndian, UnwindSection};
-use itertools::Itertools;
-use libc::Elf64_Phdr;
+
 use object::{elf::ProgramHeader64, read::elf::ElfFile64, Endianness, File, Object, ObjectSection, SectionKind};
 use anyhow::{Context, Result};
 use object::read::elf::ProgramHeader;
@@ -15,6 +14,18 @@ use crate::uesym;
 
 pub struct ElfImage {
     pub functions: Option<Vec<Range<usize>>>,
+}
+
+#[allow(dead_code)]
+struct Elf64Phdr {
+    pub p_type: u32,
+    pub p_flags: u32,
+    pub p_offset: u64,
+    pub p_vaddr: u64,
+    pub p_paddr: u64,
+    pub p_filesz: u64,
+    pub p_memsz: u64,
+    pub p_align: u64,
 }
 
 impl ElfImage {
@@ -60,7 +71,7 @@ impl ElfImage {
 
         let endian = object.endian();
         let phdr_map = |segment: &ProgramHeader64<Endianness>| {
-            Elf64_Phdr {
+            Elf64Phdr {
                 p_type: segment.p_type(endian),
                 p_flags: segment.p_flags(endian),
                 p_offset: segment.p_offset(endian),
@@ -72,7 +83,7 @@ impl ElfImage {
             }
         };
 
-        let get_offset = |segment: &Elf64_Phdr| {
+        let get_offset = |segment: &Elf64Phdr| {
             if linked {
                 // for Elf loaded in memory, the map starts from smallest p_vaddr
                 (segment.p_vaddr as usize + base_address) .. (segment.p_vaddr as usize + segment.p_memsz as usize + base_address)
@@ -231,7 +242,7 @@ impl ElfImage {
         if let File::Elf64(object) = object {
             let endian = object.endian();
             let phdr_map = |segment: &ProgramHeader64<Endianness>| {
-                Elf64_Phdr {
+                Elf64Phdr {
                     p_type: segment.p_type(endian),
                     p_flags: segment.p_flags(endian),
                     p_offset: segment.p_offset(endian),
@@ -249,7 +260,7 @@ impl ElfImage {
             let map_end = phdrs.iter().map(|p|p.p_vaddr + p.p_memsz).max().unwrap_or_default() as u64;
             let map_start = phdrs.iter().map(|p|p.p_vaddr).min().unwrap_or_default() as u64;
 
-            let get_offset = |segment: &Elf64_Phdr| {
+            let get_offset = |segment: &Elf64Phdr| {
                 if linked {
                     // for Elf loaded in memory, the map starts from smallest p_vaddr
                     (segment.p_vaddr - map_start) as usize .. (segment.p_vaddr + segment.p_memsz - map_start) as usize
