@@ -23,7 +23,7 @@ pub struct BlueprintLibraryInit {
     pub ublueprint_function_library_static_class: usize,
 }
 
-impl_resolver!(BlueprintLibraryInit, |ctx| async {
+impl_resolver!(@all BlueprintLibraryInit, |ctx| async {
     let mem = &ctx.image().memory;
 
     let class_str = Pattern::from_bytes(
@@ -179,8 +179,8 @@ impl_resolver!(BlueprintLibraryInit, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct UFunctionBind(pub usize);
-#[cfg(target_os="windows")]
-impl_resolver_singleton!(UFunctionBind, |ctx| async {
+impl_resolver_singleton!(@collect UFunctionBind);
+impl_resolver_singleton!(@PEImage UFunctionBind, |ctx| async {
     let strings = ctx
         .scan(util::utf16_pattern(
             "Failed to bind native function %s.%s\0",
@@ -192,8 +192,7 @@ impl_resolver_singleton!(UFunctionBind, |ctx| async {
 });
 
 
-#[cfg(target_os="linux")]
-impl_resolver_singleton!(UFunctionBind, |ctx| async {
+impl_resolver_singleton!(@ElfImage UFunctionBind, |ctx| async {
     // maybe find symbol of vtable?
     let pattern = Pattern::new("41 56 53 50 49 89 fe 48 89 fb 66 0f 1f 44 00 00 e8 ?? ?? ?? ?? 48 8b 4b 10 48 63 50 38 3b 51 38 7e ?? 31 c0 48 8b 5b 20 48 85 db 75 ?? eb ?? 90 48 83 c0 30").unwrap();
     let fns = ctx.scan(pattern).await;

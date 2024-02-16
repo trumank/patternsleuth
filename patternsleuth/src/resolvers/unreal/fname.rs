@@ -18,6 +18,8 @@ use crate::{
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FNameCtorWchar(pub usize);
+impl_resolver_singleton!(@collect FNameCtorWchar);
+
 // for linux we find a function caontains following strings
 /*
 FEngineLoop::LoadPreInitModules:
@@ -28,8 +30,7 @@ FEngineLoop::LoadPreInitModules:
     Landscape
     RenderCore
 */
-#[cfg(target_os="linux")]
-impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
+impl_resolver_singleton!(@ElfImage FNameCtorWchar, |ctx| async {
     let strings = [
         "\0Engine\0",
         "\0Renderer\0",
@@ -95,8 +96,8 @@ impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
     */
     Ok(Self(result))
 });
-#[cfg(target_os="windows")]
-impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
+
+impl_resolver_singleton!(@PEImage FNameCtorWchar, |ctx| async {
     let strings = async {
         let strings = ["TGPUSkinVertexFactoryUnlimited\0", "MovementComponent0\0"];
         join_all(strings.iter().map(|s| ctx.scan(util::utf16_pattern(s)))).await
@@ -180,7 +181,9 @@ impl_resolver_singleton!(FNameCtorWchar, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FNameToString(pub usize);
-impl_resolver_singleton!(FNameToString, |ctx| async {
+impl_resolver_singleton!(@collect FNameToString);
+
+impl_resolver_singleton!(@ElfImage FNameToString, |ctx| async {
     let strings = ctx.scan(util::utf16_pattern("SkySphereMesh\0")).await;
     let str_addr = ensure_one(strings)?;
     let pattern = Pattern::new(format!("e8 | ?? ?? ?? ?? 49 8b 5f 10 48 8d 7c 24 30 be 0x{str_addr:08x}")).unwrap();
@@ -188,46 +191,7 @@ impl_resolver_singleton!(FNameToString, |ctx| async {
     Ok(Self(try_ensure_one(refs.into_iter().map(|a| Ok(ctx.image().memory.rip4(a)?)  ))?))
 });
 
-#[cfg(target_os="linux")]
-/* Following code find `public: class FString __cdecl FName::ToString(void) const`
-// function contains string u16"User."
-// will fail on linux
-#[cfg(target_os="linux")]
-impl_resolver_singleton!(FNameToString, |ctx| async {
-    let strings = ctx.scan(util::utf16_pattern("User.\0")).await;
-    //eprintln!("Found User. in {strings:?} {}", ctx.image().memory.read_wstring(strings[0]).unwrap());
-    let refs = util::scan_xrefs(ctx, &strings).await;
-    //eprintln!("Found refs in {refs:?}");
-    let fns = util::root_functions(ctx, &refs)?;
-    //eprintln!("Found refs in {fns:?}");
-
-    let addr = ensure_one(fns.iter().zip(refs.iter()).map(|(&addr, &xrefa)| -> Option<usize> {
-        let mut callsite = None;
-        disassemble(ctx.image(), addr, |inst| {
-            let cur = inst.ip() as usize;
-            if !(addr..addr + 32).contains(&cur) {
-                return Ok(Control::Break);
-            }
-            if  !inst.is_call_near_indirect() 
-                && inst.is_call_near() {
-                    // eprintln!("next ip = {}, xref = {}", inst.next_ip(), xrefa);
-                    if inst.next_ip() as usize == xrefa {
-                        // next instruction is fetch the address of the string
-                        // eprint!("Found!\n");
-                        callsite = Some(inst.ip_rel_memory_address() as usize);
-                        return Ok(Control::Break);
-                    }
-            }
-            Ok(Control::Continue)
-        }).ok()?;
-        //eprintln!("{callsite:?}");
-        return callsite;
-    }).flatten())?;
-    Ok(Self(addr))
-});
-*/
-#[cfg(target_os="windows")]
-impl_resolver_singleton!(FNameToString, |ctx| async {
+impl_resolver_singleton!(@PEImage FNameToString, |ctx| async {
     let patterns = async {
         let patterns = ["56 57 48 83 EC 28 48 89 D6 48 89 CF 83 79 ?? 00 74"];
 
@@ -314,7 +278,7 @@ impl_resolver_singleton!(FNameToString, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FNameToStringVoid(pub usize);
-impl_resolver_singleton!(FNameToStringVoid, |ctx| async {
+impl_resolver_singleton!(@all FNameToStringVoid, |ctx| async {
     let patterns = [
         "E8 | ?? ?? ?? ?? ?? 01 00 00 00 ?? 39 ?? 48 0F 8E",
         "E8 | ?? ?? ?? ?? BD 01 00 00 00 41 39 6E ?? 0F 8E",
@@ -337,7 +301,7 @@ impl_resolver_singleton!(FNameToStringVoid, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FNameToStringFString(pub usize);
-impl_resolver!(FNameToStringFString, |ctx| async {
+impl_resolver!(@all FNameToStringFString, |ctx| async {
     let patterns =
         ["48 8b 48 ?? 48 89 4c 24 ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00 48 8d"];
 

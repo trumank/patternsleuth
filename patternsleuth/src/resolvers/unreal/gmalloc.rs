@@ -7,9 +7,7 @@ use patternsleuth_scanner::Pattern;
 use std::ops::Range;
 
 use crate::{
-    disassemble::{disassemble, Control},
-    resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
-    Image, MemoryAccessorTrait,
+    disassemble::{disassemble, Control}, image, resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result}, Image, MemoryAccessorTrait
 };
 
 #[derive(Debug, PartialEq)]
@@ -18,13 +16,20 @@ use crate::{
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct GMalloc(pub usize);
-impl_resolver_singleton!(GMalloc, |ctx| async {
+impl_resolver_singleton!(@all GMalloc, |ctx| async {
     //eprintln!("GMalloc Scan Start!");
     let any = join!(
         ctx.resolve(GMallocPatterns::resolver()),
         ctx.resolve(GMallocString::resolver()),
     );
-
+    match ctx.read.image.image_type {
+        image::ImageType::PEImage(_) => {
+            0
+        }
+        image::ImageType::ElfImage(_) => {
+            0
+        }
+    };
     Ok(Self(*ensure_one(
         [any.0.map(|r| r.0), any.1.map(|r| r.0)]
             .iter()
@@ -32,15 +37,13 @@ impl_resolver_singleton!(GMalloc, |ctx| async {
     )?))
 });
 
-
-
 #[derive(Debug, PartialEq)]
 #[cfg_attr(
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct GMallocPatterns(pub usize);
-impl_resolver_singleton!(GMallocPatterns, |ctx| async {
+impl_resolver_singleton!(@all GMallocPatterns, |ctx| async {
     let patterns = [
         "48 ?? ?? f0 ?? 0f b1 ?? | ?? ?? ?? ?? 74 ?? ?? 85 ?? 74 ?? ?? 8b", // Purgatory
         "eb 03 ?? 8b ?? 48 8b ?? f0 ?? 0f b1 ?? | ?? ?? ?? ?? 74 ?? ?? 85 ?? 74 ?? ?? 8b", // Purg_notX
@@ -71,9 +74,9 @@ impl_resolver_singleton!(GMallocPatterns, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct GMallocString(pub usize);
+impl_resolver_singleton!(@collect GMallocString);
 
-#[cfg(target_os="windows")]
-impl_resolver_singleton!(GMallocString, |ctx| async {
+impl_resolver_singleton!(@PEImage GMallocString, |ctx| async {
     let strings = ctx.scan(util::utf16_pattern("DeleteFile %s\0")).await;
     let refs = util::scan_xrefs(ctx, &strings).await;
 
@@ -178,10 +181,7 @@ impl_resolver_singleton!(GMallocString, |ctx| async {
     Ok(Self(try_ensure_one(fns)?))
 });
 
-
-
-#[cfg(target_os="linux")]
-impl_resolver_singleton!(GMallocString, |ctx| async {
+impl_resolver_singleton!(@ElfImage GMallocString, |ctx| async {
     //eprintln!("GMalloc String Scan");
     let string_xref_used_by = |pattern: &'static str| async {
         let strings = ctx.scan(util::utf8_pattern(pattern)).await;
@@ -242,7 +242,6 @@ impl_resolver_singleton!(GMallocString, |ctx| async {
 
     Ok(Self(try_ensure_one(fns)?))
 });
-
 
 // pattern Linux
 // string -> "MemAvailable:" -> func FUnixPlatformMemory::GetStats() -> FMemory::GCreateMalloc 

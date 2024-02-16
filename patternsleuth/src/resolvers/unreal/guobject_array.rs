@@ -15,7 +15,7 @@ use crate::{
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct GUObjectArray(pub usize);
-impl_resolver_singleton!(GUObjectArray, |ctx| async {
+impl_resolver_singleton!(@all GUObjectArray, |ctx| async {
     let patterns = [
         "74 ?? 48 8D 0D | ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01",
         "75 ?? 48 ?? ?? 48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 45 33 C9 4C 89 74 24",
@@ -69,7 +69,7 @@ impl_resolver_singleton!(GUObjectArray, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FUObjectArrayAllocateUObjectIndex(pub usize);
-impl_resolver_singleton!(FUObjectArrayAllocateUObjectIndex, |ctx| async {
+impl_resolver_singleton!(@all FUObjectArrayAllocateUObjectIndex, |ctx| async {
     let strings = ctx
         .scan(util::utf16_pattern(
             "Unable to add more objects to disregard for GC pool (Max: %d)\0",
@@ -87,7 +87,7 @@ impl_resolver_singleton!(FUObjectArrayAllocateUObjectIndex, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FUObjectArrayFreeUObjectIndex(pub usize);
-impl_resolver_singleton!(FUObjectArrayFreeUObjectIndex, |ctx| async {
+impl_resolver_singleton!(@all FUObjectArrayFreeUObjectIndex, |ctx| async {
     let refs_future = async {
         let search_strings = [
             "Removing object (0x%016llx) at index %d but the index points to a different object (0x%016llx)!",
@@ -130,7 +130,7 @@ impl_resolver_singleton!(FUObjectArrayFreeUObjectIndex, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct UObjectBaseShutdown(pub usize);
-impl_resolver_singleton!(UObjectBaseShutdown, |ctx| async {
+impl_resolver_singleton!(@all UObjectBaseShutdown, |ctx| async {
     let strings = ctx
         .scan(util::utf16_pattern(
                 "All UObject delete listeners should be unregistered when shutting down the UObject array\0"

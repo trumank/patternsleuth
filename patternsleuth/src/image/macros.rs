@@ -17,7 +17,7 @@ macro_rules! image_type_dispatch {
                 }
             )*
         }
-        image_type_dispatch!(@generate_macro_for_enum $enum_name_macro_it $enum_tt);
+        image_type_dispatch!(@generate_macro_for_enum $enum_name_it $enum_name_macro_it $enum_tt);
     };
     (@define_imagetype $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }) => {
         pub enum $enum_name_it {
@@ -42,27 +42,11 @@ macro_rules! image_type_dispatch {
         }
     };
 
-    (@generate_macro_for_enum $enum_name_macro_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }) => {
+    (@generate_macro_for_enum $enum_name_it:ident $enum_name_macro_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }) => {
         #[allow(unused_macros)]
         macro_rules! $enum_name_macro_it {
-            (@foreach $macroname:ident) => {
-                $(
-                    $macroname!($img_ident, $img_ty);
-                )*
-            };
-            
-            (@foreach $macroname:ident, $args:tt) => {
-                $(
-                    $macroname!($img_ident, $img_ty, $args);
-                )*
-            };
-            
-            (@all $macroname:ident) => {
-                $macroname!($($img_ident: $img_ty),*);
-            };
-
-            (@all $macroname:ident, $args:tt) => {
-                $macroname!($($img_ident: $img_ty),*; $args);
+            (@all $macroname:ident; @$id:ident; $arg:tt) => {
+                $macroname!(@$id $enum_name_it {$( $img_ident($img_ty),)*}, $arg)
             };
         }
         

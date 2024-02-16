@@ -33,7 +33,7 @@ impl Debug for EngineVersion {
     }
 }
 
-impl_resolver!(EngineVersion, |ctx| async {
+impl_resolver!(@all EngineVersion, |ctx| async {
     let patterns = [
         "C7 03 | 04 00 ?? 00 66 89 4B 04 48 3B F8 74 ?? 48",
         "C7 05 ?? ?? ?? ?? | 04 00 ?? 00 66 89 ?? ?? ?? ?? ?? C7 05",
@@ -86,9 +86,9 @@ pub struct EngineVersionStrings {
     pub build_date: String,
     pub build_version: String,
 }
+impl_resolver!(@collect EngineVersionStrings);
 // "++UE5+Release-{}.{}"
-#[cfg(target_os="linux")]
-impl_resolver!(EngineVersionStrings, |ctx| async {
+impl_resolver!(@ElfImage EngineVersionStrings, |ctx| async {
     let pattern_name = util::utf16_pattern("++UE5+Release-");
     let name_scan = ctx.scan(pattern_name).await;
 
@@ -124,8 +124,7 @@ impl_resolver!(EngineVersionStrings, |ctx| async {
 
 });
 
-#[cfg(target_os="windows")]
-impl_resolver!(EngineVersionStrings, |ctx| async {
+impl_resolver!(@PEImage EngineVersionStrings, |ctx| async {
     let patterns = [
         "48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC 48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC 48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC",
     ];
@@ -167,3 +166,4 @@ impl_resolver!(EngineVersionStrings, |ctx| async {
 
     bail_out!("not found");
 });
+
