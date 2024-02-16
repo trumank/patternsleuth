@@ -214,6 +214,8 @@ pub use ::inventory;
 #[cfg(feature = "serde-resolvers")]
 pub use ::typetag;
 
+pub trait PleaseAddCollectForMe {}
+
 #[macro_export]
 macro_rules! _matcharm_generator {
     ($enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }, {$ctx:ident, $name:ident}) => {
@@ -238,7 +240,7 @@ macro_rules! _impl_resolver {
     };
 
     (@$arch:ident $name:ident, |$ctx:ident| async $x:block ) => {
-        impl $name {
+        impl $name where $name: $crate::resolvers::PleaseAddCollectForMe {
             #[allow(non_snake_case)]
             pub async fn $arch($ctx: &$crate::resolvers::AsyncContext<'_>) -> $crate::resolvers::Result<$name> $x
         }
@@ -248,11 +250,14 @@ macro_rules! _impl_resolver {
         $crate::_impl_resolver_inner!($name, |ctx| async {
             $crate::image::image_type_reflection!(@all impl_resolver; @generate; {ctx, $name})
         });
+
         impl $crate::resolvers::Singleton for $name {
             fn get(&self) -> Option<usize> {
                 None
             }
         }
+
+        impl $crate::resolvers::PleaseAddCollectForMe for $name {}
     };
 
     (@generate $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }, {$ctx:ident, $name:ident}) => {
@@ -274,21 +279,26 @@ macro_rules! _impl_resolver_singleton {
             }
         }
     };
+
     (@$arch:ident $name:ident, |$ctx:ident| async $x:block ) => {
-        impl $name {
+        impl $name where $name: $crate::resolvers::PleaseAddCollectForMe {
             #[allow(non_snake_case)]
             async fn $arch($ctx: &$crate::resolvers::AsyncContext<'_>) -> $crate::resolvers::Result<$name> $x
         }
     };
+
     (@collect $name:ident) => {
         $crate::_impl_resolver_inner!($name, |ctx| async {
             $crate::image::image_type_reflection!(@all impl_resolver_singleton; @generate; {ctx, $name})
         });
+
         impl $crate::resolvers::Singleton for $name {
             fn get(&self) -> Option<usize> {
                 Some(self.0)
             }
         }
+
+        impl $crate::resolvers::PleaseAddCollectForMe for $name {}
     };
 
     (@generate $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }, {$ctx:ident, $name:ident}) => {
