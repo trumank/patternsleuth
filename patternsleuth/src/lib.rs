@@ -277,6 +277,7 @@ pub enum MemoryAccessError {
     MemoryOutOfBoundsError,
     Utf8Error,
     Utf16Error,
+    MisalginedAddress(usize, usize),
 }
 impl std::error::Error for MemoryAccessError {}
 impl std::fmt::Display for MemoryAccessError {
@@ -285,6 +286,9 @@ impl std::fmt::Display for MemoryAccessError {
             Self::MemoryOutOfBoundsError => write!(f, "MemoryOutOfBoundsError"),
             Self::Utf8Error => write!(f, "Utf8Error"),
             Self::Utf16Error => write!(f, "Utf16Error"),
+            Self::MisalginedAddress(addr, align) => {
+                write!(f, "MisalginedAddress: address {:#x} != {:#x}", addr, align)
+            }
         }
     }
 }
