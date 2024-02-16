@@ -52,6 +52,7 @@ impl<'data> RawUESymbols<'data> {
     }
 }
 
+#[allow(dead_code)]
 impl WrapRecord<'_, '_> {
     fn read_str(&self, relative_offset: usize) -> &'_ str {
         let start = relative_offset;

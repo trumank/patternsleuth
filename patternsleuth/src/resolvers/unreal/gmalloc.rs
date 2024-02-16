@@ -7,7 +7,7 @@ use patternsleuth_scanner::Pattern;
 use std::ops::Range;
 
 use crate::{
-    disassemble::{disassemble, Control}, image, resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result}, Image, MemoryAccessorTrait
+    disassemble::{disassemble, Control}, resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result}, Image, MemoryAccessorTrait
 };
 
 #[derive(Debug, PartialEq)]

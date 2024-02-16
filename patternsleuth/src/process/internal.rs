@@ -6,7 +6,6 @@ mod linux {
     use std::ptr::{null, null_mut};
 
     use anyhow::Result;
-    use gimli::Pointer;
 
     use crate::Image;
     use libc::{dl_iterate_phdr, Elf64_Addr,  Elf64_Phdr, Elf64_Sxword, Elf64_Xword, PT_LOAD};

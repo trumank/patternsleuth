@@ -186,6 +186,7 @@ impl ElfImage {
             Ok(result)
         }?;
         
+        #[allow(unused_variables)]
         let symbols = if let Some(exe_path) = exe_path {
             #[cfg(not(feature = "symbols"))]
             unreachable!();
@@ -257,7 +258,7 @@ impl ElfImage {
                 segment.p_type(endian) == object::elf::PT_LOAD
             }).map(phdr_map).collect::<Vec<_>>();
             
-            let map_end = phdrs.iter().map(|p|p.p_vaddr + p.p_memsz).max().unwrap_or_default() as u64;
+            let _map_end = phdrs.iter().map(|p|p.p_vaddr + p.p_memsz).max().unwrap_or_default() as u64;
             let map_start = phdrs.iter().map(|p|p.p_vaddr).min().unwrap_or_default() as u64;
 
             let get_offset = |segment: &Elf64Phdr| {

@@ -6,7 +6,7 @@ use iced_x86::{Code, Decoder, DecoderOptions};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    disassemble::{disassemble, Control}, resolvers::{
+    resolvers::{
         ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util, Context, ResolveError, Result
     }, MemoryAccessorTrait, MemoryTrait
 };
