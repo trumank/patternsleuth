@@ -22,14 +22,6 @@ impl_resolver_singleton!(@all GMalloc, |ctx| async {
         ctx.resolve(GMallocPatterns::resolver()),
         ctx.resolve(GMallocString::resolver()),
     );
-    match ctx.read.image.image_type {
-        image::ImageType::PEImage(_) => {
-            0
-        }
-        image::ImageType::ElfImage(_) => {
-            0
-        }
-    };
     Ok(Self(*ensure_one(
         [any.0.map(|r| r.0), any.1.map(|r| r.0)]
             .iter()
