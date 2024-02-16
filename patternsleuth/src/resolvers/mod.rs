@@ -277,7 +277,7 @@ macro_rules! _impl_resolver_singleton {
     (@$arch:ident $name:ident, |$ctx:ident| async $x:block ) => {
         impl $name {
             #[allow(non_snake_case)]
-            pub async fn $arch($ctx: &$crate::resolvers::AsyncContext<'_>) -> $crate::resolvers::Result<$name> $x
+            async fn $arch($ctx: &$crate::resolvers::AsyncContext<'_>) -> $crate::resolvers::Result<$name> $x
         }
     };
     (@collect $name:ident) => {
