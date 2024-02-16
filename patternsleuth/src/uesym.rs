@@ -86,6 +86,6 @@ pub fn dump_ue_symbols<P: AsRef<Path>>(
     let data = std::fs::read(filename)?;
     let symbols = RawUESymbols::new(data.as_slice())?;
     Ok(HashMap::from_iter(symbols.iter().map(|rec| {
-        (rec.record.address as usize, rec.symbol().to_string())
+        (rec.record.address as usize + base_address, rec.symbol().to_string())
     })))
 }
