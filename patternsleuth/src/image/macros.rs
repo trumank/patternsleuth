@@ -50,10 +50,19 @@ macro_rules! image_type_dispatch {
                     $macroname!($img_ident, $img_ty);
                 )*
             };
+            
             (@foreach $macroname:ident, $args:tt) => {
                 $(
                     $macroname!($img_ident, $img_ty, $args);
                 )*
+            };
+            
+            (@all $macroname:ident) => {
+                $macroname!($($img_ident: $img_ty),*);
+            };
+
+            (@all $macroname:ident, $args:tt) => {
+                $macroname!($($img_ident: $img_ty),*; $args);
             };
         }
         
