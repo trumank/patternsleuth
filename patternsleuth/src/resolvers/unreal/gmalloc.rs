@@ -1,9 +1,10 @@
 use std::{collections::HashSet, fmt::Debug};
 
-use futures::{future::join_all, join};
+use futures::{future::join_all, join, try_join};
 use iced_x86::{Code, FlowControl, OpKind, Register};
 use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
+use std::ops::Range;
 
 use crate::{
     disassemble::{disassemble, Control},
@@ -182,29 +183,31 @@ impl_resolver_singleton!(GMallocString, |ctx| async {
 #[cfg(target_os="linux")]
 impl_resolver_singleton!(GMallocString, |ctx| async {
     //eprintln!("GMalloc String Scan");
-    let strings = ctx.scan(util::utf8_pattern("/proc/meminfo\0")).await;
-    //eprintln!("Found /proc/meminfo @ {:?} ", strings);
-    let refs = util::scan_xrefs(ctx, &strings).await;
-    //eprintln!("Found {} refs", refs.len());
+    let string_xref_used_by = |pattern: &'static str| async {
+        let strings = ctx.scan(util::utf8_pattern(pattern)).await;
+        //eprintln!("Found /proc/meminfo @ {:?} ", strings);
+        let refs = util::scan_xrefs(ctx, &strings).await;
+        //eprintln!("Found {} refs", refs.len());
 
-    let fns = util::root_functions(ctx, &refs)?;
-    //eprintln!("Found related functions @ {:?}", fns);
+        let fns = util::root_functions(ctx, &refs)?;
+        //eprintln!("Found related functions @ {:?}", fns);
 
-    let fns = util::scan_xcalls(ctx, &fns).await; 
-    // found an addree for FMemory::GCreateMalloc
-    //eprintln!("Found {} xcall fns @ {:?}", fns.len(), fns);
+        Result::<Vec<usize>>::Ok(util::scan_xcalls(ctx, &fns).await) 
+    };
 
-    // Cross exam use another string pattern
-    let strings2 = ctx.scan(util::utf8_pattern("Refusing to run with the root privileges.\n\0")).await;
-    //eprintln!("Found Refusing to run with the root privileges @ {:?} ", strings2);
-    let refs2 = util::scan_xrefs(ctx, &strings2).await;
-    //eprintln!("Found {} refs2 @ {:?}", refs2.len(), refs2);
-    let fns2 = util::root_functions(ctx, &refs2)?;
-    //eprintln!("Found related functions @ {:?}", fns2);
-    let fns2 = util::scan_xcalls(ctx, &fns2).await;
-    //eprintln!("Found {} xcall fns2 @ {:?}", fns2.len(), fns2);
-    let fns2 = fns2.iter().map(|&x| x .. (x + 24)).collect_vec(); 
-    // another possible address for FMemory::GCreateMalloc
+    let find_string_pattern1 = || async {
+        string_xref_used_by("/proc/meminfo\0").await
+    };
+
+    let find_string_pattern2 = || async {
+        let fns2 = string_xref_used_by("Refusing to run with the root privileges.\n\0").await?;
+        //eprintln!("Found {} xcall fns2 @ {:?}", fns2.len(), fns2);
+        let fns2 = fns2.iter().map(|&x| x .. (x + 24)).collect_vec(); 
+        // another possible address for FMemory::GCreateMalloc
+        Result::<Vec<Range<usize>>>::Ok(fns2)
+    };
+
+    let (fns, fns2) = try_join!(find_string_pattern1(), find_string_pattern2())?;
 
     let fns = fns.into_iter().filter(|x| {
         fns2.iter().any(|y| y.contains(x))
