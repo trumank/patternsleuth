@@ -218,7 +218,6 @@ fn main() -> Result<()> {
 }
 
 fn scan(command: CommandScan) -> Result<()> {
-    print!("Command Scan!\n");
     let sig_filter = command.signature.into_iter().collect::<HashSet<_>>();
     let include_default = command.patterns.is_empty() && command.xref.is_empty();
     let patterns = get_patterns()?
