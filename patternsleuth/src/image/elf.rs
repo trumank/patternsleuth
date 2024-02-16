@@ -4,6 +4,7 @@ use crate::{Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, NamedMe
 
 use super::{Image, ImageType};
 use gimli::{BaseAddresses, CieOrFde, EhFrame, EhFrameHdr, NativeEndian, UnwindSection};
+use itertools::Itertools;
 use libc::Elf64_Phdr;
 use object::{elf::ProgramHeader64, read::elf::ElfFile64, Endianness, File, Object, ObjectSection, SectionKind};
 use anyhow::{Context, Result};
@@ -21,15 +22,14 @@ impl ElfImage {
         self.get_root_function(image, address)
     }
     pub fn get_root_function(&self, _image: &Image<'_>, address: usize) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
+        self.get_root_function_range(_image, address).map(|range| range.map(|r| RuntimeFunction {
+            range: r,
+            unwind: 0,
+        }))
+    }
+    pub fn get_root_function_range(&self, _image: &Image<'_>, address: usize) -> Result<Option<Range<usize>>, MemoryAccessError> {
         let x = self.functions.as_ref().unwrap();
-        x.iter().find(|p| p.contains(&address)).map(|a| 
-            Ok(Some(
-                RuntimeFunction {
-                    range: a.clone(),
-                    unwind: 0
-                }
-            ))
-        ).unwrap_or(Ok(None))
+        Ok(x.iter().find(|p| p.contains(&address)).map(|a| a.clone()))
     }
     pub fn get_child_functions(&self, image: &Image<'_>, address: usize) -> Result<Vec<RuntimeFunction>, MemoryAccessError> {
         match self.get_function(image, address) {
@@ -137,6 +137,7 @@ impl ElfImage {
                         CieOrFde::Cie(_) => {},
                     }
                 }
+                result.sort_by(|a,b| a.start.cmp(&b.start));
                 Ok(result)
             }).context("Cannot find eh_frame")?
         } else {
@@ -170,6 +171,7 @@ impl ElfImage {
                 }
             }
             result.sort_by(|a,b| a.start.cmp(&b.start));
+            eprintln!("Found {} fde", result.len());
             Ok(result)
         }?;
         
@@ -181,7 +183,12 @@ impl ElfImage {
                 let sym_path = exe_path.as_ref().with_extension("sym");
                 sym_path
                     .exists()
-                    .then(|| uesym::dump_ue_symbols(sym_path, base_address))
+                    .then(|| -> Result<HashMap<_, _>> {
+                        let syms = uesym::dump_ue_symbols(sym_path, base_address)?;
+                        Ok(HashMap::from_iter(functions.iter().map(|f| -> Option<(usize, String)>{
+                            Some((f.start, syms.get(&f.start)?.to_owned()))
+                        }).flatten()))
+                    })
                     .transpose()?
             }
         } else {
@@ -241,8 +248,6 @@ impl ElfImage {
             
             let map_end = phdrs.iter().map(|p|p.p_vaddr + p.p_memsz).max().unwrap_or_default() as u64;
             let map_start = phdrs.iter().map(|p|p.p_vaddr).min().unwrap_or_default() as u64;
-
-            eprintln!("map_start: {:#x}, map_end: {:#x}", map_start, map_end);
 
             let get_offset = |segment: &Elf64_Phdr| {
                 if linked {
