@@ -1,6 +1,6 @@
 use std::{collections::HashMap, mem, ops::Range};
 
-use crate::{uesym, Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, NamedMemorySection, RuntimeFunction};
+use crate::{Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, NamedMemorySection, RuntimeFunction};
 
 use super::{Image, ImageType};
 use gimli::{BaseAddresses, CieOrFde, EhFrame, EhFrameHdr, NativeEndian, UnwindSection};
@@ -9,6 +9,8 @@ use object::{elf::ProgramHeader64, read::elf::ElfFile64, Endianness, File, Objec
 use anyhow::{Context, Result};
 use object::read::elf::ProgramHeader;
 use anyhow::Error;
+#[cfg(feature = "symbols")]
+use crate::uesym;
 
 pub struct ElfImage {
     pub functions: Option<Vec<Range<usize>>>,
@@ -201,10 +203,11 @@ impl ElfImage {
     pub fn read_inner<'data, P: AsRef<std::path::Path>>(
         base_addr: Option<usize>,
         exe_path: Option<P>,
-        cache_functions: bool,
+        _cache_functions: bool,
         object: object::File<'data>,
     ) -> Result<Image<'data>, anyhow::Error> {
         let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
+        let linked = base_addr.is_some();
         let calc_kind = |flag: u32| {
             if flag & object::elf::PF_X == object::elf::PF_X {
                 SectionKind::Text
@@ -216,7 +219,7 @@ impl ElfImage {
                 SectionKind::Unknown
             }
         };
-
+        eprintln!("base_address: {:#x}", base_address);
         // the elf may not contains section table if it's in memory, use phdr instead.
         if let File::Elf64(object) = object {
             let endian = object.endian();
@@ -239,8 +242,10 @@ impl ElfImage {
             let map_end = phdrs.iter().map(|p|p.p_vaddr + p.p_memsz).max().unwrap_or_default() as u64;
             let map_start = phdrs.iter().map(|p|p.p_vaddr).min().unwrap_or_default() as u64;
 
+            eprintln!("map_start: {:#x}, map_end: {:#x}", map_start, map_end);
+
             let get_offset = |segment: &Elf64_Phdr| {
-                if base_addr.is_some() {
+                if linked {
                     // for Elf loaded in memory, the map starts from smallest p_vaddr
                     (segment.p_vaddr - map_start) as usize .. (segment.p_vaddr + segment.p_memsz - map_start) as usize
                 } else {
@@ -253,8 +258,6 @@ impl ElfImage {
             let sections = phdrs.iter().enumerate().map(|(idx, segment)| {
                 let vaddr_range = segment.p_vaddr .. (segment.p_vaddr + segment.p_filesz);
                 let offset_range = get_offset(segment);
-                let addr = segment.p_offset as usize;
-                let size = segment.p_filesz as usize;
                 let section_name =  if ! vaddr_range.contains(&entrypoint) { format!("FakeSection {}", idx + 1) } else {".text".to_owned()};
                 NamedMemorySection::new(
                     section_name,
@@ -268,7 +271,7 @@ impl ElfImage {
                 sections: sections,
             };
 
-            Self::read_inner_memory(base_address, exe_path, base_addr.is_some(), memory, object)
+            Self::read_inner_memory(base_address, exe_path, linked, memory, object)
         } else {
             return Err(anyhow::anyhow!("Not a elf file"));
         }
