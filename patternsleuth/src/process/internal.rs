@@ -96,10 +96,12 @@ mod linux {
             let map_end = phdr_slice.iter().filter(|p| p.p_type == PT_LOAD).map(|p|p.p_vaddr+p.p_memsz).max().unwrap_or_default() as usize;
             let map_start = phdr_slice.iter().filter(|p| p.p_type == PT_LOAD).map(|p|p.p_vaddr).min().unwrap_or_default() as usize;
             
-            let data = std::slice::from_raw_parts(base_addr as *const u8, map_end - map_start);
-
+            let data = std::slice::from_raw_parts((base_addr + map_start) as *const u8, map_end - map_start);
+            #[cfg(feature = "symbols")]
             let exe_path = std::fs::read_link("/proc/self/exe").ok();
-
+            #[cfg(not(feature = "symbols"))]
+            let exe_path: Option<std::path::PathBuf> = None;
+            eprintln!("Reading image internal");
             Image::read(Some(base_addr), data, exe_path, false)
         }
     }
