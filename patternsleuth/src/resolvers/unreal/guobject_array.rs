@@ -130,7 +130,9 @@ impl_resolver_singleton!(@all FUObjectArrayFreeUObjectIndex, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct UObjectBaseShutdown(pub usize);
-impl_resolver_singleton!(@all UObjectBaseShutdown, |ctx| async {
+impl_resolver_singleton!(@collect UObjectBaseShutdown);
+
+impl_resolver_singleton!(@PEImage UObjectBaseShutdown, |ctx| async {
     let strings = ctx
         .scan(util::utf16_pattern(
                 "All UObject delete listeners should be unregistered when shutting down the UObject array\0"
@@ -138,7 +140,17 @@ impl_resolver_singleton!(@all UObjectBaseShutdown, |ctx| async {
         .await;
     let refs = util::scan_xrefs(ctx, &strings).await;
     let fns = util::root_functions(ctx, &refs)?;
-    #[cfg(target_os="linux")]
+    Ok(UObjectBaseShutdown(ensure_one(fns)?))
+});
+
+impl_resolver_singleton!(@ElfImage UObjectBaseShutdown, |ctx| async {
+    let strings = ctx
+        .scan(util::utf16_pattern(
+                "All UObject delete listeners should be unregistered when shutting down the UObject array\0"
+        ))
+        .await;
+    let refs = util::scan_xrefs(ctx, &strings).await;
+    let fns = util::root_functions(ctx, &refs)?;
     let fns = {
         // on linux both functions are not inlined, we need to find the caller
         let callsites = util::scan_xcalls(ctx, &fns).await;
@@ -146,3 +158,5 @@ impl_resolver_singleton!(@all UObjectBaseShutdown, |ctx| async {
     };
     Ok(UObjectBaseShutdown(ensure_one(fns)?))
 });
+
+
