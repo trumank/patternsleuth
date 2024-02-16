@@ -226,7 +226,7 @@ impl ElfImage {
                 SectionKind::Unknown
             }
         };
-        eprintln!("base_address: {:#x}", base_address);
+        
         // the elf may not contains section table if it's in memory, use phdr instead.
         if let File::Elf64(object) = object {
             let endian = object.endian();
