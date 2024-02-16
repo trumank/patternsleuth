@@ -1,5 +1,5 @@
-use std::{collections::HashMap, path::Path, slice};
-use anyhow::{anyhow, Context, Result};
+use std::{collections::HashMap, path::Path};
+use anyhow::{anyhow, Result};
 use object::{from_bytes, slice_from_bytes, Pod};
 
 #[repr(C, packed)]
