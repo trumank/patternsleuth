@@ -969,7 +969,7 @@ fn symbols(command: CommandSymbols) -> Result<()> {
     let mut cells = vec![];
 
     for GameFileEntry { name, exe_path } in get_games(command.game)? {
-        if !exe_path.with_extension("pdb").exists() {
+        if !exe_path.with_extension("pdb").exists() && !exe_path.with_extension("sym").exists(){
             continue;
         }
 
@@ -989,19 +989,11 @@ fn symbols(command: CommandSymbols) -> Result<()> {
 
         for (address, name) in exe.symbols.as_ref().unwrap() {
             if filter(name) {
-                if let Ok(Some(exception)) = exe.get_root_function(*address) {
-                    let fns = exe.get_child_functions(exception.range.start).unwrap();
-                    let min = fns.iter().map(|f| f.range.start).min().unwrap();
-                    let max = fns.iter().map(|f| f.range.end).max().unwrap();
-                    let full_range = min..max; // TODO does not handle sparse ranges
-                    if exception.range.start != *address {
-                        println!("MISALIGNED EXCEPTION ENTRY FOR {}", name);
-                    } else {
-                        cells.push((
-                            name.clone(),
-                            disassemble::disassemble_range(&exe, full_range),
-                        ));
-                    }
+                if let Ok(Some(full_range)) = exe.get_root_function_range(*address) {
+                    cells.push((
+                        name.clone(),
+                        disassemble::disassemble_range(&exe, full_range),
+                    ));
                 } else {
                     println!("{:016x} [NO EXCEPT] {}", address, name);
                 }
