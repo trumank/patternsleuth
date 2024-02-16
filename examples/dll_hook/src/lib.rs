@@ -111,7 +111,7 @@ mod resolvers {
         scanner::Pattern,
     };
 
-    impl_resolver_singleton!(FFrameKismetExecutionMessage, |ctx| async {
+    impl_resolver_singleton!(@all FFrameKismetExecutionMessage, |ctx| async {
         // void FFrame::KismetExecutionMessage(wchar16 const* Message, enum ELogVerbosity::Type Verbosity, class FName WarningId)
         let patterns = ["48 89 5C 24 ?? 57 48 83 EC 40 0F B6 DA 48 8B F9"];
         let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
