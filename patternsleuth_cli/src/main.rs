@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
+use clap::builder::{
+    IntoResettable, PossibleValue, PossibleValuesParser, TypedValueParser, ValueParser,
+};
 use clap::Parser;
 use indicatif::ProgressBar;
 use itertools::Itertools;
@@ -39,10 +42,16 @@ fn parse_maybe_hex(s: &str) -> Result<usize> {
         .unwrap_or_else(|| s.parse())?)
 }
 
-fn parse_resolver(s: &str) -> Result<&'static NamedResolver> {
-    resolvers()
-        .find(|res| s == res.name)
-        .context("Resolver not found")
+fn resolver_parser() -> impl IntoResettable<ValueParser> {
+    fn parse_resolver(s: &str) -> Result<&'static NamedResolver> {
+        resolvers()
+            .find(|res| s == res.name)
+            .context("Resolver not found")
+    }
+    fn possible_resolvers() -> Vec<PossibleValue> {
+        resolvers().map(|r| r.name.into()).collect()
+    }
+    PossibleValuesParser::new(possible_resolvers()).map(|v| parse_resolver(&v).unwrap())
 }
 
 #[derive(Parser)]
@@ -61,7 +70,7 @@ struct CommandScan {
     signature: Vec<Sig>,
 
     /// A resolver to scan for (can be specified multiple times)
-    #[arg(short, long, value_parser(|s: &_| parse_resolver(s)))]
+    #[arg(short, long, value_parser(resolver_parser()))]
     resolver: Vec<&'static NamedResolver>,
 
     /// Show disassembly context for each stage of every match (I recommend only using with
@@ -110,7 +119,7 @@ struct CommandReport {
     game: Vec<String>,
 
     /// A resolver to scan for (can be specified multiple times)
-    #[arg(short, long, value_parser(|s: &_| parse_resolver(s)))]
+    #[arg(short, long, value_parser(resolver_parser()))]
     resolver: Vec<&'static NamedResolver>,
 }
 
@@ -184,7 +193,7 @@ struct CommandViewSymbol {
     #[arg(short, long)]
     function: Vec<FunctionSpec>,
 
-    #[arg(short, long, value_parser(|s: &_| parse_resolver(s)))]
+    #[arg(short, long, value_parser(resolver_parser()))]
     resolver: Vec<&'static NamedResolver>,
 
     /// Whether to show symbols in function disassembly
