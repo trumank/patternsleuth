@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashSet,
     fmt::{Debug, Display},
 };
@@ -102,7 +103,7 @@ impl_resolver!(EngineVersionStrings, |ctx| async {
     ]
     .into_iter()
     .map(|month| month.encode_utf16().flat_map(u16::to_le_bytes).collect())
-    .collect::<HashSet<Vec<u8>>>();
+    .collect::<HashSet<Cow<[u8]>>>();
 
     for (_, pattern, addresses) in res {
         for a in addresses {
@@ -111,7 +112,7 @@ impl_resolver!(EngineVersionStrings, |ctx| async {
             if mem
                 .range(date..date + 6)
                 .ok()
-                .filter(|r| months.contains(&r.to_vec()))
+                .filter(|r| months.contains(&Cow::from(*r)))
                 .is_some()
             {
                 return Ok(EngineVersionStrings {
