@@ -1,9 +1,52 @@
 use anyhow::{bail, Context, Error, Result};
 
 #[derive(Clone, Eq, PartialEq)]
-pub struct Pattern {
+pub struct PatternSimple {
     pub sig: Vec<u8>,
     pub mask: Vec<u8>,
+}
+impl PatternSimple {
+    #[inline(always)]
+    pub fn is_match(&self, data: &[u8], index: usize) -> bool {
+        for i in 0..self.len() {
+            if data[index + i] & self.mask[i] != self.sig[i] {
+                return false;
+            }
+        }
+        true
+    }
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.sig.len()
+    }
+    pub fn iter(&self) -> std::iter::Zip<std::slice::Iter<u8>, std::slice::Iter<u8>> {
+        self.sig.iter().zip(&self.mask)
+    }
+}
+impl Display for PatternSimple {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:02X}", self.sig[0])?;
+        for (sig, mask) in self.iter().skip(1) {
+            if *mask == 0 {
+                write!(f, " ??")?;
+            } else if *mask == 0xff {
+                write!(f, " {:02X}", sig)?;
+            } else {
+                todo!("bit mask formatting")
+            }
+        }
+        Ok(())
+    }
+}
+impl std::fmt::Debug for PatternSimple {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PatternSimple(\"{self}\")")
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct Pattern {
+    pub simple: PatternSimple,
     pub custom_offset: usize,
     pub captures: Vec<std::ops::Range<usize>>,
     pub xrefs: Vec<(usize, Xref)>,
@@ -135,8 +178,7 @@ impl Pattern {
         }
 
         Ok(Self {
-            sig,
-            mask,
+            simple: PatternSimple { sig, mask },
             custom_offset,
             captures,
             xrefs,
@@ -145,28 +187,26 @@ impl Pattern {
     /// Create a pattern from a literal `Vec<u8>` with `mask` filled with 0xff and `custom_offset = 0`.
     pub fn from_bytes(sig: Vec<u8>) -> Result<Self> {
         Ok(Self {
-            mask: vec![0xff; sig.len()],
-            sig,
+            simple: PatternSimple {
+                mask: vec![0xff; sig.len()],
+                sig,
+            },
             custom_offset: 0,
             captures: vec![],
             xrefs: vec![],
         })
     }
-    #[inline]
+    #[inline(always)]
     pub fn is_match(&self, data: &[u8], base_address: usize, index: usize) -> bool {
-        for i in 0..self.mask.len() {
-            if data[index + i] & self.mask[i] != self.sig[i] {
-                return false;
-            }
-        }
-        self.xrefs.iter().all(|(offset, xref)| {
-            (base_address + index + offset + 4)
-                .checked_add_signed(i32::from_le_bytes(
-                    data[index + offset..index + offset + 4].try_into().unwrap(),
-                ) as isize)
-                .map(|x| x == xref.0)
-                .unwrap_or(false)
-        })
+        self.simple.is_match(data, index)
+            && self.xrefs.iter().all(|(offset, xref)| {
+                (base_address + index + offset + 4)
+                    .checked_add_signed(i32::from_le_bytes(
+                        data[index + offset..index + offset + 4].try_into().unwrap(),
+                    ) as isize)
+                    .map(|x| x == xref.0)
+                    .unwrap_or(false)
+            })
     }
     pub fn captures<'data>(
         &self,
@@ -193,25 +233,28 @@ impl Pattern {
 
 impl Display for Pattern {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut buffer = String::new();
-        buffer.push_str(&format!("{:02X}", self.sig[0]));
-        let mut iter = self.sig.iter().zip(&self.mask).enumerate().skip(1);
+        write!(f, "{:02X}", self.simple.sig[0])?;
+        let mut iter = self.simple.iter().enumerate().skip(1);
         while let Some((i, (sig, mask))) = iter.next() {
-            // TODO bit masks
+            if i == self.custom_offset {
+                write!(f, " |")?;
+            }
             if *mask == 0 {
                 if let Some((_offset, xref)) =
                     self.xrefs.iter().find(|(offset, _xref)| *offset == i)
                 {
-                    buffer.push_str(&format!(" X0x{:X}", xref.0));
+                    write!(f, " X0x{:X}", xref.0)?;
                     iter.nth(2); // skip 3
                 } else {
-                    buffer.push_str(" ??");
+                    write!(f, " ??")?;
                 }
+            } else if *mask == 0xff {
+                write!(f, " {:02X}", sig)?;
             } else {
-                buffer.push_str(&format!(" {:02X}", sig));
+                todo!("bit mask formatting")
             }
         }
-        write!(f, "{}", buffer)
+        Ok(())
     }
 }
 impl std::fmt::Debug for Pattern {
@@ -243,18 +286,25 @@ pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> 
     let mut short_bins: HashMap<u8, Vec<_>> = Default::default();
     let mut wide_bins: HashMap<[u8; WIDE], Vec<_>> = Default::default();
     for (pi, p) in patterns.iter().enumerate() {
-        all_bins.insert(p.sig[0]);
-        if p.mask.iter().take(WIDE).filter(|m| **m == 0xff).count() == WIDE {
+        all_bins.insert(p.simple.sig[0]);
+        if p.simple
+            .mask
+            .iter()
+            .take(WIDE)
+            .filter(|m| **m == 0xff)
+            .count()
+            == WIDE
+        {
             let mut buf = [0; WIDE];
-            buf.copy_from_slice(&p.sig[0..WIDE]);
+            buf.copy_from_slice(&p.simple.sig[0..WIDE]);
             wide_bins.entry(buf).or_default().push((pi, p));
         } else {
-            short_bins.entry(p.sig[0]).or_default().push((pi, p));
+            short_bins.entry(p.simple.sig[0]).or_default().push((pi, p));
         }
     }
     let all_bins = Vec::from_iter(all_bins);
 
-    let max = patterns.iter().map(|p| p.sig.len()).max().unwrap();
+    let max = patterns.iter().map(|p| p.simple.len()).max().unwrap();
 
     // cut middle short such that even the longest pattern doesn't have to bounds check
     let middle = &data[0..data.len().saturating_sub(max)];
@@ -306,7 +356,7 @@ pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> 
     // suffix
     let start = middle.len();
     for (pi, p) in patterns.iter().enumerate() {
-        for i in start..start + (data.len() - middle.len()).saturating_sub(p.sig.len() - 1) {
+        for i in start..start + (data.len() - middle.len()).saturating_sub(p.simple.len() - 1) {
             if p.is_match(data, base_address, i) {
                 matches.push((pi, base_address + i));
             }
@@ -432,8 +482,10 @@ mod test {
         assert!(Pattern::new("?? ??").is_ok());
         assert_eq!(
             Pattern {
-                sig: vec![0, 0],
-                mask: vec![0xff, 0],
+                simple: PatternSimple {
+                    sig: vec![0, 0],
+                    mask: vec![0xff, 0],
+                },
                 custom_offset: 0,
                 captures: vec![],
                 xrefs: vec![],
@@ -442,8 +494,10 @@ mod test {
         );
         assert_eq!(
             Pattern {
-                sig: vec![0x10, 0],
-                mask: vec![0xff, 0],
+                simple: PatternSimple {
+                    sig: vec![0x10, 0],
+                    mask: vec![0xff, 0],
+                },
                 custom_offset: 0,
                 captures: vec![],
                 xrefs: vec![],
@@ -452,13 +506,42 @@ mod test {
         );
         assert_eq!(
             Pattern {
-                sig: vec![0x10, 0, 0b01010011],
-                mask: vec![0xff, 0, 0b11011011],
+                simple: PatternSimple {
+                    sig: vec![0x10, 0, 0b01010011],
+                    mask: vec![0xff, 0, 0b11011011],
+                },
                 custom_offset: 0,
                 captures: vec![],
                 xrefs: vec![],
             },
             Pattern::new("10 ?? 01?10?11").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_display_pattern() {
+        assert_eq!(
+            Pattern::new("12 34 | 56").unwrap().to_string(),
+            "12 34 | 56"
+        );
+        assert_eq!(
+            Pattern::new("12 34 | 56").unwrap().simple.to_string(),
+            "12 34 56"
+        );
+
+        assert_eq!(Pattern::new("12 34 56").unwrap().to_string(), "12 34 56");
+        assert_eq!(
+            Pattern::new("12 34 56").unwrap().simple.to_string(),
+            "12 34 56"
+        );
+
+        assert_eq!(
+            Pattern::new("12 X0x34 56").unwrap().to_string(),
+            "12 X0x34 56"
+        );
+        assert_eq!(
+            Pattern::new("12 X0x34 56").unwrap().simple.to_string(),
+            "12 ?? ?? ?? ?? 56"
         );
     }
 
@@ -469,8 +552,10 @@ mod test {
         assert!(Pattern::new("[ ] ?? ] ??").is_err());
         assert_eq!(
             Pattern {
-                sig: vec![0, 0, 0x10, 0x20],
-                mask: vec![0xff, 0, 0xff, 0xff],
+                simple: PatternSimple {
+                    sig: vec![0, 0, 0x10, 0x20],
+                    mask: vec![0xff, 0, 0xff, 0xff],
+                },
                 custom_offset: 0,
                 captures: vec![2..2, 1..2, 2..4],
                 xrefs: vec![],
