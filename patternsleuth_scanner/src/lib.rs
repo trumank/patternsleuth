@@ -514,13 +514,14 @@ mod test {
 
         let len = 64;
         let lanes = 32;
+        let base = 123;
 
         let data = vec![1; len + lanes];
-        let matches: Vec<_> = (0..len).collect();
+        let matches: Vec<_> = (base..len + base).collect();
 
         for i in 0..lanes {
             let slice = &data[i..i + len];
-            assert_eq!(vec![matches.clone()], scan(&patterns, 0, slice));
+            assert_eq!(vec![matches.clone()], scan(&patterns, base, slice));
         }
 
         let patterns = [&Pattern::new("01 02").unwrap()];
@@ -528,12 +529,16 @@ mod test {
         // obtuse generator to test every combination of chunk boundaries
         let data: Vec<_> = std::iter::repeat([1, 2, 3]).take(32).flatten().collect();
         let matches: Vec<_> = (0..3)
-            .map(|offset| (0..len / 3).map(|i| i * 3 + offset).collect::<Vec<_>>())
+            .map(|offset| {
+                (0..len / 3)
+                    .map(|i| i * 3 + offset + base)
+                    .collect::<Vec<_>>()
+            })
             .collect();
 
         for i in 0..(len - lanes) {
             let slice = &data[i..i + len];
-            let res = scan(&patterns, 0, slice);
+            let res = scan(&patterns, base, slice);
             assert_eq!(vec![matches[(3 - (i % 3)) % 3].clone()], res);
         }
     }
