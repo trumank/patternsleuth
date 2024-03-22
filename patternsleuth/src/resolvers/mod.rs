@@ -460,11 +460,14 @@ impl<'data> AsyncContext<'data> {
     }
 }
 
+#[tracing::instrument(skip_all, fields(stages))]
 pub fn eval<F, T: Send + Sync>(image: &Image<'_>, f: F) -> T
 where
     F: for<'ctx> FnOnce(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, T> + Send + Sync,
 {
     {
+        tracing::info!("starting eval");
+
         let ctx = AsyncContext::new(image);
         let (rx, tx) = std::sync::mpsc::channel();
 
@@ -482,29 +485,56 @@ where
             })
             .unwrap();
 
+        let mut i = 0;
+
         loop {
-            pool.run_until_stalled();
+            i += 1;
+
+            tracing::info_span!("resolvers", stage = i).in_scope(|| {
+                pool.run_until_stalled();
+            });
 
             if let Ok(res) = tx.try_recv() {
+                tracing::Span::current().record("stages", i);
                 break res;
             } else {
                 let queue: Vec<_> = std::mem::take(&mut ctx.read.write.lock().unwrap().queue);
                 let (patterns, rx): (Vec<_>, Vec<_>) = queue.into_iter().unzip();
                 let setup = patterns.iter().collect::<Vec<_>>();
 
+                let span = tracing::info_span!("patterns", patterns = setup.len()).entered();
+                for p in &setup {
+                    tracing::info!("pattern = {p:?}");
+                }
+
                 let mut all_results = rx.into_iter().map(|rx| (rx, vec![])).collect::<Vec<_>>();
 
                 for section in image.memory.sections() {
+                    let span = tracing::info_span!(
+                        "section",
+                        section = section.name(),
+                        kind = format!("{:?}", section.kind()),
+                        results = tracing::field::Empty
+                    )
+                    .entered();
+
                     let base_address = section.address();
                     let data = section.data();
 
                     let scan_results =
                         patternsleuth_scanner::scan_pattern(&setup, base_address, data);
 
+                    let mut total = 0;
+
                     for (i, res) in scan_results.iter().enumerate() {
+                        total += res.len();
                         all_results[i].1.extend(res)
                     }
+
+                    span.record("results", total);
                 }
+
+                drop(span);
 
                 for ((rx, matches), pattern) in all_results.into_iter().zip(patterns) {
                     rx.send(PatternMatches { pattern, matches }).unwrap();

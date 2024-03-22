@@ -22,6 +22,7 @@ inventory = "0.3.14"
 itertools.workspace = true
 serde = { workspace = true, optional = true, features = ["derive"] }
 typetag = { version = "0.2.15", optional = true }
+tracing = "0.1.40"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { version = "0.2.152", optional = true }

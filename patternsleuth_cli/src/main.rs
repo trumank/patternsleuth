@@ -215,6 +215,16 @@ fn find_ext<P: AsRef<Path>>(dir: P, ext: &str) -> Result<Option<PathBuf>> {
 }
 
 fn main() -> Result<()> {
+    use tracing_subscriber::{fmt, fmt::format::FmtSpan, EnvFilter};
+
+    fmt()
+        .compact()
+        .with_level(true)
+        .with_target(false)
+        .with_span_events(FmtSpan::CLOSE)
+        .with_env_filter(EnvFilter::builder().from_env_lossy())
+        .init();
+
     match Commands::parse() {
         Commands::Scan(command) => scan(command),
         Commands::Report(command) => report(command),
@@ -557,7 +567,13 @@ fn scan(command: CommandScan) -> Result<()> {
             table.add_row(Row::new(cells));
         }
 
-        let resolution = exe.resolve_many(&resolvers);
+        let game_name = match game {
+            GameEntry::File(GameFileEntry { name, .. }) => name.clone(),
+            GameEntry::Process(GameProcessEntry { pid }) => format!("pid={pid}"),
+        };
+
+        let resolution =
+            tracing::info_span!("scan", game = game_name).in_scope(|| exe.resolve_many(&resolvers));
 
         for (resolver, resolution) in command.resolver.iter().zip(&resolution) {
             table.add_row(Row::new(
