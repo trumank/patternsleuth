@@ -195,10 +195,18 @@ impl Display for Pattern {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut buffer = String::new();
         buffer.push_str(&format!("{:02X}", self.sig[0]));
-        for (sig, mask) in self.sig.iter().zip(&self.mask).skip(1) {
-            // TODO xrefs and bit masks
+        let mut iter = self.sig.iter().zip(&self.mask).enumerate().skip(1);
+        while let Some((i, (sig, mask))) = iter.next() {
+            // TODO bit masks
             if *mask == 0 {
-                buffer.push_str(" ??");
+                if let Some((_offset, xref)) =
+                    self.xrefs.iter().find(|(offset, _xref)| *offset == i)
+                {
+                    buffer.push_str(&format!(" X0x{:X}", xref.0));
+                    iter.nth(2); // skip 3
+                } else {
+                    buffer.push_str(" ??");
+                }
             } else {
                 buffer.push_str(&format!(" {:02X}", sig));
             }
