@@ -5,7 +5,6 @@ pub mod pe;
 use crate::*;
 use anyhow::Error;
 use elf::ElfImage;
-use object;
 use pe::PEImage;
 
 use macros::*;

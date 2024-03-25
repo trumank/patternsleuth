@@ -226,12 +226,7 @@ impl_resolver_singleton!(@ElfImage GMallocString, |ctx| async {
             }
             Ok(Control::Continue)
         })?;
-        if possible_gmalloc.len() == 2 {
-            if possible_gmalloc[0] == possible_gmalloc[1] {
-                return Ok(Some(possible_gmalloc[0]));
-            }
-        }
-        Ok(None)
+        Ok((possible_gmalloc.len() == 2 && possible_gmalloc[0] == possible_gmalloc[1]).then_some(possible_gmalloc[0]))
     }).flatten_ok();
 
     Ok(Self(try_ensure_one(fns)?))

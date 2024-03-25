@@ -143,7 +143,7 @@ impl PEImage {
                 functions.remove(&c.range.start);
             }
         }
-        Ok(functions
+        functions
             .iter()
             .map(|function| -> Result<Range<usize>, MemoryAccessError> {
                 let fns = self
@@ -159,7 +159,7 @@ impl PEImage {
                 let max = fns.iter().map(|f| f.range.end).max().unwrap();
                 Ok(min..max)
             })
-            .try_collect()?)
+            .try_collect()
     }
 }
 
@@ -309,12 +309,12 @@ impl PEImage {
         Ok(new)
     }
 
-    pub fn read_inner<'data, P: AsRef<std::path::Path>>(
+    pub fn read_inner<P: AsRef<std::path::Path>>(
         base_addr: Option<usize>,
         exe_path: Option<P>,
         cache_functions: bool,
-        object: object::File<'data>,
-    ) -> Result<Image<'data>, anyhow::Error> {
+        object: object::File<'_>,
+    ) -> Result<Image<'_>, anyhow::Error> {
         let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
         let memory = Memory::new(&object)?;
         Self::read_inner_memory(base_address, exe_path, cache_functions, memory, object)

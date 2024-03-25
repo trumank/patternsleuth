@@ -48,7 +48,7 @@ impl_resolver_singleton!(@ElfImage FNameCtorWchar, |ctx| async {
     // find refs to them
     let refs:Vec<_> = join_all(strings.iter().map(|addr| util::scan_xrefs(ctx, addr))).await;
     //eprintln!("Find pattern refs @ {:?}", refs);
-    let fns:Vec<_> = refs.into_iter().map(|addr| util::root_functions(ctx, &addr).ok()).flatten().collect();
+    let fns:Vec<_> = refs.into_iter().flat_map(|addr| util::root_functions(ctx, &addr).ok()).collect();
     //eprintln!("Find pattern fns @ {:?}", fns);
     //strings.into_iter().map(|addr| async move { util::root_functions(ctx, &util::scan_xrefs(ctx, &addr).await ) } ).collect();
 

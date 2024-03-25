@@ -78,6 +78,12 @@ impl Pattern {
             .unwrap_or_else(|| s.parse())?)
     }
 
+    fn parse_maybe_hex_u32(s: &str) -> Result<u32> {
+        Ok(s.strip_prefix("0x")
+            .map(|s| u32::from_str_radix(s, 16))
+            .unwrap_or_else(|| s.parse())?)
+    }
+
     pub fn new<S: AsRef<str>>(s: S) -> Result<Self> {
         let mut sig = vec![];
         let mut mask = vec![];
@@ -121,13 +127,11 @@ impl Pattern {
                             }
                             i += 4;
                         } else if w.starts_with("0x") {
-                            let mut addr = Self::parse_maybe_hex(w)
-                                .with_context(|| format!("failed to parse 4-bytes hex {w}"))?;
-                            for _ in 0..4 {
-                                sig.push((addr & 0xff) as u8);
-                                addr = addr >> 8;
-                                mask.push(0xff);
-                            }
+                            sig.extend(u32::to_le_bytes(
+                                Self::parse_maybe_hex_u32(w)
+                                    .with_context(|| format!("failed to parse 4-bytes hex {w}"))?,
+                            ));
+                            mask.extend([0xff; 4]);
                             i += 4;
                         } else {
                             bail!("bad pattern word \"{}\"", w)

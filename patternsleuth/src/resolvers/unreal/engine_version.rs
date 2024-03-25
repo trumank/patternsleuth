@@ -92,27 +92,23 @@ impl_resolver!(@ElfImage EngineVersionStrings, |ctx| async {
     let pattern_name = util::utf16_pattern("++UE5+Release-");
     let name_scan = ctx.scan(pattern_name).await;
 
-    let mut name_scan:Vec<_> = name_scan.iter().map(|&addr| ctx.image().memory.read_wstring(addr)).flatten().collect();
+    let mut name_scan:Vec<_> = name_scan.iter().flat_map(|&addr| ctx.image().memory.read_wstring(addr)).collect();
 
     if name_scan.len() != 2 {
         bail_out!("not found");
     }
 
-    name_scan.sort_by(|x,y| x.cmp(&y));
+    name_scan.sort();
     let (branch_name, build_version) = (name_scan[0].clone(), name_scan[1].clone());
 
     let build_date = join_all([
         "Jan ", "Feb ", "Mar ", "Apr ", "May ", "Jun ", "Jul ", "Aug ", "Sep ", "Oct ", "Nov ", "Dec ",
     ].map(|p| ctx.scan(util::utf16_pattern(p)))).await.into_iter().flatten()
-     .map(|addr| ctx.image().memory.read_wstring(addr)).flatten().filter(|p|  {
+     .flat_map(|addr| ctx.image().memory.read_wstring(addr)).filter(|p|  {
         let sp = p.split_whitespace().collect_vec();
         if sp.len() == 3 {
             let (dd, yyyy) = (sp[1].parse::<u32>().unwrap_or(0), sp[2].parse::<u32>().unwrap_or(0));
-            if dd <= 0 || dd >= 32 || yyyy >= 2100 || yyyy <= 2000 {
-                false
-            } else {
-                true
-            }
+            !(dd >= 32 || yyyy >= 2100 || yyyy <= 2000)
         } else {
             false
         }
@@ -120,7 +116,11 @@ impl_resolver!(@ElfImage EngineVersionStrings, |ctx| async {
 
     let build_date = ensure_one(build_date)?;
 
-    Ok(Self {branch_name:branch_name, build_date: build_date, build_version: build_version })
+    Ok(Self {
+        branch_name,
+        build_date,
+        build_version,
+    })
 
 });
 
@@ -152,7 +152,7 @@ impl_resolver!(@PEImage EngineVersionStrings, |ctx| async {
             if mem
                 .range(date..date + 6)
                 .ok()
-                .filter(|r| months.contains(&r.to_vec()))
+                .filter(|r| months.contains(&r[..]))
                 .is_some()
             {
                 return Ok(EngineVersionStrings {

@@ -58,7 +58,7 @@ impl WrapRecord<'_, '_> {
         let start = relative_offset;
         let end = self.symbol.data[start..]
             .iter()
-            .position(|&b| b == 0 || b == '\n' as _)
+            .position(|&b| b == 0 || b == b'\n')
             .unwrap();
         std::str::from_utf8(&self.symbol.data[start..start + end]).unwrap()
     }

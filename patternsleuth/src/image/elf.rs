@@ -10,12 +10,10 @@ use gimli::{BaseAddresses, CieOrFde, EhFrame, EhFrameHdr, NativeEndian, UnwindSe
 
 #[cfg(feature = "symbols")]
 use crate::uesym;
-use anyhow::Error;
-use anyhow::{Context, Result};
-use object::read::elf::ProgramHeader;
+use anyhow::{bail, Context, Error, Result};
 use object::{
-    elf::ProgramHeader64, read::elf::ElfFile64, Endianness, File, Object, ObjectSection,
-    SectionKind,
+    elf::ProgramHeader64, read::elf::ElfFile64, read::elf::ProgramHeader, Endianness, File, Object,
+    ObjectSection, SectionKind,
 };
 
 pub struct ElfImage {
@@ -60,7 +58,7 @@ impl ElfImage {
         address: usize,
     ) -> Result<Option<Range<usize>>, MemoryAccessError> {
         let x = self.functions.as_ref().unwrap();
-        Ok(x.iter().find(|p| p.contains(&address)).map(|a| a.clone()))
+        Ok(x.iter().find(|p| p.contains(&address)).cloned())
     }
     pub fn get_child_functions(
         &self,
@@ -77,13 +75,7 @@ impl ElfImage {
         &self,
         _: &Image<'_>,
     ) -> Result<Vec<Range<usize>>, MemoryAccessError> {
-        Ok(self
-            .functions
-            .as_ref()
-            .unwrap()
-            .iter()
-            .map(|addr_range| addr_range.clone())
-            .collect())
+        Ok(self.functions.as_ref().unwrap().to_vec())
     }
 }
 
@@ -235,14 +227,10 @@ impl ElfImage {
                     .exists()
                     .then(|| -> Result<HashMap<_, _>> {
                         let syms = uesym::dump_ue_symbols(sym_path, base_address)?;
-                        Ok(HashMap::from_iter(
-                            functions
-                                .iter()
-                                .map(|f| -> Option<(usize, String)> {
-                                    Some((f.start, syms.get(&f.start)?.to_owned()))
-                                })
-                                .flatten(),
-                        ))
+                        Ok((functions.iter().flat_map(|f| -> Option<(usize, String)> {
+                            Some((f.start, syms.get(&f.start)?.to_owned()))
+                        }))
+                        .collect())
                     })
                     .transpose()?
             }
@@ -251,8 +239,8 @@ impl ElfImage {
         };
         Ok(Image {
             base_address,
-            memory: memory,
-            symbols: symbols,
+            memory,
+            symbols,
             imports: HashMap::default(),
             image_type: ImageType::ElfImage(ElfImage {
                 functions: Some(functions),
@@ -261,12 +249,12 @@ impl ElfImage {
     }
 
     /// Read and parse ELF object, using data from object.data()
-    pub fn read_inner<'data, P: AsRef<std::path::Path>>(
+    pub fn read_inner<P: AsRef<std::path::Path>>(
         base_addr: Option<usize>,
         exe_path: Option<P>,
         _cache_functions: bool,
-        object: object::File<'data>,
-    ) -> Result<Image<'data>, anyhow::Error> {
+        object: object::File<'_>,
+    ) -> Result<Image<'_>, anyhow::Error> {
         let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
         let linked = base_addr.is_some();
         let calc_kind = |flag: u32| {
@@ -305,8 +293,8 @@ impl ElfImage {
                 .iter()
                 .map(|p| p.p_vaddr + p.p_memsz)
                 .max()
-                .unwrap_or_default() as u64;
-            let map_start = phdrs.iter().map(|p| p.p_vaddr).min().unwrap_or_default() as u64;
+                .unwrap_or_default();
+            let map_start = phdrs.iter().map(|p| p.p_vaddr).min().unwrap_or_default();
 
             let get_offset = |segment: &Elf64Phdr| {
                 if linked {
@@ -340,11 +328,11 @@ impl ElfImage {
                 })
                 .collect::<Vec<_>>();
 
-            let memory = Memory { sections: sections };
+            let memory = Memory { sections };
 
             Self::read_inner_memory(base_address, exe_path, linked, memory, object)
         } else {
-            return Err(anyhow::anyhow!("Not a elf file"));
+            bail!("Not a elf file")
         }
     }
 }
