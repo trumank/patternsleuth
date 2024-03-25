@@ -55,7 +55,7 @@ impl_resolver_singleton!(@all StaticConstructObjectInternalPatterns, |ctx| async
                 03f4df4f e8  2c  b6       CALL       StaticConstructObject_Internal                   undefined StaticConstructObject_
                          02  03
                 03f4df54 48  89  c3       MOV        RBX ,RAX
-            
+
          */
         "c6 44 24 30  00 0f 57 c0 0f 11 44 24 38 4c 89 ff e8 | ?? ?? ?? ?? 48 89"
     ];
@@ -88,18 +88,18 @@ impl_resolver!(@ElfImage StaticConstructObjectInternalString, |ctx| async {
             if !(addr..addr + 130).contains(&cur) {
                 return Ok(Control::Break);
             }
-            if  !inst.is_call_near_indirect() 
-                && inst.is_call_near() {    
+            if  !inst.is_call_near_indirect()
+                && inst.is_call_near() {
                 // eprintln!("Found call to @ {:08x}", inst.ip_rel_memory_address());
                 callsites.push(inst.ip_rel_memory_address() as usize);
             }
             Ok(Control::Continue)
         }).ok()?;
         // eprintln!("");
-        // the seq is always 
+        // the seq is always
         // call FStaticConstructObjectParameters::FStaticConstructObjectParameters .0
         // call StaticConstructObjectInternal .1
-        
+
         let callsites = callsites.iter().zip(callsites.iter().skip(1)).map(|(&x, &y)| (x,y)).collect::<Vec<_>>();
         Some(callsites)
     }).flatten().reduce(|x, y| {

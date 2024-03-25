@@ -158,5 +158,3 @@ impl_resolver_singleton!(@ElfImage UObjectBaseShutdown, |ctx| async {
     };
     Ok(UObjectBaseShutdown(ensure_one(fns)?))
 });
-
-

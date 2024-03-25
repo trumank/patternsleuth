@@ -46,7 +46,7 @@ impl_resolver_singleton!(@ElfImage UGameEngineTick, |ctx| async {
     let refs = util::scan_xrefs(ctx, &strings).await;
 
     let fns = util::root_functions(ctx, &refs)?;
-    
+
     Ok(UGameEngineTick(ensure_one(fns)?))
 });
 

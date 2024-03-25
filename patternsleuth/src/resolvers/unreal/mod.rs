@@ -86,7 +86,7 @@ mod util {
 
         refs.into_iter().flatten().collect()
     }
-    
+
     pub(crate) async fn scan_xcalls(
         ctx: &AsyncContext<'_>,
         addresses: impl IntoIterator<Item = &usize> + Copy,
@@ -115,7 +115,7 @@ mod util {
 
         refs.into_iter().flatten().collect()
     }
-    
+
     pub(crate) fn root_functions<'a, I>(ctx: &AsyncContext<'_>, addresses: I) -> Result<Vec<usize>>
     where
         I: IntoIterator<Item = &'a usize> + Copy,

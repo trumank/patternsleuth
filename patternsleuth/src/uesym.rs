@@ -1,6 +1,6 @@
-use std::{collections::HashMap, path::Path};
 use anyhow::{anyhow, Result};
 use object::{from_bytes, slice_from_bytes, Pod};
+use std::{collections::HashMap, path::Path};
 
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
@@ -37,18 +37,18 @@ pub struct WrapRecord<'a, 'data> {
 
 impl<'data> RawUESymbols<'data> {
     fn new(data: &'data [u8]) -> Result<RawUESymbols<'data>> {
-        let (header, data) = from_bytes::<Header>(data).map_err(|_| anyhow!("Can't read haeder"))?;
-        let (records, data) = 
-            slice_from_bytes::<Record>(data, header.record_count as usize)
+        let (header, data) =
+            from_bytes::<Header>(data).map_err(|_| anyhow!("Can't read haeder"))?;
+        let (records, data) = slice_from_bytes::<Record>(data, header.record_count as usize)
             .map_err(|_| anyhow!("Can't read Records"))?;
-        Ok(RawUESymbols {
-            records,
-            data,
-        })
+        Ok(RawUESymbols { records, data })
     }
 
     fn iter(&self) -> impl Iterator<Item = WrapRecord<'_, 'data>> {
-        self.records.iter().map(move |record| WrapRecord { record, symbol: self })
+        self.records.iter().map(move |record| WrapRecord {
+            record,
+            symbol: self,
+        })
     }
 }
 
@@ -56,7 +56,10 @@ impl<'data> RawUESymbols<'data> {
 impl WrapRecord<'_, '_> {
     fn read_str(&self, relative_offset: usize) -> &'_ str {
         let start = relative_offset;
-        let end = self.symbol.data[start..].iter().position(|&b| b == 0 || b == '\n' as _).unwrap();
+        let end = self.symbol.data[start..]
+            .iter()
+            .position(|&b| b == 0 || b == '\n' as _)
+            .unwrap();
         std::str::from_utf8(&self.symbol.data[start..start + end]).unwrap()
     }
 
@@ -84,6 +87,9 @@ pub fn dump_ue_symbols<P: AsRef<Path>>(
     let data = std::fs::read(filename)?;
     let symbols = RawUESymbols::new(data.as_slice())?;
     Ok(HashMap::from_iter(symbols.iter().map(|rec| {
-        (rec.record.address as usize + base_address, rec.symbol().to_string())
+        (
+            rec.record.address as usize + base_address,
+            rec.symbol().to_string(),
+        )
     })))
 }

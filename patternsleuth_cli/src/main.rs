@@ -12,8 +12,8 @@ use clap::Parser;
 use indicatif::ProgressBar;
 use itertools::Itertools;
 use patricia_tree::StringPatriciaMap;
-use patternsleuth::resolvers::{resolve_self, resolvers, NamedResolver};
 use patternsleuth::image::Image;
+use patternsleuth::resolvers::{resolve_self, resolvers, NamedResolver};
 
 use patternsleuth::scanner::Xref;
 use patternsleuth::{
@@ -969,7 +969,7 @@ fn symbols(command: CommandSymbols) -> Result<()> {
     let mut cells = vec![];
 
     for GameFileEntry { name, exe_path } in get_games(command.game)? {
-        if !exe_path.with_extension("pdb").exists() && !exe_path.with_extension("sym").exists(){
+        if !exe_path.with_extension("pdb").exists() && !exe_path.with_extension("sym").exists() {
             continue;
         }
 

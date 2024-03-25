@@ -5,10 +5,10 @@ use anyhow::{bail, Context, Result};
 use itertools::Itertools;
 
 use super::{Image, ImageType};
-use crate::{Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, RuntimeFunction};
-use object::Object;
 #[cfg(feature = "symbols")]
 use crate::symbols;
+use crate::{Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, RuntimeFunction};
+use object::Object;
 
 pub struct PEImage {
     pub exception_directory_range: Range<usize>,
@@ -16,7 +16,11 @@ pub struct PEImage {
 }
 
 impl PEImage {
-    pub fn get_function(&self, image: &Image<'_>, address: usize) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
+    pub fn get_function(
+        &self,
+        image: &Image<'_>,
+        address: usize,
+    ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
         // place holder only
         let size = 12;
         let mut min = 0;
@@ -45,7 +49,11 @@ impl PEImage {
         }
         Ok(None)
     }
-    pub fn get_root_function(&self, image: &Image<'_>, address: usize) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
+    pub fn get_root_function(
+        &self,
+        image: &Image<'_>,
+        address: usize,
+    ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
         if let Some(f) = self.get_function(image, address)? {
             let mut f = RuntimeFunction {
                 range: f.range,
@@ -81,24 +89,37 @@ impl PEImage {
         }
     }
 
-    pub fn get_root_function_range(&self, image: &Image<'_>, address: usize) -> Result<Option<Range<usize>>, MemoryAccessError> {
+    pub fn get_root_function_range(
+        &self,
+        image: &Image<'_>,
+        address: usize,
+    ) -> Result<Option<Range<usize>>, MemoryAccessError> {
         let exception = self.get_root_function(image, address)?;
         if let Some(exception) = exception {
-            let fns = self.get_child_functions(image, exception.range.start).unwrap();
+            let fns = self
+                .get_child_functions(image, exception.range.start)
+                .unwrap();
             let min = fns.iter().map(|f| f.range.start).min().unwrap();
             let max = fns.iter().map(|f| f.range.end).max().unwrap();
             if exception.range.start != address {
                 // why comapreing exception but not min?
-                Err(MemoryAccessError::MisalginedAddress(exception.range.start, address))
+                Err(MemoryAccessError::MisalginedAddress(
+                    exception.range.start,
+                    address,
+                ))
             } else {
-                Ok(Some(min..max))  // TODO does not handle sparse ranges
+                Ok(Some(min..max)) // TODO does not handle sparse ranges
             }
         } else {
             Ok(None)
         }
     }
 
-    pub fn get_child_functions(&self, image: &Image<'_>, address: usize) -> Result<Vec<RuntimeFunction>, MemoryAccessError> {
+    pub fn get_child_functions(
+        &self,
+        image: &Image<'_>,
+        address: usize,
+    ) -> Result<Vec<RuntimeFunction>, MemoryAccessError> {
         let mut queue = vec![address];
         let mut all_children = vec![self.get_function(image, address)?.unwrap()];
         while let Some(next) = queue.pop() {
@@ -112,20 +133,33 @@ impl PEImage {
         Ok(all_children)
     }
 
-    pub fn get_root_functions(&self, image: &Image<'_>) -> Result<Vec<Range<usize>>, MemoryAccessError> {
+    pub fn get_root_functions(
+        &self,
+        image: &Image<'_>,
+    ) -> Result<Vec<Range<usize>>, MemoryAccessError> {
         let mut functions = self.exception_children_cache.keys().collect::<HashSet<_>>();
         for e in self.exception_children_cache.values() {
             for c in e {
                 functions.remove(&c.range.start);
             }
         }
-        Ok(functions.iter().map(|function| -> Result<Range<usize>, MemoryAccessError> {
-                let fns = self.get_child_functions(image, self.get_function(image, **function)?.ok_or(MemoryAccessError::MemoryOutOfBoundsError)?.range.start).unwrap();
+        Ok(functions
+            .iter()
+            .map(|function| -> Result<Range<usize>, MemoryAccessError> {
+                let fns = self
+                    .get_child_functions(
+                        image,
+                        self.get_function(image, **function)?
+                            .ok_or(MemoryAccessError::MemoryOutOfBoundsError)?
+                            .range
+                            .start,
+                    )
+                    .unwrap();
                 let min = fns.iter().map(|f| f.range.start).min().unwrap();
                 let max = fns.iter().map(|f| f.range.end).max().unwrap();
                 Ok(min..max)
-            }
-        ).try_collect()?)
+            })
+            .try_collect()?)
     }
 }
 
@@ -184,7 +218,6 @@ impl Image<'_> {
 }
 
 impl PEImage {
-
     /// Read and parse ELF object, using data from memory
     pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
         base_address: usize,
@@ -193,7 +226,6 @@ impl PEImage {
         memory: Memory<'data>,
         object: object::File<'_>,
     ) -> Result<Image<'data>, anyhow::Error> {
-
         #[allow(unused_variables)]
         let symbols = if let Some(exe_path) = exe_path {
             #[cfg(not(feature = "symbols"))]

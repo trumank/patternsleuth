@@ -7,8 +7,10 @@ use patternsleuth_scanner::Pattern;
 
 use crate::{
     resolvers::{
-        ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util, Context, ResolveError, Result
-    }, MemoryAccessorTrait, MemoryTrait
+        ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util, Context,
+        ResolveError, Result,
+    },
+    MemoryAccessorTrait, MemoryTrait,
 };
 
 /// public: __cdecl FName::FName(wchar_t const *, enum EFindName)
@@ -23,7 +25,7 @@ impl_resolver_singleton!(@collect FNameCtorWchar);
 // for linux we find a function caontains following strings
 /*
 FEngineLoop::LoadPreInitModules:
- FModuleManager::LoadModule called with following FName 
+ FModuleManager::LoadModule called with following FName
     Engine
     Renderer
     AnimGraphRuntime
@@ -38,7 +40,7 @@ impl_resolver_singleton!(@ElfImage FNameCtorWchar, |ctx| async {
         "\0Landscape\0",
         "\0RenderCore\0",
     ];
-    
+
     // find the strings
     let strings = join_all(strings.iter().map(|s| ctx.scan(util::utf16_pattern(s)))).await;
     let strings:Vec<Vec<_>> = strings.into_iter().map(|pats| pats.into_iter().map(|addr| addr + 2).collect() ).collect();
@@ -49,7 +51,7 @@ impl_resolver_singleton!(@ElfImage FNameCtorWchar, |ctx| async {
     let fns:Vec<_> = refs.into_iter().map(|addr| util::root_functions(ctx, &addr).ok()).flatten().collect();
     //eprintln!("Find pattern fns @ {:?}", fns);
     //strings.into_iter().map(|addr| async move { util::root_functions(ctx, &util::scan_xrefs(ctx, &addr).await ) } ).collect();
-    
+
     // find fns of these refs
     let fns = fns.into_iter().reduce(|x, y| {
         let x: HashSet<usize> = HashSet::from_iter(x.into_iter());
@@ -62,7 +64,7 @@ impl_resolver_singleton!(@ElfImage FNameCtorWchar, |ctx| async {
     let fnLoadPreInitModules = ensure_one(fns)?;
     let pattern = Pattern::new("ba 01 00 00 00 e8 | ?? ?? ?? ??").unwrap();
     // found fLoadPreInitModules, try find target
-    /* 
+    /*
         03f30310 53              PUSH       RBX
         03f30311 48  83  ec       SUB        RSP ,0x30
                  30
@@ -171,10 +173,10 @@ impl_resolver_singleton!(@PEImage FNameCtorWchar, |ctx| async {
 /// `public: void __cdecl FName::ToString(class FString &) const`
 ///
 /// They take the same arguments and either can be used as long as the return value isn't used.
-/// 
+///
 /// !! Be aware anyone try play with this code in Linux, they're different and you should stick with the
 /// second one.
-/// 
+///
 #[derive(Debug, PartialEq)]
 #[cfg_attr(
     feature = "serde-resolvers",

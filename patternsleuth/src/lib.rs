@@ -1,8 +1,8 @@
+pub mod image;
 #[cfg(feature = "patterns")]
 pub mod patterns;
 pub mod process;
 pub mod resolvers;
-pub mod image;
 #[cfg(feature = "symbols")]
 pub mod symbols;
 #[cfg(feature = "symbols")]
@@ -12,10 +12,13 @@ pub mod scanner {
     pub use patternsleuth_scanner::*;
 }
 
-use std::{
-    borrow::Cow, collections::HashMap, ops::{Index, Range, RangeFrom, RangeTo}, path::Path
-};
 use scanner::{Pattern, Xref};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    ops::{Index, Range, RangeFrom, RangeTo},
+    path::Path,
+};
 
 use anyhow::{bail, Context, Result};
 use object::{File, Object, ObjectSection};

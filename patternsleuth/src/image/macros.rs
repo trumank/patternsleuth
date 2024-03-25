@@ -1,4 +1,3 @@
-
 /// Define a set of functions that dispatch to the appropriate image type as its inner type
 /// @define_imagetype accepts enum name and its variants inside a block, and defines the enum
 /// @define_matcharm accepts the enum name and its variants inside a block, self to avoid hygienic issues, the function name, and the function arguments
@@ -49,7 +48,7 @@ macro_rules! image_type_dispatch {
                 $macroname!(@$id $enum_name_it {$( $img_ident($img_ty),)*}, $arg)
             };
         }
-        
+
         #[allow(unused_imports)]
         pub(crate) use $enum_name_macro_it;
     };

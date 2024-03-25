@@ -121,9 +121,8 @@ impl Pattern {
                             }
                             i += 4;
                         } else if w.starts_with("0x") {
-                            let mut addr = Self::parse_maybe_hex(w).with_context(|| {
-                                format!("failed to parse 4-bytes hex {w}")
-                            })?;
+                            let mut addr = Self::parse_maybe_hex(w)
+                                .with_context(|| format!("failed to parse 4-bytes hex {w}"))?;
                             for _ in 0..4 {
                                 sig.push((addr & 0xff) as u8);
                                 addr = addr >> 8;

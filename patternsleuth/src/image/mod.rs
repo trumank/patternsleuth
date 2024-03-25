@@ -1,12 +1,12 @@
-pub mod pe;
 pub mod elf;
 mod macros;
+pub mod pe;
 
 use crate::*;
-use object;
 use anyhow::Error;
-use pe::PEImage;
 use elf::ElfImage;
+use object;
+use pe::PEImage;
 
 use macros::*;
 
@@ -45,10 +45,10 @@ impl<'data> Image<'data> {
         match object {
             object::File::Elf64(_) => {
                 ElfImage::read_inner(base_addr, exe_path, cache_functions, object)
-            },
+            }
             object::File::Pe64(_) => {
                 PEImage::read_inner(base_addr, exe_path, cache_functions, object)
-            },
+            }
             _ => Err(Error::msg("Unsupported file format")),
         }
     }
@@ -168,11 +168,10 @@ impl<'data> Image<'data> {
             }
             scan_queue = new_queue;
         }
-        
+
         Ok(ScanResult { results })
     }
 }
-
 
 #[derive(Default)]
 pub struct ImageBuilder {

@@ -93,7 +93,7 @@ impl_resolver!(@ElfImage EngineVersionStrings, |ctx| async {
     let name_scan = ctx.scan(pattern_name).await;
 
     let mut name_scan:Vec<_> = name_scan.iter().map(|&addr| ctx.image().memory.read_wstring(addr)).flatten().collect();
-    
+
     if name_scan.len() != 2 {
         bail_out!("not found");
     }
@@ -166,4 +166,3 @@ impl_resolver!(@PEImage EngineVersionStrings, |ctx| async {
 
     bail_out!("not found");
 });
-

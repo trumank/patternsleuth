@@ -83,7 +83,13 @@ mod linux {
 
         let memory = Memory::new_external_data(sections)?;
 
-        image::pe::PEImage::read_inner_memory::<String>(object.relative_address_base() as usize, None, false, memory, object)
+        image::pe::PEImage::read_inner_memory::<String>(
+            object.relative_address_base() as usize,
+            None,
+            false,
+            memory,
+            object,
+        )
     }
 }
 
@@ -109,8 +115,8 @@ mod windows {
     use anyhow::{bail, Context, Result};
     use object::{Object, ObjectSection};
 
-    use crate::{Image, Memory};
     use crate::image::pe::PEImage;
+    use crate::{Image, Memory};
 
     use windows::Win32::Foundation::HMODULE;
     use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;

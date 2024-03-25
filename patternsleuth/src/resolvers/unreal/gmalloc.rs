@@ -7,7 +7,9 @@ use patternsleuth_scanner::Pattern;
 use std::ops::Range;
 
 use crate::{
-    disassemble::{disassemble, Control}, resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result}, Image, MemoryAccessorTrait
+    disassemble::{disassemble, Control},
+    resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
+    Image, MemoryAccessorTrait,
 };
 
 #[derive(Debug, PartialEq)]
@@ -40,7 +42,7 @@ impl_resolver_singleton!(@all GMallocPatterns, |ctx| async {
         "48 ?? ?? f0 ?? 0f b1 ?? | ?? ?? ?? ?? 74 ?? ?? 85 ?? 74 ?? ?? 8b", // Purgatory
         "eb 03 ?? 8b ?? 48 8b ?? f0 ?? 0f b1 ?? | ?? ?? ?? ?? 74 ?? ?? 85 ?? 74 ?? ?? 8b", // Purg_notX
         "e8 ?? ?? ?? ?? 48 8b ?? f0 ?? 0f b1 ?? | ?? ?? ?? ?? 74 ?? ?? 85 ?? 74 ?? ?? 8b", // Purg_withX
-        "48 85 C9 74 2E 53 48 83 EC 20 48 8B D9 48 8B ?? | ?? ?? ?? ?? 48 85 C9", // A 
+        "48 85 C9 74 2E 53 48 83 EC 20 48 8B D9 48 8B ?? | ?? ?? ?? ?? 48 85 C9", // A
         "75 ?? E8 ?? ?? ?? ?? 48 8b 0d | ?? ?? ?? ?? 48 8b ?? 48 ?? ?? ff 50 ?? 48 83 c4 ?? ?? c3", // bnew1
         "48 85 C9 74 ?? 4C 8B 05 | ?? ?? ?? ?? 4D 85 C0 0F 84", // altshort
         "48 ?? ?? ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8b 0d | ?? ?? ?? ?? 48 8b 01 ff 50 ?? 84 c0 75 ?? b9 38 00 00 00", // gcreatemallocshort
@@ -184,7 +186,7 @@ impl_resolver_singleton!(@ElfImage GMallocString, |ctx| async {
         let fns = util::root_functions(ctx, &refs)?;
         //eprintln!("Found related functions @ {:?}", fns);
 
-        Result::<Vec<usize>>::Ok(util::scan_xcalls(ctx, &fns).await) 
+        Result::<Vec<usize>>::Ok(util::scan_xcalls(ctx, &fns).await)
     };
 
     let find_string_pattern1 = || async {
@@ -194,7 +196,7 @@ impl_resolver_singleton!(@ElfImage GMallocString, |ctx| async {
     let find_string_pattern2 = || async {
         let fns2 = string_xref_used_by("Refusing to run with the root privileges.\n\0").await?;
         //eprintln!("Found {} xcall fns2 @ {:?}", fns2.len(), fns2);
-        let fns2 = fns2.iter().map(|&x| x .. (x + 24)).collect_vec(); 
+        let fns2 = fns2.iter().map(|&x| x .. (x + 24)).collect_vec();
         // another possible address for FMemory::GCreateMalloc
         Result::<Vec<Range<usize>>>::Ok(fns2)
     };
@@ -212,9 +214,9 @@ impl_resolver_singleton!(@ElfImage GMallocString, |ctx| async {
             {
                 return Ok(Control::Break);
             }
-            
+
             // find mov rdi
-            if inst.code() == Code::Mov_r64_rm64 
+            if inst.code() == Code::Mov_r64_rm64
                 && inst.memory_base() == Register::RIP
                 && inst.op0_kind() == OpKind::Register
                 && inst.op1_kind() == OpKind::Memory
@@ -236,24 +238,24 @@ impl_resolver_singleton!(@ElfImage GMallocString, |ctx| async {
 });
 
 // pattern Linux
-// string -> "MemAvailable:" -> func FUnixPlatformMemory::GetStats() -> FMemory::GCreateMalloc 
-/*  
+// string -> "MemAvailable:" -> func FUnixPlatformMemory::GetStats() -> FMemory::GCreateMalloc
+/*
         06b602dc e8  5f  e7       CALL       FUN_06cdea40                                     undefined FUN_06cdea40() <- fn2
                  17  00
         06b602e1 48  89  05       MOV        qword ptr [GMalloc ],RAX
-                 10  05  e8 
+                 10  05  e8
                  04
         06b602e8 48  8d  7c       LEA        RDI => local_88 ,[RSP  + 0x10 ]
                  24  10
         06b602ed e8  9e  f7       CALL       FUnixPlatformMemory::GetStats                    undefined GetStats() <- fn1
                  17  00
         06b602f2 48  8b  3d       MOV        RDI ,qword ptr [GMalloc ]
-                 ff  04  e8 
+                 ff  04  e8
                  04
         06b602f9 e8  a2  bf       CALL       FUN_06b1c2a0                                     undefined FUN_06b1c2a0()
                  fb  ff
         06b602fe 48  8b  3d       MOV        RDI ,qword ptr [GMalloc ]
-                 f3  04  e8 
+                 f3  04  e8
                  04
         06b60305 48  8b  07       MOV        RAX ,qword ptr [RDI ]
         06b60308 ff  90  88       CALL       qword ptr [RAX  + 0x88 ]

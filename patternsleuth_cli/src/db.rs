@@ -7,7 +7,7 @@ use std::{
 use anyhow::Result;
 use itertools::Itertools;
 use patternsleuth::{
-    resolvers::resolve_self, scanner::Pattern, image::Image, PatternConfig, ResolutionType,
+    image::Image, resolvers::resolve_self, scanner::Pattern, PatternConfig, ResolutionType,
 };
 use prettytable::{Cell, Row, Table};
 use rayon::prelude::*;
