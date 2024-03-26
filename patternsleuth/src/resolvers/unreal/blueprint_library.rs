@@ -181,14 +181,29 @@ impl_resolver!(@all BlueprintLibraryInit, |ctx| async {
 pub struct UFunctionBind(pub usize);
 impl_resolver_singleton!(@collect UFunctionBind);
 impl_resolver_singleton!(@PEImage UFunctionBind, |ctx| async {
-    let strings = ctx
-        .scan(util::utf16_pattern(
-            "Failed to bind native function %s.%s\0",
-        ))
-        .await;
-    let refs = util::scan_xrefs(ctx, &strings).await;
-    let fns = util::root_functions(ctx, &refs)?;
-    Ok(Self(ensure_one(fns)?))
+    let string = async {
+        let strings = ctx
+            .scan(util::utf16_pattern(
+                "Failed to bind native function %s.%s\0",
+            ))
+            .await;
+        let refs = util::scan_xrefs(ctx, &strings).await;
+        util::root_functions(ctx, &refs)
+    };
+
+    let pattern = async {
+        let patterns = [
+            "48 89 5C 24 ?? 57 48 83 EC 20 33 D2 48 8B F9 48 8B D9 48 85 C9 74 3D 48 85 D2 75 38 48 85 DB 74 28 E8",
+        ];
+
+        join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await
+    };
+
+    let (string, pattern) = join!(string, pattern);
+
+    Ok(Self(ensure_one(
+        string?.into_iter().chain(pattern.into_iter().flatten()),
+    )?))
 });
 
 impl_resolver_singleton!(@ElfImage UFunctionBind, |ctx| async {

@@ -112,7 +112,7 @@ pub use windows::*;
 
 #[cfg(windows)]
 mod windows {
-    use anyhow::{bail, Context, Result};
+    use anyhow::{bail, Result};
     use object::{Object, ObjectSection};
 
     use crate::image::pe::PEImage;

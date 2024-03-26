@@ -22,6 +22,64 @@ fn gig(c: &mut Criterion) {
     });
 }
 
+fn gig_multi(c: &mut Criterion) {
+    let patterns = [
+        "48 8D ?? X0x144F64F58",
+        "4C 8D ?? X0x144F64F58",
+        "B8 58 4F F6 44",
+        "B9 58 4F F6 44",
+        "BA 58 4F F6 44",
+        "BB 58 4F F6 44",
+        "BC 58 4F F6 44",
+        "BD 58 4F F6 44",
+        "BE 58 4F F6 44",
+        "BF 58 4F F6 44",
+        "48 8D ?? X0x1446245D8",
+        "4C 8D ?? X0x1446245D8",
+        "48 8D ?? X0x1446245DA",
+        "4C 8D ?? X0x1446245DA",
+        "48 8D ?? X0x1446D27D8",
+        "4C 8D ?? X0x1446D27D8",
+        "48 8D ?? X0x1446D27DA",
+        "4C 8D ?? X0x1446D27DA",
+        "48 8D ?? X0x1446340B8",
+        "4C 8D ?? X0x1446340B8",
+        "48 8D ?? X0x1446340BA",
+        "4C 8D ?? X0x1446340BA",
+        "48 8D ?? X0x144F92190",
+        "4C 8D ?? X0x144F92190",
+        "B8 90 21 F9 44",
+        "B9 90 21 F9 44",
+        "BA 90 21 F9 44",
+        "BB 90 21 F9 44",
+        "BC 90 21 F9 44",
+        "BD 90 21 F9 44",
+        "BE 90 21 F9 44",
+        "BF 90 21 F9 44",
+        "48 8D ?? X0x144F922C0",
+        "4C 8D ?? X0x144F922C0",
+        "B8 C0 22 F9 44",
+        "B9 C0 22 F9 44",
+        "BA C0 22 F9 44",
+        "BB C0 22 F9 44",
+        "BC C0 22 F9 44",
+        "BD C0 22 F9 44",
+        "BE C0 22 F9 44",
+        "BF C0 22 F9 44",
+    ]
+    .iter()
+    .map(|p| Pattern::new(p).unwrap())
+    .collect::<Vec<_>>();
+    let pattern_refs: Vec<_> = patterns.iter().collect();
+
+    let base_address = 0x146d73000;
+    let data = std::fs::read("../impdata.bin").unwrap();
+
+    c.bench_function("gig scan multi", |b| {
+        b.iter(|| scan_pattern(&pattern_refs, base_address, &data))
+    });
+}
+
 fn xref(c: &mut Criterion) {
     use object::Object;
     use object::ObjectSection;
@@ -180,6 +238,11 @@ criterion_group! {
     config = Criterion::default().sample_size(30);
     targets = gig
 }
+criterion_group! {
+    name = bench3;
+    config = Criterion::default().sample_size(30);
+    targets = gig_multi
+}
 criterion_group!(bench2, xref);
 
-criterion_main!(bench1, bench2);
+criterion_main!(bench1, bench2, bench3);

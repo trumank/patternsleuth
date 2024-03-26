@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashSet,
     fmt::{Debug, Display},
 };
@@ -143,7 +144,7 @@ impl_resolver!(@PEImage EngineVersionStrings, |ctx| async {
     ]
     .into_iter()
     .map(|month| month.encode_utf16().flat_map(u16::to_le_bytes).collect())
-    .collect::<HashSet<Vec<u8>>>();
+    .collect::<HashSet<Cow<[u8]>>>();
 
     for (_, pattern, addresses) in res {
         for a in addresses {

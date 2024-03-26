@@ -1,9 +1,52 @@
 use anyhow::{bail, Context, Error, Result};
 
 #[derive(Clone, Eq, PartialEq)]
-pub struct Pattern {
+pub struct PatternSimple {
     pub sig: Vec<u8>,
     pub mask: Vec<u8>,
+}
+impl PatternSimple {
+    #[inline(always)]
+    pub fn is_match(&self, data: &[u8], index: usize) -> bool {
+        for i in 0..self.len() {
+            if data[index + i] & self.mask[i] != self.sig[i] {
+                return false;
+            }
+        }
+        true
+    }
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.sig.len()
+    }
+    pub fn iter(&self) -> std::iter::Zip<std::slice::Iter<u8>, std::slice::Iter<u8>> {
+        self.sig.iter().zip(&self.mask)
+    }
+}
+impl Display for PatternSimple {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:02X}", self.sig[0])?;
+        for (sig, mask) in self.iter().skip(1) {
+            if *mask == 0 {
+                write!(f, " ??")?;
+            } else if *mask == 0xff {
+                write!(f, " {:02X}", sig)?;
+            } else {
+                todo!("bit mask formatting")
+            }
+        }
+        Ok(())
+    }
+}
+impl std::fmt::Debug for PatternSimple {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PatternSimple(\"{self}\")")
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct Pattern {
+    pub simple: PatternSimple,
     pub custom_offset: usize,
     pub captures: Vec<std::ops::Range<usize>>,
     pub xrefs: Vec<(usize, Xref)>,
@@ -148,8 +191,7 @@ impl Pattern {
         }
 
         Ok(Self {
-            sig,
-            mask,
+            simple: PatternSimple { sig, mask },
             custom_offset,
             captures,
             xrefs,
@@ -158,28 +200,26 @@ impl Pattern {
     /// Create a pattern from a literal `Vec<u8>` with `mask` filled with 0xff and `custom_offset = 0`.
     pub fn from_bytes(sig: Vec<u8>) -> Result<Self> {
         Ok(Self {
-            mask: vec![0xff; sig.len()],
-            sig,
+            simple: PatternSimple {
+                mask: vec![0xff; sig.len()],
+                sig,
+            },
             custom_offset: 0,
             captures: vec![],
             xrefs: vec![],
         })
     }
-    #[inline]
+    #[inline(always)]
     pub fn is_match(&self, data: &[u8], base_address: usize, index: usize) -> bool {
-        for i in 0..self.mask.len() {
-            if data[index + i] & self.mask[i] != self.sig[i] {
-                return false;
-            }
-        }
-        self.xrefs.iter().all(|(offset, xref)| {
-            (base_address + index + offset + 4)
-                .checked_add_signed(i32::from_le_bytes(
-                    data[index + offset..index + offset + 4].try_into().unwrap(),
-                ) as isize)
-                .map(|x| x == xref.0)
-                .unwrap_or(false)
-        })
+        self.simple.is_match(data, index)
+            && self.xrefs.iter().all(|(offset, xref)| {
+                (base_address + index + offset + 4)
+                    .checked_add_signed(i32::from_le_bytes(
+                        data[index + offset..index + offset + 4].try_into().unwrap(),
+                    ) as isize)
+                    .map(|x| x == xref.0)
+                    .unwrap_or(false)
+            })
     }
     pub fn captures<'data>(
         &self,
@@ -206,17 +246,28 @@ impl Pattern {
 
 impl Display for Pattern {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut buffer = String::new();
-        buffer.push_str(&format!("{:02X}", self.sig[0]));
-        for (sig, mask) in self.sig.iter().zip(&self.mask).skip(1) {
-            // TODO xrefs and bit masks
+        write!(f, "{:02X}", self.simple.sig[0])?;
+        let mut iter = self.simple.iter().enumerate().skip(1);
+        while let Some((i, (sig, mask))) = iter.next() {
+            if i == self.custom_offset {
+                write!(f, " |")?;
+            }
             if *mask == 0 {
-                buffer.push_str(" ??");
+                if let Some((_offset, xref)) =
+                    self.xrefs.iter().find(|(offset, _xref)| *offset == i)
+                {
+                    write!(f, " X0x{:X}", xref.0)?;
+                    iter.nth(2); // skip 3
+                } else {
+                    write!(f, " ??")?;
+                }
+            } else if *mask == 0xff {
+                write!(f, " {:02X}", sig)?;
             } else {
-                buffer.push_str(&format!(" {:02X}", sig));
+                todo!("bit mask formatting")
             }
         }
-        write!(f, "{}", buffer)
+        Ok(())
     }
 }
 impl std::fmt::Debug for Pattern {
@@ -229,37 +280,164 @@ impl std::fmt::Debug for Pattern {
 pub struct Xref(pub usize);
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::Display,
 };
+
+#[derive(Debug, Eq, PartialEq)]
+struct PatternPair<'p> {
+    pattern: &'p Pattern,
+    partial: PatternSimple,
+    offset: usize,
+}
+impl PatternPair<'_> {
+    #[inline(always)]
+    fn add_match(
+        &self,
+        data: &[u8],
+        base_address: usize,
+        offset: usize,
+        pattern_index: usize,
+        matches: &mut Vec<(usize, usize)>,
+    ) {
+        if self.partial.is_match(data, offset)
+            && offset >= self.offset
+            && self
+                .pattern
+                .is_match(data, base_address, offset - self.offset)
+        {
+            matches.push((
+                pattern_index,
+                self.pattern
+                    .compute_result(data, base_address, offset - self.offset),
+            ));
+        }
+    }
+}
+
+fn group_patterns<'p>(patterns: &[&'p Pattern]) -> Vec<PatternPair<'p>> {
+    let mut pattern_pairs: Vec<Option<PatternPair>> = patterns.iter().map(|_| None).collect();
+
+    // common first bytes that should be avoided if possible
+    let bans = [0x00, 0x24, 0x48, 0xff];
+
+    #[derive(Debug, Default, Eq, PartialEq)]
+    struct ByteSelector {
+        is_banned: bool,
+        position_score: usize,
+        pattern_indexes: BTreeSet<usize>,
+    }
+    impl std::cmp::PartialOrd for ByteSelector {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+    impl std::cmp::Ord for ByteSelector {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.is_banned
+                .cmp(&other.is_banned)
+                .reverse()
+                .then(self.pattern_indexes.len().cmp(&other.pattern_indexes.len()))
+                .then(self.position_score.cmp(&other.position_score).reverse())
+        }
+    }
+
+    let mut patterns: Vec<Option<&Pattern>> = patterns.iter().map(|p| Some(*p)).collect();
+    while patterns.iter().any(Option::is_some) {
+        let mut counts: BTreeMap<u8, ByteSelector> = Default::default();
+        for (pi, p) in patterns
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| p.map(|p| (i, &p.simple)))
+        {
+            let unique = p
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (sig, mask))| (*mask == 0xff).then_some((*sig, i)))
+                .rev()
+                .collect::<HashMap<u8, usize>>();
+            for (u, i) in unique {
+                let counts = counts.entry(u).or_insert_with(|| ByteSelector {
+                    is_banned: bans.contains(&u),
+                    ..Default::default()
+                });
+                // TODO potentially score by distance from end instead of distance from start
+                counts.position_score += i;
+                counts.pattern_indexes.insert(pi);
+            }
+        }
+        let (
+            max_key,
+            ByteSelector {
+                pattern_indexes, ..
+            },
+        ) = counts.iter().max_by_key(|a| a.1).unwrap();
+        for (i, p) in patterns.iter().enumerate() {
+            if let Some(p) = p {
+                if pattern_indexes.contains(&i) {
+                    let pos = p
+                        .simple
+                        .iter()
+                        .enumerate()
+                        .find_map(|(i, (sig, mask))| (sig == max_key && *mask == 0xff).then_some(i))
+                        .unwrap();
+
+                    pattern_pairs[i] = Some(PatternPair {
+                        pattern: p,
+                        partial: PatternSimple {
+                            sig: p.simple.sig[pos..].to_vec(),
+                            mask: p.simple.mask[pos..].to_vec(),
+                        },
+                        offset: pos,
+                    });
+                }
+            }
+        }
+
+        for take in pattern_indexes {
+            patterns[*take].take();
+        }
+    }
+    pattern_pairs.into_iter().flatten().collect()
+}
 
 pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> Vec<Vec<usize>> {
     use rayon::prelude::*;
 
-    let mut bins = patterns.iter().map(|_| vec![]).collect::<Vec<_>>();
+    let mut result_bins = patterns.iter().map(|_| vec![]).collect::<Vec<_>>();
 
     if patterns.is_empty() {
-        return bins;
+        return result_bins;
     }
 
-    const WIDE: usize = 4;
+    const WIDE1: usize = 2;
+    const WIDE2: usize = 4;
+
+    let pattern_pairs = group_patterns(patterns);
 
     let mut all_bins = HashSet::new();
     let mut short_bins: HashMap<u8, Vec<_>> = Default::default();
-    let mut wide_bins: HashMap<[u8; WIDE], Vec<_>> = Default::default();
-    for (pi, p) in patterns.iter().enumerate() {
+    let mut wide1_bins: HashMap<[u8; WIDE1], Vec<_>> = Default::default();
+    let mut wide2_bins: HashMap<[u8; WIDE2], Vec<_>> = Default::default();
+    for (pi, pair) in pattern_pairs.iter().enumerate() {
+        let p = &pair.partial;
+
         all_bins.insert(p.sig[0]);
-        if p.mask.iter().take(WIDE).filter(|m| **m == 0xff).count() == WIDE {
-            let mut buf = [0; WIDE];
-            buf.copy_from_slice(&p.sig[0..WIDE]);
-            wide_bins.entry(buf).or_default().push((pi, p));
+        if p.mask.iter().take(WIDE2).filter(|m| **m == 0xff).count() == WIDE2 {
+            let mut buf = [0; WIDE2];
+            buf.copy_from_slice(&p.sig[0..WIDE2]);
+            wide2_bins.entry(buf).or_default().push((pi, pair));
+        } else if p.mask.iter().take(WIDE1).filter(|m| **m == 0xff).count() == WIDE1 {
+            let mut buf = [0; WIDE1];
+            buf.copy_from_slice(&p.sig[0..WIDE1]);
+            wide1_bins.entry(buf).or_default().push((pi, pair));
         } else {
-            short_bins.entry(p.sig[0]).or_default().push((pi, p));
+            short_bins.entry(p.sig[0]).or_default().push((pi, pair));
         }
     }
     let all_bins = Vec::from_iter(all_bins);
 
-    let max = patterns.iter().map(|p| p.sig.len()).max().unwrap();
+    let max = patterns.iter().map(|p| p.simple.len()).max().unwrap();
 
     // cut middle short such that even the longest pattern doesn't have to bounds check
     let middle = &data[0..data.len().saturating_sub(max)];
@@ -283,20 +461,24 @@ pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> 
                         let j = offset + i;
                         if let Some(patterns) = short_bins.get(first) {
                             for (pi, p) in patterns.iter() {
-                                if p.is_match(data, base_address, j) {
-                                    matches.push((*pi, p.compute_result(data, base_address, j)));
+                                p.add_match(data, base_address, j, *pi, &mut matches)
+                            }
+                        }
+                        if !wide2_bins.is_empty() {
+                            let mut buf = [0; WIDE2];
+                            buf.copy_from_slice(&data[j..j + WIDE2]);
+                            if let Some(patterns) = wide2_bins.get(&buf) {
+                                for (pi, p) in patterns.iter() {
+                                    p.add_match(data, base_address, j, *pi, &mut matches)
                                 }
                             }
                         }
-                        if !wide_bins.is_empty() {
-                            let mut buf = [0; WIDE];
-                            buf.copy_from_slice(&data[j..j + WIDE]);
-                            if let Some(patterns) = wide_bins.get(&buf) {
+                        if !wide1_bins.is_empty() {
+                            let mut buf = [0; WIDE1];
+                            buf.copy_from_slice(&data[j..j + WIDE1]);
+                            if let Some(patterns) = wide1_bins.get(&buf) {
                                 for (pi, p) in patterns.iter() {
-                                    if p.is_match(data, base_address, j) {
-                                        matches
-                                            .push((*pi, p.compute_result(data, base_address, j)));
-                                    }
+                                    p.add_match(data, base_address, j, *pi, &mut matches)
                                 }
                             }
                         }
@@ -310,19 +492,21 @@ pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> 
 
     // suffix
     let start = middle.len();
-    for (pi, p) in patterns.iter().enumerate() {
-        for i in start..start + (data.len() - middle.len()).saturating_sub(p.sig.len() - 1) {
-            if p.is_match(data, base_address, i) {
+    for (pi, p) in pattern_pairs.iter().enumerate() {
+        for i in (start.saturating_sub(p.offset))
+            ..start + (data.len() - middle.len()).saturating_sub(p.pattern.simple.len() - 1)
+        {
+            if p.pattern.is_match(data, base_address, i) {
                 matches.push((pi, base_address + i));
             }
         }
     }
 
     for (pi, addr) in matches {
-        bins[pi].push(addr);
+        result_bins[pi].push(addr);
     }
 
-    bins
+    result_bins
 }
 
 pub fn scan_xref(patterns: &[&Xref], base_address: usize, data: &[u8]) -> Vec<Vec<usize>> {
@@ -437,8 +621,10 @@ mod test {
         assert!(Pattern::new("?? ??").is_ok());
         assert_eq!(
             Pattern {
-                sig: vec![0, 0],
-                mask: vec![0xff, 0],
+                simple: PatternSimple {
+                    sig: vec![0, 0],
+                    mask: vec![0xff, 0],
+                },
                 custom_offset: 0,
                 captures: vec![],
                 xrefs: vec![],
@@ -447,8 +633,10 @@ mod test {
         );
         assert_eq!(
             Pattern {
-                sig: vec![0x10, 0],
-                mask: vec![0xff, 0],
+                simple: PatternSimple {
+                    sig: vec![0x10, 0],
+                    mask: vec![0xff, 0],
+                },
                 custom_offset: 0,
                 captures: vec![],
                 xrefs: vec![],
@@ -457,13 +645,42 @@ mod test {
         );
         assert_eq!(
             Pattern {
-                sig: vec![0x10, 0, 0b01010011],
-                mask: vec![0xff, 0, 0b11011011],
+                simple: PatternSimple {
+                    sig: vec![0x10, 0, 0b01010011],
+                    mask: vec![0xff, 0, 0b11011011],
+                },
                 custom_offset: 0,
                 captures: vec![],
                 xrefs: vec![],
             },
             Pattern::new("10 ?? 01?10?11").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_display_pattern() {
+        assert_eq!(
+            Pattern::new("12 34 | 56").unwrap().to_string(),
+            "12 34 | 56"
+        );
+        assert_eq!(
+            Pattern::new("12 34 | 56").unwrap().simple.to_string(),
+            "12 34 56"
+        );
+
+        assert_eq!(Pattern::new("12 34 56").unwrap().to_string(), "12 34 56");
+        assert_eq!(
+            Pattern::new("12 34 56").unwrap().simple.to_string(),
+            "12 34 56"
+        );
+
+        assert_eq!(
+            Pattern::new("12 X0x34 56").unwrap().to_string(),
+            "12 X0x34 56"
+        );
+        assert_eq!(
+            Pattern::new("12 X0x34 56").unwrap().simple.to_string(),
+            "12 ?? ?? ?? ?? 56"
         );
     }
 
@@ -474,8 +691,10 @@ mod test {
         assert!(Pattern::new("[ ] ?? ] ??").is_err());
         assert_eq!(
             Pattern {
-                sig: vec![0, 0, 0x10, 0x20],
-                mask: vec![0xff, 0, 0xff, 0xff],
+                simple: PatternSimple {
+                    sig: vec![0, 0, 0x10, 0x20],
+                    mask: vec![0xff, 0, 0xff, 0xff],
+                },
                 custom_offset: 0,
                 captures: vec![2..2, 1..2, 2..4],
                 xrefs: vec![],
@@ -504,6 +723,99 @@ mod test {
         );
     }
 
+    #[test]
+    fn test_group_patterns() {
+        // simple
+        assert_eq!(
+            group_patterns(&[
+                &Pattern::new("12 34").unwrap(),
+                &Pattern::new("34 56").unwrap(),
+            ]),
+            vec![
+                PatternPair {
+                    pattern: &Pattern::new("12 34").unwrap(),
+                    partial: Pattern::new("34").unwrap().simple,
+                    offset: 1,
+                },
+                PatternPair {
+                    pattern: &Pattern::new("34 56").unwrap(),
+                    partial: Pattern::new("34 56").unwrap().simple,
+                    offset: 0,
+                },
+            ]
+        );
+
+        // duplicate bytes
+        assert_eq!(
+            group_patterns(&[
+                &Pattern::new("12 12 12 34").unwrap(),
+                &Pattern::new("34 56 12").unwrap(),
+            ]),
+            vec![
+                PatternPair {
+                    pattern: &Pattern::new("12 12 12 34").unwrap(),
+                    partial: Pattern::new("12 12 12 34").unwrap().simple,
+                    offset: 0,
+                },
+                PatternPair {
+                    pattern: &Pattern::new("34 56 12").unwrap(),
+                    partial: Pattern::new("12").unwrap().simple,
+                    offset: 2,
+                },
+            ]
+        );
+
+        // multiple possible groupings (use first)
+        assert_eq!(
+            group_patterns(&[
+                &Pattern::new("12 34 56").unwrap(),
+                &Pattern::new("34 56").unwrap(),
+            ]),
+            vec![
+                PatternPair {
+                    pattern: &Pattern::new("12 34 56").unwrap(),
+                    partial: Pattern::new("34 56").unwrap().simple,
+                    offset: 1,
+                },
+                PatternPair {
+                    pattern: &Pattern::new("34 56").unwrap(),
+                    partial: Pattern::new("34 56").unwrap().simple,
+                    offset: 0,
+                },
+            ]
+        );
+
+        // test bans
+        assert_eq!(
+            group_patterns(&[
+                &Pattern::new("12 00").unwrap(),
+                &Pattern::new("00 56").unwrap(),
+            ]),
+            vec![
+                PatternPair {
+                    pattern: &Pattern::new("12 00").unwrap(),
+                    partial: Pattern::new("12 00").unwrap().simple,
+                    offset: 0,
+                },
+                PatternPair {
+                    pattern: &Pattern::new("00 56").unwrap(),
+                    partial: Pattern::new("56").unwrap().simple,
+                    offset: 1,
+                },
+            ]
+        );
+
+        // test bans
+        assert_eq!(
+            group_patterns(&[&Pattern::new("00").unwrap(),]),
+            vec![PatternPair {
+                pattern: &Pattern::new("00").unwrap(),
+                partial: Pattern::new("00").unwrap().simple,
+                offset: 0,
+            },]
+        );
+    }
+
     type PatternScanFn =
         fn(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> Vec<Vec<usize>>;
 
@@ -519,13 +831,14 @@ mod test {
 
         let len = 64;
         let lanes = 32;
+        let base = 123;
 
         let data = vec![1; len + lanes];
-        let matches: Vec<_> = (0..len).collect();
+        let matches: Vec<_> = (base..len + base).collect();
 
         for i in 0..lanes {
             let slice = &data[i..i + len];
-            assert_eq!(vec![matches.clone()], scan(&patterns, 0, slice));
+            assert_eq!(vec![matches.clone()], scan(&patterns, base, slice));
         }
 
         let patterns = [&Pattern::new("01 02").unwrap()];
@@ -533,12 +846,16 @@ mod test {
         // obtuse generator to test every combination of chunk boundaries
         let data: Vec<_> = std::iter::repeat([1, 2, 3]).take(32).flatten().collect();
         let matches: Vec<_> = (0..3)
-            .map(|offset| (0..len / 3).map(|i| i * 3 + offset).collect::<Vec<_>>())
+            .map(|offset| {
+                (0..len / 3)
+                    .map(|i| i * 3 + offset + base)
+                    .collect::<Vec<_>>()
+            })
             .collect();
 
         for i in 0..(len - lanes) {
             let slice = &data[i..i + len];
-            let res = scan(&patterns, 0, slice);
+            let res = scan(&patterns, base, slice);
             assert_eq!(vec![matches[(3 - (i % 3)) % 3].clone()], res);
         }
     }

@@ -106,7 +106,7 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
                 let highlight = pattern
                     .and_then(|p| -> Option<bool> {
                         let offset = (instruction.ip() as usize) - address + i + p.custom_offset;
-                        Some(*p.mask.get(offset)? != 0)
+                        Some(*p.simple.mask.get(offset)? != 0)
                     })
                     .unwrap_or_default();
                 let s = format!("{:02x}", b);
@@ -249,7 +249,7 @@ where
             let highlight = pattern
                 .and_then(|p| -> Option<bool> {
                     let offset = (instruction.ip() as usize) - address + i + p.custom_offset;
-                    Some(*p.mask.get(offset)? != 0)
+                    Some(*p.simple.mask.get(offset)? != 0)
                 })
                 .unwrap_or_default();
 
