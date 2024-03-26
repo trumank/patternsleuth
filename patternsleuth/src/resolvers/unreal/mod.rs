@@ -67,20 +67,24 @@ mod util {
                 .copied()
                 .chain(refs_indirect.into_iter().flatten())
                 .flat_map(|s| {
-                    [
-                        ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
-                        ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
-                        //ctx.scan(Pattern::new(format!("10111??? 0x{s:X}")).unwrap()), // mov reg, imm32
-                        ctx.scan(Pattern::new(format!("b8 0x{s:X}")).unwrap()),
-                        ctx.scan(Pattern::new(format!("b9 0x{s:X}")).unwrap()),
-                        ctx.scan(Pattern::new(format!("ba 0x{s:X}")).unwrap()),
-                        ctx.scan(Pattern::new(format!("bb 0x{s:X}")).unwrap()),
-                        ctx.scan(Pattern::new(format!("bc 0x{s:X}")).unwrap()),
-                        ctx.scan(Pattern::new(format!("bd 0x{s:X}")).unwrap()),
-                        ctx.scan(Pattern::new(format!("be 0x{s:X}")).unwrap()),
-                        ctx.scan(Pattern::new(format!("bf 0x{s:X}")).unwrap()),
-                    ]
-                }),
+                    let mut scans =
+                        vec![format!("48 8d ?? X0x{s:X}"), format!("4c 8d ?? X0x{s:X}")];
+                    if TryInto::<u32>::try_into(s).is_ok() {
+                        // mov reg, imm32 if address is 32 bit
+                        scans.extend([
+                            format!("b8 0x{s:X}"),
+                            format!("b9 0x{s:X}"),
+                            format!("ba 0x{s:X}"),
+                            format!("bb 0x{s:X}"),
+                            format!("bc 0x{s:X}"),
+                            format!("bd 0x{s:X}"),
+                            format!("be 0x{s:X}"),
+                            format!("bf 0x{s:X}"),
+                        ]);
+                    }
+                    scans
+                })
+                .map(|p| ctx.scan(Pattern::new(p).unwrap())),
         )
         .await;
 
