@@ -103,7 +103,7 @@ mod linux {
             let exe_path = std::fs::read_link("/proc/self/exe").ok();
             #[cfg(not(feature = "symbols"))]
             let exe_path: Option<std::path::PathBuf> = None;
-            eprintln!("Reading image internal");
+            //eprintln!("Reading image internal");
             Image::read(Some(base_addr), data, exe_path, false)
         }
     }
