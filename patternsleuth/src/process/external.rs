@@ -8,7 +8,7 @@ mod linux {
     use anyhow::{bail, Context, Result};
     use object::{Object, ObjectSection};
 
-    use crate::{Image, Memory};
+    use crate::{image, Image, Memory};
 
     fn read_process_mem(pid: i32, address: usize, buffer: &mut [u8]) -> Result<usize> {
         unsafe {
@@ -83,7 +83,13 @@ mod linux {
 
         let memory = Memory::new_external_data(sections)?;
 
-        Image::read_inner::<String>(None, false, memory, object)
+        image::pe::PEImage::read_inner_memory::<String>(
+            object.relative_address_base() as usize,
+            None,
+            false,
+            memory,
+            object,
+        )
     }
 }
 
@@ -109,6 +115,7 @@ mod windows {
     use anyhow::{bail, Result};
     use object::{Object, ObjectSection};
 
+    use crate::image::pe::PEImage;
     use crate::{Image, Memory};
 
     use windows::Win32::Foundation::HMODULE;
@@ -121,7 +128,7 @@ mod windows {
     };
 
     pub fn read_image_from_pid<'data>(pid: i32) -> Result<Image<'data>> {
-        let memory = unsafe {
+        let (memory, base) = unsafe {
             let process = OpenProcess(
                 PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
                 false,
@@ -158,7 +165,7 @@ mod windows {
                 None,
             )?;
 
-            mem
+            (mem, info.lpBaseOfDll as usize)
         };
 
         let object = object::File::parse(memory.as_slice())?;
@@ -175,6 +182,6 @@ mod windows {
 
         let memory = Memory::new_external_data(sections)?;
 
-        Image::read_inner::<String>(None, false, memory, object)
+        PEImage::read_inner_memory::<String>(base, None, false, memory, object)
     }
 }

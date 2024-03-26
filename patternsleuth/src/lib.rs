@@ -1,14 +1,18 @@
+pub mod image;
 #[cfg(feature = "patterns")]
 pub mod patterns;
 pub mod process;
 pub mod resolvers;
 #[cfg(feature = "symbols")]
 pub mod symbols;
+#[cfg(feature = "symbols")]
+pub mod uesym;
 
 pub mod scanner {
     pub use patternsleuth_scanner::*;
 }
 
+use scanner::{Pattern, Xref};
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -16,10 +20,10 @@ use std::{
     path::Path,
 };
 
-use scanner::{Pattern, Xref};
-
 use anyhow::{bail, Context, Result};
 use object::{File, Object, ObjectSection};
+
+use image::Image;
 
 pub struct ResolveContext<'data, 'pattern> {
     pub exe: &'data Image<'data>,
@@ -240,409 +244,6 @@ impl<'a, S: std::fmt::Debug + PartialEq> ScanResult<'a, S> {
     }
 }
 
-#[derive(Default)]
-pub struct ImageBuilder {
-    functions: bool,
-}
-pub struct ImageBuilderWithSymbols<P: AsRef<Path>> {
-    symbols: Option<P>,
-    functions: bool,
-}
-impl ImageBuilder {
-    pub fn functions(mut self, functions: bool) -> Self {
-        self.functions = functions;
-        self
-    }
-    #[cfg(feature = "symbols")]
-    pub fn symbols<P: AsRef<Path>>(self, exe_path: P) -> ImageBuilderWithSymbols<P> {
-        ImageBuilderWithSymbols {
-            symbols: Some(exe_path),
-            functions: self.functions,
-        }
-    }
-    pub fn build(self, data: &[u8]) -> Result<Image<'_>> {
-        Image::read::<&str>(data, None, self.functions)
-    }
-}
-impl<P: AsRef<Path>> ImageBuilderWithSymbols<P> {
-    pub fn functions(mut self, functions: bool) -> Self {
-        self.functions = functions;
-        self
-    }
-    #[cfg(feature = "symbols")]
-    pub fn symbols(mut self, exe_path: P) -> Self {
-        self.symbols = Some(exe_path);
-        self
-    }
-    pub fn build(self, data: &[u8]) -> Result<Image<'_>> {
-        Image::read(data, self.symbols, self.functions)
-    }
-}
-
-pub struct Image<'data> {
-    pub base_address: usize,
-    pub exception_directory_range: Range<usize>,
-    pub exception_children_cache: HashMap<usize, Vec<RuntimeFunction>>,
-    pub memory: Memory<'data>,
-    pub symbols: Option<HashMap<usize, String>>,
-    pub imports: HashMap<String, HashMap<String, usize>>,
-}
-impl<'data> Image<'data> {
-    pub fn builder() -> ImageBuilder {
-        Default::default()
-    }
-    fn read<P: AsRef<Path>>(
-        data: &'data [u8],
-        exe_path: Option<P>,
-        load_functions: bool,
-    ) -> Result<Image<'data>> {
-        let object = object::File::parse(data)?;
-        let memory = Memory::new(&object)?;
-        Self::read_inner(exe_path, load_functions, memory, object)
-    }
-    fn read_inner<'memory, P: AsRef<Path>>(
-        exe_path: Option<P>,
-        load_functions: bool,
-        memory: Memory<'memory>,
-        object: object::File,
-    ) -> Result<Image<'memory>> {
-        let base_address = object.relative_address_base() as usize;
-
-        #[allow(unused_variables)]
-        let symbols = if let Some(exe_path) = exe_path {
-            #[cfg(not(feature = "symbols"))]
-            unreachable!();
-            #[cfg(feature = "symbols")]
-            {
-                let pdb_path = exe_path.as_ref().with_extension("pdb");
-                pdb_path
-                    .exists()
-                    .then(|| symbols::dump_pdb_symbols(pdb_path, base_address))
-                    .transpose()?
-            }
-        } else {
-            None
-        };
-
-        let get_ex_dir = || -> Result<Range<usize>> {
-            Ok(match object {
-                object::File::Pe64(ref inner) => {
-                    let exception_directory = inner
-                        .data_directory(object::pe::IMAGE_DIRECTORY_ENTRY_EXCEPTION)
-                        .context("no exception directory")?;
-
-                    let (address, size) = exception_directory.address_range();
-                    base_address + address as usize..base_address + (address + size) as usize
-                }
-                _ => bail!("not a PE file"),
-            })
-        };
-
-        let get_imports = || -> Result<_> {
-            Ok(match object {
-                object::File::Pe64(ref inner) => {
-                    use object::pe::ImageNtHeaders64;
-                    use object::read::pe::ImageThunkData;
-                    use object::LittleEndian as LE;
-
-                    let mut imports: HashMap<String, HashMap<String, usize>> = Default::default();
-
-                    let import_table = inner.import_table()?.unwrap();
-                    let mut import_descs = import_table.descriptors()?;
-
-                    while let Some(import_desc) = import_descs.next()? {
-                        let mut cur = HashMap::new();
-
-                        let Ok(lib_name) = import_table.name(import_desc.name.get(LE)) else {
-                            continue;
-                        };
-                        let lib_name = std::str::from_utf8(lib_name)?.to_ascii_lowercase();
-                        let mut thunks =
-                            import_table.thunks(import_desc.original_first_thunk.get(LE))?;
-                        let mut address = base_address + import_desc.first_thunk.get(LE) as usize;
-                        while let Some(thunk) = thunks.next::<ImageNtHeaders64>()? {
-                            if let Ok((_hint, name)) = import_table.hint_name(thunk.address()) {
-                                cur.insert(std::str::from_utf8(name)?.to_owned(), address);
-                                address += 8;
-                            }
-                        }
-                        imports.insert(lib_name, cur);
-                    }
-                    imports
-                }
-                _ => bail!("not a PE file"),
-            })
-        };
-
-        let mut new = Image {
-            base_address,
-            exception_directory_range: get_ex_dir().unwrap_or_default(),
-            exception_children_cache: Default::default(),
-            memory,
-            symbols,
-            imports: get_imports().unwrap_or_default(),
-        };
-
-        if load_functions {
-            new.populate_exception_cache()?;
-        }
-        Ok(new)
-    }
-    fn populate_exception_cache(&mut self) -> Result<(), MemoryAccessError> {
-        for i in self.exception_directory_range.clone().step_by(12) {
-            let f = RuntimeFunction::read(&self.memory, self.base_address, i)?;
-            self.exception_children_cache.insert(f.range.start, vec![]);
-
-            let Ok(section) = self.memory.get_section_containing(f.unwind) else {
-                // TODO disabled cause spammy
-                //println!("invalid unwind info addr {:x}", f.unwind);
-                continue;
-            };
-
-            let mut unwind = f.unwind;
-            let has_chain_info = section.section.index(unwind)? >> 3 == 0x4;
-            if has_chain_info {
-                let unwind_code_count = section.section.index(unwind + 2)?;
-
-                unwind += 4 + 2 * unwind_code_count as usize;
-                if unwind % 4 != 0 {
-                    // align
-                    unwind += 2;
-                }
-
-                if section.address() + section.data().len() > unwind + 12 {
-                    let chained = RuntimeFunction::read(section, self.base_address, unwind)?;
-
-                    // TODO disabled because it spams the log too much
-                    //let referenced = self.get_function(chained.range.start);
-
-                    //assert_eq!(Some(&chained), referenced.as_ref());
-                    //if Some(&chained) != referenced.as_ref() {
-                    //println!("mismatch {:x?} {referenced:x?}", Some(&chained));
-                    //}
-
-                    self.exception_children_cache
-                        .entry(chained.range.start)
-                        .or_default()
-                        .push(f);
-                } else {
-                    println!("invalid unwind addr {:x}", unwind);
-                }
-            }
-        }
-
-        //println!("{:#x?}", self.exception_children_cache);
-        Ok(())
-    }
-    /// Get function containing `address` from the exception directory
-    pub fn get_function(
-        &self,
-        address: usize,
-    ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
-        let size = 12;
-        let mut min = 0;
-        let mut max = self.exception_directory_range.len() / size - 1;
-
-        while min <= max {
-            let i = (max + min) / 2;
-            let addr = i * size + self.exception_directory_range.start;
-
-            let addr_begin = self.base_address + self.memory.u32_le(addr)? as usize;
-            if addr_begin <= address {
-                let addr_end = self.base_address + self.memory.u32_le(addr + 4)? as usize;
-                if addr_end > address {
-                    let unwind = self.base_address + self.memory.u32_le(addr + 8)? as usize;
-
-                    return Ok(Some(RuntimeFunction {
-                        range: addr_begin..addr_end,
-                        unwind,
-                    }));
-                } else {
-                    min = i + 1;
-                }
-            } else {
-                max = i - 1;
-            }
-        }
-        Ok(None)
-    }
-    /// Get root function containing `address` from the exception directory. This can be used to
-    /// find the start address of a function given an address in the body.
-    pub fn get_root_function(
-        &self,
-        address: usize,
-    ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
-        if let Some(f) = self.get_function(address)? {
-            let mut f = RuntimeFunction {
-                range: f.range,
-                unwind: f.unwind,
-            };
-
-            loop {
-                let mut unwind_addr = f.unwind;
-
-                let section = self.memory.get_section_containing(unwind_addr)?;
-
-                let has_chain_info = section.section.index(unwind_addr)? >> 3 == 0x4;
-                if has_chain_info {
-                    let unwind_code_count = section.section.index(unwind_addr + 2)?;
-
-                    unwind_addr += 4 + 2 * unwind_code_count as usize;
-                    if unwind_addr % 4 != 0 {
-                        // align
-                        unwind_addr += 2;
-                    }
-
-                    if section.address() + section.data().len() > unwind_addr + 12 {
-                        f = RuntimeFunction::read(section, self.base_address, unwind_addr)?;
-                    } else {
-                        todo!("not adding chain info {unwind_addr}");
-                    }
-                } else {
-                    return Ok(Some(f));
-                }
-            }
-        } else {
-            Ok(None)
-        }
-    }
-    /// Recursively get all child functions of `address` (exact). This is pulled from
-    /// `exception_children_cache` so will be empty if it has not been populated.
-    pub fn get_child_functions(
-        &self,
-        address: usize,
-    ) -> Result<Vec<RuntimeFunction>, MemoryAccessError> {
-        let mut queue = vec![address];
-        let mut all_children = vec![self.get_function(address)?.unwrap()];
-        while let Some(next) = queue.pop() {
-            if let Some(children) = self.exception_children_cache.get(&next) {
-                for child in children {
-                    queue.push(child.range().start);
-                    all_children.push(child.clone());
-                }
-            }
-        }
-        Ok(all_children)
-    }
-
-    pub fn resolve<T: Send + Sync>(
-        &self,
-        resolver: &'static resolvers::ResolverFactory<T>,
-    ) -> resolvers::Result<T> {
-        resolvers::resolve(self, resolver)
-    }
-
-    pub fn resolve_many(
-        &self,
-        resolvers: &[fn() -> &'static resolvers::DynResolverFactory],
-    ) -> Vec<resolvers::Result<std::sync::Arc<dyn resolvers::Resolution>>> {
-        resolvers::resolve_many(self, resolvers)
-    }
-
-    pub fn scan<'patterns, S>(
-        &self,
-        pattern_configs: &'patterns [PatternConfig<S>],
-    ) -> Result<ScanResult<'patterns, S>> {
-        let mut results = vec![];
-
-        struct PendingScan {
-            original_config_index: usize,
-            stages: ResolveStages,
-            scan: Scan,
-        }
-
-        let mut scan_queue = pattern_configs
-            .iter()
-            .enumerate()
-            .map(|(index, config)| PendingScan {
-                original_config_index: index,
-                stages: ResolveStages(vec![]),
-                scan: config.scan.clone(), // TODO clone isn't ideal but makes handling multi-stage scans a lot easier
-            })
-            .collect::<Vec<_>>();
-
-        while !scan_queue.is_empty() {
-            let mut new_queue = vec![];
-            for section in self.memory.sections() {
-                let base_address = section.address();
-                let section_name = section.name();
-                let data = section.data();
-
-                let (pattern_scans, patterns): (Vec<_>, Vec<_>) = scan_queue
-                    .iter()
-                    .filter_map(|scan| {
-                        scan.scan
-                            .section
-                            .map(|s| s == section.kind())
-                            .unwrap_or(true)
-                            .then(|| {
-                                scan.scan
-                                    .scan_type
-                                    .get_pattern()
-                                    .map(|pattern| (scan, pattern))
-                            })
-                            .flatten()
-                    })
-                    .unzip();
-
-                let (xref_scans, xrefs): (Vec<_>, Vec<_>) = scan_queue
-                    .iter()
-                    .filter_map(|scan| {
-                        scan.scan
-                            .section
-                            .map(|s| s == section.kind())
-                            .unwrap_or(true)
-                            .then(|| scan.scan.scan_type.get_xref().map(|xref| (scan, xref)))
-                            .flatten()
-                    })
-                    .unzip();
-
-                let scan_results = scanner::scan_pattern(&patterns, base_address, data)
-                    .into_iter()
-                    .chain(scanner::scan_xref(&xrefs, base_address, data))
-                    .zip(pattern_scans.iter().chain(xref_scans.iter()));
-
-                for (addresses, scan) in scan_results {
-                    for address in addresses {
-                        let mut stages = scan.stages.clone();
-                        let action = (scan.scan.resolve)(
-                            ResolveContext {
-                                exe: self,
-                                memory: &self.memory,
-                                section: section_name.to_owned(),
-                                match_address: address,
-                                scan: &scan.scan,
-                            },
-                            &mut stages,
-                        );
-                        match action {
-                            ResolutionAction::Continue(new_scan) => {
-                                new_queue.push(PendingScan {
-                                    original_config_index: scan.original_config_index,
-                                    stages,
-                                    scan: new_scan,
-                                });
-                            }
-                            ResolutionAction::Finish(res) => {
-                                results.push((
-                                    &pattern_configs[scan.original_config_index],
-                                    Resolution {
-                                        stages: stages.0,
-                                        res,
-                                    },
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-            scan_queue = new_queue;
-        }
-
-        Ok(ScanResult { results })
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeFunction {
     pub range: Range<usize>,
@@ -679,6 +280,7 @@ pub enum MemoryAccessError {
     MemoryOutOfBoundsError,
     Utf8Error,
     Utf16Error,
+    MisalginedAddress(usize, usize),
 }
 impl std::error::Error for MemoryAccessError {}
 impl std::fmt::Display for MemoryAccessError {
@@ -687,6 +289,9 @@ impl std::fmt::Display for MemoryAccessError {
             Self::MemoryOutOfBoundsError => write!(f, "MemoryOutOfBoundsError"),
             Self::Utf8Error => write!(f, "Utf8Error"),
             Self::Utf16Error => write!(f, "Utf16Error"),
+            Self::MisalginedAddress(addr, align) => {
+                write!(f, "MisalginedAddress: address {:#x} != {:#x}", addr, align)
+            }
         }
     }
 }

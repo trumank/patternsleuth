@@ -214,9 +214,46 @@ pub use ::inventory;
 #[cfg(feature = "serde-resolvers")]
 pub use ::typetag;
 
+pub trait PleaseAddCollectForMe {}
+
+#[macro_export]
+macro_rules! _matcharm_generator {
+    ($enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }, {$ctx:ident, $name:ident}) => {
+        {
+            let img = &$ctx.image().image_type;
+            let mut res = None;
+            $(
+                $crate::resolvers::cfg_image::$img_ident! {
+                    if matches!(img, $crate::image::$enum_name_it::$img_ident(_)) {
+                        res = Some($name::$img_ident($ctx).await);
+                    }
+                }
+            )*
+            res.unwrap()
+        }
+    }
+}
+
+#[cfg(feature = "image-pe")]
+#[macro_export]
+macro_rules! _cfg_image_pe { ($($args:tt)*) => { $($args)* } }
+#[cfg(not(feature = "image-pe"))]
+#[macro_export]
+macro_rules! _cfg_image_pe {
+    ($($args:tt)*) => {};
+}
+#[cfg(feature = "image-elf")]
+#[macro_export]
+macro_rules! _cfg_image_elf { ($($args:tt)*) => { $($args)* } }
+#[cfg(not(feature = "image-elf"))]
+#[macro_export]
+macro_rules! _cfg_image_elf {
+    ($($args:tt)*) => {};
+}
+
 #[macro_export]
 macro_rules! _impl_resolver {
-    ( $name:ident, |$ctx:ident| async $x:block ) => {
+    (@all $name:ident, |$ctx:ident| async $x:block ) => {
         $crate::_impl_resolver_inner!($name, |$ctx| async $x);
 
         impl $crate::resolvers::Singleton for $name {
@@ -225,10 +262,41 @@ macro_rules! _impl_resolver {
             }
         }
     };
+
+    (@$arch:ident $name:ident, |$ctx:ident| async $x:block ) => {
+        $crate::resolvers::cfg_image::$arch! {
+            impl $name where $name: $crate::resolvers::PleaseAddCollectForMe {
+                #[allow(non_snake_case)]
+                pub async fn $arch($ctx: &$crate::resolvers::AsyncContext<'_>) -> $crate::resolvers::Result<$name> $x
+            }
+        }
+    };
+
+    (@collect $name:ident) => {
+        $crate::_impl_resolver_inner!($name, |ctx| async {
+            $crate::image::image_type_reflection!(@all impl_resolver; @generate; {ctx, $name})
+        });
+
+        impl $crate::resolvers::Singleton for $name {
+            fn get(&self) -> Option<usize> {
+                None
+            }
+        }
+
+        impl $crate::resolvers::PleaseAddCollectForMe for $name {}
+    };
+
+    (@generate $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }, {$ctx:ident, $name:ident}) => {
+        $crate::resolvers::matcharm_generator!(
+            $enum_name_it { $( $img_ident( $img_ty, $img_feature )),* },
+            { $ctx, $name }
+        )
+    };
 }
+
 #[macro_export]
 macro_rules! _impl_resolver_singleton {
-    ( $name:ident, |$ctx:ident| async $x:block ) => {
+    (@all $name:ident, |$ctx:ident| async $x:block ) => {
         $crate::_impl_resolver_inner!($name, |$ctx| async $x);
 
         impl $crate::resolvers::Singleton for $name {
@@ -236,6 +304,36 @@ macro_rules! _impl_resolver_singleton {
                 Some(self.0)
             }
         }
+    };
+
+    (@$arch:ident $name:ident, |$ctx:ident| async $x:block ) => {
+        $crate::resolvers::cfg_image::$arch! {
+            impl $name where $name: $crate::resolvers::PleaseAddCollectForMe {
+                #[allow(non_snake_case)]
+                async fn $arch($ctx: &$crate::resolvers::AsyncContext<'_>) -> $crate::resolvers::Result<$name> $x
+            }
+        }
+    };
+
+    (@collect $name:ident) => {
+        $crate::_impl_resolver_inner!($name, |ctx| async {
+            $crate::image::image_type_reflection!(@all impl_resolver_singleton; @generate; {ctx, $name})
+        });
+
+        impl $crate::resolvers::Singleton for $name {
+            fn get(&self) -> Option<usize> {
+                Some(self.0)
+            }
+        }
+
+        impl $crate::resolvers::PleaseAddCollectForMe for $name {}
+    };
+
+    (@generate $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }, {$ctx:ident, $name:ident}) => {
+        $crate::resolvers::matcharm_generator!(
+            $enum_name_it { $( $img_ident( $img_ty, $img_feature )),* },
+            { $ctx, $name }
+        )
     };
 }
 #[macro_export]
@@ -292,7 +390,7 @@ macro_rules! _impl_try_collector {
                 $member_vis $member_name: ::std::sync::Arc<$resolver>,
             )*
         }
-        $crate::_impl_resolver!($struct_name, |ctx| async {
+        $crate::_impl_resolver!(@all $struct_name, |ctx| async {
             #[allow(non_snake_case)]
             let (
                 $( $member_name, )*
@@ -325,7 +423,7 @@ macro_rules! _impl_collector {
                 $member_vis $member_name: $crate::resolvers::Result<::std::sync::Arc<$resolver>>,
             )*
         }
-        $crate::_impl_resolver!($struct_name, |ctx| async {
+        $crate::_impl_resolver!(@all $struct_name, |ctx| async {
             #[allow(non_snake_case)]
             let (
                 $( $member_name, )*
@@ -343,6 +441,11 @@ pub use _impl_collector as impl_collector;
 pub use _impl_resolver as impl_resolver;
 pub use _impl_resolver_singleton as impl_resolver_singleton;
 pub use _impl_try_collector as impl_try_collector;
+pub use _matcharm_generator as matcharm_generator;
+pub mod cfg_image {
+    pub use _cfg_image_elf as ElfImage;
+    pub use _cfg_image_pe as PEImage;
+}
 
 pub trait Singleton {
     fn get(&self) -> Option<usize>;

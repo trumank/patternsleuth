@@ -1,14 +1,14 @@
-use std::{collections::HashSet, fmt::Debug};
+use std::fmt::Debug;
 
 use futures::{future::join_all, join};
-use iced_x86::{Code, FlowControl, OpKind, Register};
+use iced_x86::{Code, OpKind, Register};
 use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
     disassemble::{disassemble, Control},
     resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
-    Image, MemoryAccessorTrait,
+    MemoryAccessorTrait,
 };
 
 #[derive(Debug, PartialEq)]
@@ -17,12 +17,12 @@ use crate::{
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct GMalloc(pub usize);
-impl_resolver_singleton!(GMalloc, |ctx| async {
+impl_resolver_singleton!(@all GMalloc, |ctx| async {
+    //eprintln!("GMalloc Scan Start!");
     let any = join!(
         ctx.resolve(GMallocPatterns::resolver()),
         ctx.resolve(GMallocString::resolver()),
     );
-
     Ok(Self(*ensure_one(
         [any.0.map(|r| r.0), any.1.map(|r| r.0)]
             .iter()
@@ -36,12 +36,12 @@ impl_resolver_singleton!(GMalloc, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct GMallocPatterns(pub usize);
-impl_resolver_singleton!(GMallocPatterns, |ctx| async {
+impl_resolver_singleton!(@all GMallocPatterns, |ctx| async {
     let patterns = [
         "48 ?? ?? f0 ?? 0f b1 ?? | ?? ?? ?? ?? 74 ?? ?? 85 ?? 74 ?? ?? 8b", // Purgatory
         "eb 03 ?? 8b ?? 48 8b ?? f0 ?? 0f b1 ?? | ?? ?? ?? ?? 74 ?? ?? 85 ?? 74 ?? ?? 8b", // Purg_notX
         "e8 ?? ?? ?? ?? 48 8b ?? f0 ?? 0f b1 ?? | ?? ?? ?? ?? 74 ?? ?? 85 ?? 74 ?? ?? 8b", // Purg_withX
-        "48 85 C9 74 2E 53 48 83 EC 20 48 8B D9 48 8B ?? | ?? ?? ?? ?? 48 85 C9", // A 
+        "48 85 C9 74 2E 53 48 83 EC 20 48 8B D9 48 8B ?? | ?? ?? ?? ?? 48 85 C9", // A
         "75 ?? E8 ?? ?? ?? ?? 48 8b 0d | ?? ?? ?? ?? 48 8b ?? 48 ?? ?? ff 50 ?? 48 83 c4 ?? ?? c3", // bnew1
         "48 85 C9 74 ?? 4C 8B 05 | ?? ?? ?? ?? 4D 85 C0 0F 84", // altshort
         "48 ?? ?? ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8b 0d | ?? ?? ?? ?? 48 8b 01 ff 50 ?? 84 c0 75 ?? b9 38 00 00 00", // gcreatemallocshort
@@ -67,9 +67,14 @@ impl_resolver_singleton!(GMallocPatterns, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct GMallocString(pub usize);
-impl_resolver_singleton!(GMallocString, |ctx| async {
-    let strings = ctx.scan(util::utf16_pattern("DeleteFile %s\0")).await;
+impl_resolver_singleton!(@collect GMallocString);
 
+impl_resolver_singleton!(@PEImage GMallocString, |ctx| async {
+    use std::collections::HashSet;
+    use iced_x86::FlowControl;
+    use crate::Image;
+
+    let strings = ctx.scan(util::utf16_pattern("DeleteFile %s\0")).await;
     let refs = util::scan_xrefs(ctx, &strings).await;
 
     let fns = util::root_functions(ctx, &refs)?;
@@ -172,3 +177,90 @@ impl_resolver_singleton!(GMallocString, |ctx| async {
 
     Ok(Self(try_ensure_one(fns)?))
 });
+
+impl_resolver_singleton!(@ElfImage GMallocString, |ctx| async {
+    use std::ops::Range;
+    use futures::try_join;
+
+    //eprintln!("GMalloc String Scan");
+    let string_xref_used_by = |pattern: &'static str| async {
+        let strings = ctx.scan(util::utf8_pattern(pattern)).await;
+        //eprintln!("Found /proc/meminfo @ {:?} ", strings);
+        let refs = util::scan_xrefs(ctx, &strings).await;
+        //eprintln!("Found {} refs", refs.len());
+
+        let fns = util::root_functions(ctx, &refs)?;
+        //eprintln!("Found related functions @ {:?}", fns);
+
+        Result::<Vec<usize>>::Ok(util::scan_xcalls(ctx, &fns).await)
+    };
+
+    let find_string_pattern1 = || async {
+        string_xref_used_by("/proc/meminfo\0").await
+    };
+
+    let find_string_pattern2 = || async {
+        let fns2 = string_xref_used_by("Refusing to run with the root privileges.\n\0").await?;
+        //eprintln!("Found {} xcall fns2 @ {:?}", fns2.len(), fns2);
+        let fns2 = fns2.iter().map(|&x| x .. (x + 24)).collect_vec();
+        // another possible address for FMemory::GCreateMalloc
+        Result::<Vec<Range<usize>>>::Ok(fns2)
+    };
+
+    let (fns, fns2) = try_join!(find_string_pattern1(), find_string_pattern2())?;
+
+    let fns = fns.into_iter().filter(|x| {
+        fns2.iter().any(|y| y.contains(x))
+    } ).map(|f| -> Result<Option<usize>> {
+        let mut possible_gmalloc = vec![];
+        // eprintln!("disassemble @ {}", f);
+        disassemble(ctx.image(), f, |inst| {
+            let cur = inst.ip() as usize;
+            if !(f..f + 20).contains(&cur)
+            {
+                return Ok(Control::Break);
+            }
+
+            // find mov rdi
+            if inst.code() == Code::Mov_r64_rm64
+                && inst.memory_base() == Register::RIP
+                && inst.op0_kind() == OpKind::Register
+                && inst.op1_kind() == OpKind::Memory
+            {
+                // eprintln!("Found one possible gmlaaoc @ {:#08X}", inst.ip_rel_memory_address() as usize);
+                possible_gmalloc.push(inst.ip_rel_memory_address() as usize);
+            }
+            Ok(Control::Continue)
+        })?;
+        Ok((possible_gmalloc.len() == 2 && possible_gmalloc[0] == possible_gmalloc[1]).then_some(possible_gmalloc[0]))
+    }).flatten_ok();
+
+    Ok(Self(try_ensure_one(fns)?))
+});
+
+// pattern Linux
+// string -> "MemAvailable:" -> func FUnixPlatformMemory::GetStats() -> FMemory::GCreateMalloc
+/*
+        06b602dc e8  5f  e7       CALL       FUN_06cdea40                                     undefined FUN_06cdea40() <- fn2
+                 17  00
+        06b602e1 48  89  05       MOV        qword ptr [GMalloc ],RAX
+                 10  05  e8
+                 04
+        06b602e8 48  8d  7c       LEA        RDI => local_88 ,[RSP  + 0x10 ]
+                 24  10
+        06b602ed e8  9e  f7       CALL       FUnixPlatformMemory::GetStats                    undefined GetStats() <- fn1
+                 17  00
+        06b602f2 48  8b  3d       MOV        RDI ,qword ptr [GMalloc ]
+                 ff  04  e8
+                 04
+        06b602f9 e8  a2  bf       CALL       FUN_06b1c2a0                                     undefined FUN_06b1c2a0()
+                 fb  ff
+        06b602fe 48  8b  3d       MOV        RDI ,qword ptr [GMalloc ]
+                 f3  04  e8
+                 04
+        06b60305 48  8b  07       MOV        RAX ,qword ptr [RDI ]
+        06b60308 ff  90  88       CALL       qword ptr [RAX  + 0x88 ]
+                 00  00  00
+        06b6030e 84  c0           TEST       AL ,AL
+
+*/

@@ -7,7 +7,7 @@ use std::{
 use anyhow::Result;
 use itertools::Itertools;
 use patternsleuth::{
-    resolvers::resolve_self, scanner::Pattern, Image, PatternConfig, ResolutionType,
+    image::Image, resolvers::resolve_self, scanner::Pattern, PatternConfig, ResolutionType,
 };
 use prettytable::{Cell, Row, Table};
 use rayon::prelude::*;
@@ -642,12 +642,7 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
                 )?;
 
                 // collect root exceptions / functions
-                let mut functions = exe.exception_children_cache.keys().collect::<HashSet<_>>();
-                for e in exe.exception_children_cache.values() {
-                    for c in e {
-                        functions.remove(&c.range.start);
-                    }
-                }
+                let functions = exe.get_root_functions()?;
 
                 let pb = m.add(indicatif::ProgressBar::new(functions.len() as u64));
                 pb.set_style(sty.clone());
@@ -655,10 +650,7 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
 
                 functions.iter().progress_with(pb).try_for_each(
                     |function| -> Result<()> {
-                        let fns = exe.get_child_functions(exe.get_function(**function).unwrap().unwrap().range.start).unwrap();
-                        let min = fns.iter().map(|f| f.range.start).min().unwrap();
-                        let max = fns.iter().map(|f| f.range.end).max().unwrap();
-                        let range = min..max;
+                        let range = function;
 
                         let bytes = &exe.memory[range.clone()];
 

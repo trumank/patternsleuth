@@ -1,17 +1,14 @@
 use std::{collections::HashSet, fmt::Debug};
 
 use futures::{future::join_all, join};
-use iced_x86::{Code, FlowControl, OpKind, Register};
-use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    disassemble::{disassemble, disassemble_single, Control},
+    disassemble::{disassemble, Control},
     resolvers::{
-        bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util,
-        Context, Result,
+        ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util, Result,
     },
-    Image, MemoryAccessorTrait, MemoryTrait,
+    MemoryAccessorTrait,
 };
 
 /// class UObject * __cdecl StaticConstructObject_Internal(struct FStaticConstructObjectParameters const &)
@@ -21,7 +18,7 @@ use crate::{
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct StaticConstructObjectInternal(pub usize);
-impl_resolver_singleton!(StaticConstructObjectInternal, |ctx| async {
+impl_resolver_singleton!(@all StaticConstructObjectInternal, |ctx| async {
     let any = join!(
         ctx.resolve(StaticConstructObjectInternalPatterns::resolver()),
         ctx.resolve(StaticConstructObjectInternalString::resolver()),
@@ -40,11 +37,24 @@ impl_resolver_singleton!(StaticConstructObjectInternal, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct StaticConstructObjectInternalPatterns(pub usize);
-impl_resolver_singleton!(StaticConstructObjectInternalPatterns, |ctx| async {
+impl_resolver_singleton!(@all StaticConstructObjectInternalPatterns, |ctx| async {
     let patterns = [
         "48 89 44 24 28 C7 44 24 20 00 00 00 00 E8 | ?? ?? ?? ?? 48 8B 5C 24 ?? 48 8B ?? 24",
         "E8 | ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? C0 E9 ?? 32 88 ?? ?? ?? ?? 80 E1 01 30 88 ?? ?? ?? ?? 48",
         "E8 | ?? ?? ?? ?? 48 8B D8 48 39 75 30 74 15",
+        /*
+                03f4df3f c6  44  24       MOV        byte ptr [RSP  + local_88 ],0x0
+                         30  00
+                03f4df44 0f  57  c0       XORPS      XMM0 ,XMM0
+                03f4df47 0f  11  44       MOVUPS     xmmword ptr [RSP  + local_80[0] ],XMM0
+                         24  38
+                03f4df4c 4c  89  ff       MOV        RDI ,R15
+                03f4df4f e8  2c  b6       CALL       StaticConstructObject_Internal                   undefined StaticConstructObject_
+                         02  03
+                03f4df54 48  89  c3       MOV        RBX ,RAX
+
+         */
+        "c6 44 24 30  00 0f 57 c0 0f 11 44 24 38 4c 89 ff e8 | ?? ?? ?? ?? 48 89"
     ];
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
@@ -60,7 +70,54 @@ impl_resolver_singleton!(StaticConstructObjectInternalPatterns, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct StaticConstructObjectInternalString(pub usize);
-impl_resolver!(StaticConstructObjectInternalString, |ctx| async {
+
+impl_resolver!(@collect StaticConstructObjectInternalString);
+
+impl_resolver!(@ElfImage StaticConstructObjectInternalString, |ctx| async {
+    let strings = ctx.scan(util::utf16_pattern("NewObject with empty name can\'t be used to create default")).await;
+    let refs = util::scan_xrefs(ctx, &strings).await;
+    let target_addr = refs.iter().take(6).flat_map(|&addr| -> Option<Vec<(usize, usize)>> {
+        // find e8 call
+        let mut callsites = Vec::default();
+        // ...06f83ff0 is the real one?
+        disassemble(ctx.image(), addr, |inst| {
+            let cur = inst.ip() as usize;
+            if !(addr..addr + 130).contains(&cur) {
+                return Ok(Control::Break);
+            }
+            if  !inst.is_call_near_indirect()
+                && inst.is_call_near() {
+                // eprintln!("Found call to @ {:08x}", inst.ip_rel_memory_address());
+                callsites.push(inst.ip_rel_memory_address() as usize);
+            }
+            Ok(Control::Continue)
+        }).ok()?;
+        // eprintln!("");
+        // the seq is always
+        // call FStaticConstructObjectParameters::FStaticConstructObjectParameters .0
+        // call StaticConstructObjectInternal .1
+
+        let callsites = callsites.iter().zip(callsites.iter().skip(1)).map(|(&x, &y)| (x,y)).collect::<Vec<_>>();
+        Some(callsites)
+    }).reduce(|x, y| {
+        let x:HashSet<(usize, usize)> = HashSet::from_iter(x);
+        let y:HashSet<(usize, usize)> = HashSet::from_iter(y);
+        let z = x.intersection(&y);
+        z.cloned().collect()
+    }).unwrap_or_default();
+    Ok(Self(ensure_one(target_addr)?.1))
+});
+
+impl_resolver!(@PEImage StaticConstructObjectInternalString, |ctx| async {
+    use itertools::Itertools;
+    use iced_x86::{Code, FlowControl, OpKind, Register};
+
+    use crate::{
+        disassemble::disassemble_single,
+        resolvers::{bail_out, Context, Result},
+        Image, MemoryTrait,
+    };
+
     let strings = join_all(
         [
             "UBehaviorTreeManager\0",

@@ -67,9 +67,51 @@ mod util {
                 .copied()
                 .chain(refs_indirect.into_iter().flatten())
                 .flat_map(|s| {
+                    let mut scans =
+                        vec![format!("48 8d ?? X0x{s:X}"), format!("4c 8d ?? X0x{s:X}")];
+                    if TryInto::<u32>::try_into(s).is_ok() {
+                        // mov reg, imm32 if address is 32 bit
+                        scans.extend([
+                            format!("b8 0x{s:X}"),
+                            format!("b9 0x{s:X}"),
+                            format!("ba 0x{s:X}"),
+                            format!("bb 0x{s:X}"),
+                            format!("bc 0x{s:X}"),
+                            format!("bd 0x{s:X}"),
+                            format!("be 0x{s:X}"),
+                            format!("bf 0x{s:X}"),
+                        ]);
+                    }
+                    scans
+                })
+                .map(|p| ctx.scan(Pattern::new(p).unwrap())),
+        )
+        .await;
+
+        refs.into_iter().flatten().collect()
+    }
+
+    pub(crate) async fn scan_xcalls(
+        ctx: &AsyncContext<'_>,
+        addresses: impl IntoIterator<Item = &usize> + Copy,
+    ) -> Vec<usize> {
+        let refs_indirect = join_all(
+            addresses
+                .into_iter()
+                .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
+        )
+        .await;
+
+        let refs = join_all(
+            addresses
+                .into_iter()
+                .copied()
+                .chain(refs_indirect.into_iter().flatten())
+                .flat_map(|s| {
                     [
-                        ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
-                        ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
+                        //ctx.scan(Pattern::new(format!("10111??? 0x{s:X}")).unwrap()), // mov reg, imm32
+                        ctx.scan(Pattern::new(format!("e8 X0x{s:X}")).unwrap()),
+                        ctx.scan(Pattern::new(format!("e9 X0x{s:X}")).unwrap()),
                     ]
                 }),
         )
@@ -77,6 +119,7 @@ mod util {
 
         refs.into_iter().flatten().collect()
     }
+
     pub(crate) fn root_functions<'a, I>(ctx: &AsyncContext<'_>, addresses: I) -> Result<Vec<usize>>
     where
         I: IntoIterator<Item = &'a usize> + Copy,
@@ -199,7 +242,7 @@ mod util {
 )]
 pub struct KismetSystemLibrary(pub HashMap<String, usize>);
 
-impl_resolver!(KismetSystemLibrary, |ctx| async {
+impl_resolver!(@all KismetSystemLibrary, |ctx| async {
     let mem = &ctx.image().memory;
 
     let s = Pattern::from_bytes(
@@ -258,7 +301,7 @@ impl_resolver!(KismetSystemLibrary, |ctx| async {
 )]
 pub struct ConsoleManagerSingleton(usize);
 
-impl_resolver_singleton!(ConsoleManagerSingleton, |ctx| async {
+impl_resolver_singleton!(@all ConsoleManagerSingleton, |ctx| async {
     let strings = join_all([
         ctx.scan(
             Pattern::from_bytes(
@@ -307,7 +350,7 @@ impl_resolver_singleton!(ConsoleManagerSingleton, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct UObjectBaseUtilityGetPathName(pub usize);
-impl_resolver_singleton!(UObjectBaseUtilityGetPathName, |ctx| async {
+impl_resolver_singleton!(@all UObjectBaseUtilityGetPathName, |ctx| async {
     let patterns = [
         "40 53 48 81 EC 50 02 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 48 8D 44 24",
     ];
@@ -322,7 +365,7 @@ impl_resolver_singleton!(UObjectBaseUtilityGetPathName, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct UtilStringExtractor(pub HashSet<String>);
-impl_resolver!(UtilStringExtractor, |ctx| async {
+impl_resolver!(@all UtilStringExtractor, |ctx| async {
     let strings = ctx
         .scan(
             Pattern::new(
@@ -350,7 +393,7 @@ impl_resolver!(UtilStringExtractor, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct A(pub HashSet<usize>);
-impl_resolver!(A, |ctx| async {
+impl_resolver!(@all A, |ctx| async {
     let strings = ctx
         .scan(
             Pattern::new(

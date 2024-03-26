@@ -5,7 +5,7 @@ use futures::{future::join_all, join};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{ensure_one, impl_resolver, impl_resolver_singleton, unreal::util, Context},
+    resolvers::{ensure_one, impl_resolver, impl_resolver_singleton, Context},
     Addressable, Matchable,
 };
 
@@ -23,7 +23,7 @@ pub struct BlueprintLibraryInit {
     pub ublueprint_function_library_static_class: usize,
 }
 
-impl_resolver!(BlueprintLibraryInit, |ctx| async {
+impl_resolver!(@all BlueprintLibraryInit, |ctx| async {
     let mem = &ctx.image().memory;
 
     let class_str = Pattern::from_bytes(
@@ -179,7 +179,10 @@ impl_resolver!(BlueprintLibraryInit, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct UFunctionBind(pub usize);
-impl_resolver_singleton!(UFunctionBind, |ctx| async {
+impl_resolver_singleton!(@collect UFunctionBind);
+impl_resolver_singleton!(@PEImage UFunctionBind, |ctx| async {
+    use crate::resolvers::unreal::util;
+
     let string = async {
         let strings = ctx
             .scan(util::utf16_pattern(
@@ -203,4 +206,11 @@ impl_resolver_singleton!(UFunctionBind, |ctx| async {
     Ok(Self(ensure_one(
         string?.into_iter().chain(pattern.into_iter().flatten()),
     )?))
+});
+
+impl_resolver_singleton!(@ElfImage UFunctionBind, |ctx| async {
+    // maybe find symbol of vtable?
+    let pattern = Pattern::new("41 56 53 50 49 89 fe 48 89 fb 66 0f 1f 44 00 00 e8 ?? ?? ?? ?? 48 8b 4b 10 48 63 50 38 3b 51 38 7e ?? 31 c0 48 8b 5b 20 48 85 db 75 ?? eb ?? 90 48 83 c0 30").unwrap();
+    let fns = ctx.scan(pattern).await;
+    Ok(Self(ensure_one(fns)?))
 });

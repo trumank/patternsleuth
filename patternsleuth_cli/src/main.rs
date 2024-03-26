@@ -15,8 +15,8 @@ use clap::Parser;
 use indicatif::ProgressBar;
 use itertools::Itertools;
 use patricia_tree::StringPatriciaMap;
+use patternsleuth::image::Image;
 use patternsleuth::resolvers::{resolve_self, resolvers, NamedResolver};
-use patternsleuth::Image;
 
 use patternsleuth::scanner::Xref;
 use patternsleuth::{
@@ -994,7 +994,7 @@ fn symbols(command: CommandSymbols) -> Result<()> {
     let mut cells = vec![];
 
     for GameFileEntry { name, exe_path } in get_games(command.game)? {
-        if !exe_path.with_extension("pdb").exists() {
+        if !exe_path.with_extension("pdb").exists() && !exe_path.with_extension("sym").exists() {
             continue;
         }
 
@@ -1014,19 +1014,11 @@ fn symbols(command: CommandSymbols) -> Result<()> {
 
         for (address, name) in exe.symbols.as_ref().unwrap() {
             if filter(name) {
-                if let Ok(Some(exception)) = exe.get_root_function(*address) {
-                    let fns = exe.get_child_functions(exception.range.start).unwrap();
-                    let min = fns.iter().map(|f| f.range.start).min().unwrap();
-                    let max = fns.iter().map(|f| f.range.end).max().unwrap();
-                    let full_range = min..max; // TODO does not handle sparse ranges
-                    if exception.range.start != *address {
-                        println!("MISALIGNED EXCEPTION ENTRY FOR {}", name);
-                    } else {
-                        cells.push((
-                            name.clone(),
-                            disassemble::disassemble_range(&exe, full_range),
-                        ));
-                    }
+                if let Ok(Some(full_range)) = exe.get_root_function_range(*address) {
+                    cells.push((
+                        name.clone(),
+                        disassemble::disassemble_range(&exe, full_range),
+                    ));
                 } else {
                     println!("{:016x} [NO EXCEPT] {}", address, name);
                 }
@@ -1069,11 +1061,12 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameFileEntry>> {
                 .compile_matcher())
         })
         .collect::<Result<Vec<_>>>()?;
-
+    //eprintln!("{}", std::env::current_dir().unwrap().to_str().unwrap());
     fs::read_dir("games")?
         .collect::<Result<Vec<_>, _>>()?
         .iter()
         .map(|entry| -> Result<Option<(String, PathBuf)>> {
+            //eprintln!("FSOK!");
             let dir_name = entry.file_name();
             let name = dir_name.to_string_lossy().to_string();
             if !games_filter
