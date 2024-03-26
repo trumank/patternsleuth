@@ -1,15 +1,14 @@
-use std::{collections::HashSet, fmt::Debug};
+use std::fmt::Debug;
 
-use futures::{future::join_all, join, try_join};
-use iced_x86::{Code, FlowControl, OpKind, Register};
+use futures::{future::join_all, join};
+use iced_x86::{Code, OpKind, Register};
 use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
-use std::ops::Range;
 
 use crate::{
     disassemble::{disassemble, Control},
     resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
-    Image, MemoryAccessorTrait,
+    MemoryAccessorTrait,
 };
 
 #[derive(Debug, PartialEq)]
@@ -71,6 +70,10 @@ pub struct GMallocString(pub usize);
 impl_resolver_singleton!(@collect GMallocString);
 
 impl_resolver_singleton!(@PEImage GMallocString, |ctx| async {
+    use std::collections::HashSet;
+    use iced_x86::FlowControl;
+    use crate::Image;
+
     let strings = ctx.scan(util::utf16_pattern("DeleteFile %s\0")).await;
     let refs = util::scan_xrefs(ctx, &strings).await;
 
@@ -176,6 +179,9 @@ impl_resolver_singleton!(@PEImage GMallocString, |ctx| async {
 });
 
 impl_resolver_singleton!(@ElfImage GMallocString, |ctx| async {
+    use std::ops::Range;
+    use futures::try_join;
+
     //eprintln!("GMalloc String Scan");
     let string_xref_used_by = |pattern: &'static str| async {
         let strings = ctx.scan(util::utf8_pattern(pattern)).await;

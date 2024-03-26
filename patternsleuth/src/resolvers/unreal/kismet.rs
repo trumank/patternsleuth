@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use futures::future::join_all;
-use iced_x86::{Code, Decoder, DecoderOptions, Instruction, Register};
+use iced_x86::{Decoder, DecoderOptions, Instruction};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
@@ -40,6 +40,8 @@ impl_resolver!(@all UObjectSkipFunction, |ctx| async {
 pub struct GNatives(pub usize);
 impl_resolver!(@collect GNatives);
 impl_resolver!(@PEImage GNatives, |ctx| async {
+    use iced_x86::{Code, Register};
+
     let skip_function = ctx.resolve(UObjectSkipFunction::resolver()).await?;
     let bytes = ctx.image().memory.range_from(skip_function.0..)?;
 

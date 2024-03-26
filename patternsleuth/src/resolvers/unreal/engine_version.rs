@@ -1,8 +1,4 @@
-use std::{
-    borrow::Cow,
-    collections::HashSet,
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use futures::future::join_all;
 
@@ -10,8 +6,8 @@ use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{bail_out, ensure_one, impl_resolver, try_ensure_one, unreal::util},
-    Addressable, Matchable, MemoryAccessorTrait, MemoryTrait,
+    resolvers::{bail_out, impl_resolver, try_ensure_one},
+    MemoryAccessorTrait,
 };
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -90,6 +86,8 @@ pub struct EngineVersionStrings {
 impl_resolver!(@collect EngineVersionStrings);
 // "++UE5+Release-{}.{}"
 impl_resolver!(@ElfImage EngineVersionStrings, |ctx| async {
+    use crate::resolvers::{ensure_one, unreal::util};
+
     let pattern_name = util::utf16_pattern("++UE5+Release-");
     let name_scan = ctx.scan(pattern_name).await;
 
@@ -126,6 +124,9 @@ impl_resolver!(@ElfImage EngineVersionStrings, |ctx| async {
 });
 
 impl_resolver!(@PEImage EngineVersionStrings, |ctx| async {
+    use std::collections::HashSet;
+    use crate::{Addressable, Matchable, MemoryTrait};
+
     let patterns = [
         "48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC 48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC 48 8D 05 [ ?? ?? ?? ?? ] C3 CC CC CC CC CC CC CC CC",
     ];
@@ -144,7 +145,7 @@ impl_resolver!(@PEImage EngineVersionStrings, |ctx| async {
     ]
     .into_iter()
     .map(|month| month.encode_utf16().flat_map(u16::to_le_bytes).collect())
-    .collect::<HashSet<Cow<[u8]>>>();
+    .collect::<HashSet<Vec<u8>>>();
 
     for (_, pattern, addresses) in res {
         for a in addresses {

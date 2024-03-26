@@ -2,9 +2,7 @@ use std::fmt::Debug;
 
 use futures::future::join_all;
 
-use patternsleuth_scanner::Pattern;
-
-use crate::resolvers::{ensure_one, impl_resolver_singleton, unreal::util, Result};
+use crate::resolvers::{ensure_one, impl_resolver_singleton, unreal::util};
 
 #[derive(Debug, PartialEq)]
 #[cfg_attr(
@@ -15,6 +13,9 @@ pub struct UGameEngineTick(pub usize);
 impl_resolver_singleton!(@collect UGameEngineTick);
 
 impl_resolver_singleton!(@PEImage UGameEngineTick, |ctx| async {
+    use patternsleuth_scanner::Pattern;
+    use crate::resolvers::Result;
+
     let strings = ctx
         .scan(Pattern::from_bytes(b"EngineTickMisc\x00".to_vec()).unwrap())
         .await;

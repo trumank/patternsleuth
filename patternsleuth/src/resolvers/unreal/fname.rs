@@ -1,16 +1,14 @@
-use std::{collections::HashSet, fmt::Debug};
+use std::fmt::Debug;
 
-use futures::{future::join_all, join};
-use iced_x86::{Code, Decoder, DecoderOptions};
+use futures::future::join_all;
 
 use patternsleuth_scanner::Pattern;
 
 use crate::{
     resolvers::{
-        ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util, Context,
-        ResolveError, Result,
+        ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util, Result,
     },
-    MemoryAccessorTrait, MemoryTrait,
+    MemoryAccessorTrait,
 };
 
 /// public: __cdecl FName::FName(wchar_t const *, enum EFindName)
@@ -33,6 +31,9 @@ FEngineLoop::LoadPreInitModules:
     RenderCore
 */
 impl_resolver_singleton!(@ElfImage FNameCtorWchar, |ctx| async {
+    use std::collections::HashSet;
+    use crate::resolvers::ResolveError;
+
     let strings = [
         "\0Engine\0",
         "\0Renderer\0",
@@ -100,6 +101,10 @@ impl_resolver_singleton!(@ElfImage FNameCtorWchar, |ctx| async {
 });
 
 impl_resolver_singleton!(@PEImage FNameCtorWchar, |ctx| async {
+    use iced_x86::{Code, Decoder, DecoderOptions};
+    use futures::join;
+    use crate::{MemoryTrait, resolvers::Context};
+
     let strings = async {
         let strings = ["TGPUSkinVertexFactoryUnlimited\0", "MovementComponent0\0"];
         join_all(strings.iter().map(|s| ctx.scan(util::utf16_pattern(s)))).await
@@ -194,6 +199,10 @@ impl_resolver_singleton!(@ElfImage FNameToString, |ctx| async {
 });
 
 impl_resolver_singleton!(@PEImage FNameToString, |ctx| async {
+    use iced_x86::{Code, Decoder, DecoderOptions};
+    use futures::join;
+    use crate::{MemoryTrait, resolvers::Context};
+
     let patterns = async {
         let patterns = ["56 57 48 83 EC 28 48 89 D6 48 89 CF 83 79 ?? 00 74"];
 

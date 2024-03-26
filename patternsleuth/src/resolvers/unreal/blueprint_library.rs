@@ -5,7 +5,7 @@ use futures::{future::join_all, join};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{ensure_one, impl_resolver, impl_resolver_singleton, unreal::util, Context},
+    resolvers::{ensure_one, impl_resolver, impl_resolver_singleton, Context},
     Addressable, Matchable,
 };
 
@@ -181,6 +181,8 @@ impl_resolver!(@all BlueprintLibraryInit, |ctx| async {
 pub struct UFunctionBind(pub usize);
 impl_resolver_singleton!(@collect UFunctionBind);
 impl_resolver_singleton!(@PEImage UFunctionBind, |ctx| async {
+    use crate::resolvers::unreal::util;
+
     let string = async {
         let strings = ctx
             .scan(util::utf16_pattern(

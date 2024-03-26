@@ -22,7 +22,7 @@ inventory = "0.3.14"
 itertools.workspace = true
 serde = { workspace = true, optional = true, features = ["derive"] }
 typetag = { version = "0.2.15", optional = true }
-gimli = "0.28.1"
+gimli = { version = "0.28.1", optional = true }
 tracing = "0.1.40"
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -38,8 +38,11 @@ windows = { workspace = true, optional = true, features = [
 ] }
 
 [features]
+default = []
 patterns = []
 serde-resolvers = ["dep:serde", "dep:typetag"]
 symbols = ["dep:pdb", "dep:msvc-demangler"]
-process-external = ["dep:libc", "dep:windows"]
+process-external = ["image-pe", "dep:libc", "dep:windows"]
 process-internal = ["dep:libc", "dep:windows"]
+image-pe = []
+image-elf = ["dep:gimli"]

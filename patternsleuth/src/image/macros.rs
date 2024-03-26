@@ -18,34 +18,38 @@ macro_rules! image_type_dispatch {
         }
         image_type_dispatch!(@generate_macro_for_enum $enum_name_it $enum_name_macro_it $enum_tt);
     };
-    (@define_imagetype $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }) => {
+    (@define_imagetype $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }) => {
         pub enum $enum_name_it {
             $(
+                #[cfg(feature = $img_feature)]
                 $img_ident($img_ty),
             )*
         }
     };
-    (@define_matcharm $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }, $self:ident, $fnname_it:ident, $args_tt:tt) => {
+    (@define_matcharm $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }, $self:ident, $fnname_it:ident, $args_tt:tt) => {
         match &$self.image_type {
             $(
+                #[cfg(feature = $img_feature)]
                 $enum_name_it::$img_ident(inner) => inner.$fnname_it($self, $args_tt),
             )*
         }
     };
 
-    (@define_matcharm $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }, $self:ident, $fnname_it:ident, ) => {
+    (@define_matcharm $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }, $self:ident, $fnname_it:ident, ) => {
         match &$self.image_type {
             $(
+                #[cfg(feature = $img_feature)]
                 $enum_name_it::$img_ident(inner) => inner.$fnname_it($self),
             )*
         }
     };
 
-    (@generate_macro_for_enum $enum_name_it:ident $enum_name_macro_it:ident { $( $img_ident:ident( $img_ty:ty )),* $(,)? }) => {
+    (@generate_macro_for_enum $enum_name_it:ident $enum_name_macro_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }) => {
         #[allow(unused_macros)]
+        #[macro_export]
         macro_rules! $enum_name_macro_it {
             (@all $macroname:ident; @$id:ident; $arg:tt) => {
-                $macroname!(@$id $enum_name_it {$( $img_ident($img_ty),)*}, $arg)
+                $macroname!(@$id $enum_name_it {$( $img_ident($img_ty, $img_feature),)*}, $arg)
             };
         }
 

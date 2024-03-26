@@ -166,6 +166,7 @@ impl PEImage {
 impl Image<'_> {
     // this function is privately used by pe image
     fn populate_exception_cache(&mut self) -> Result<(), MemoryAccessError> {
+        #[allow(irrefutable_let_patterns)]
         if let ImageType::PEImage(ref mut pe) = self.image_type {
             for i in pe.exception_directory_range.clone().step_by(12) {
                 let f = RuntimeFunction::read(&self.memory, self.base_address, i)?;

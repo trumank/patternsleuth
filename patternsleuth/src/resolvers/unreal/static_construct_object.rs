@@ -1,17 +1,14 @@
 use std::{collections::HashSet, fmt::Debug};
 
 use futures::{future::join_all, join};
-use iced_x86::{Code, FlowControl, OpKind, Register};
-use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    disassemble::{disassemble, disassemble_single, Control},
+    disassemble::{disassemble, Control},
     resolvers::{
-        bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util,
-        Context, Result,
+        ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util, Result,
     },
-    Image, MemoryAccessorTrait, MemoryTrait,
+    MemoryAccessorTrait,
 };
 
 /// class UObject * __cdecl StaticConstructObject_Internal(struct FStaticConstructObjectParameters const &)
@@ -112,6 +109,15 @@ impl_resolver!(@ElfImage StaticConstructObjectInternalString, |ctx| async {
 });
 
 impl_resolver!(@PEImage StaticConstructObjectInternalString, |ctx| async {
+    use itertools::Itertools;
+    use iced_x86::{Code, FlowControl, OpKind, Register};
+
+    use crate::{
+        disassemble::disassemble_single,
+        resolvers::{bail_out, Context, Result},
+        Image, MemoryTrait,
+    };
+
     let strings = join_all(
         [
             "UBehaviorTreeManager\0",

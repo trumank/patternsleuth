@@ -1,18 +1,25 @@
+#[cfg(feature = "image-elf")]
 pub mod elf;
 mod macros;
+#[cfg(feature = "image-pe")]
 pub mod pe;
 
 use crate::*;
 use anyhow::Error;
+#[cfg(feature = "image-elf")]
 use elf::ElfImage;
+#[cfg(feature = "image-pe")]
 use pe::PEImage;
 
 use macros::*;
 
+#[cfg(not(any(feature = "image-pe", feature = "image-elf")))]
+compile_error!("requires at least one of image-pe or image-elf features");
+
 image_type_dispatch! {
-    @enum ImageType as image_type_reflection {
-        PEImage(PEImage),
-        ElfImage(ElfImage),
+    @enum ImageType as _image_type_reflection {
+        PEImage(PEImage, "image-pe"),
+        ElfImage(ElfImage, "image-elf"),
     }
 
     @fns {
@@ -23,6 +30,8 @@ image_type_dispatch! {
         fn get_root_functions() -> Result<Vec<Range<usize>>, MemoryAccessError>;
     }
 }
+
+pub use _image_type_reflection as image_type_reflection;
 
 pub struct Image<'data> {
     pub base_address: usize,
@@ -42,9 +51,11 @@ impl<'data> Image<'data> {
     ) -> Result<Image<'data>> {
         let object = object::File::parse(data)?;
         match object {
+            #[cfg(feature = "image-elf")]
             object::File::Elf64(_) => {
                 ElfImage::read_inner(base_addr, exe_path, cache_functions, object)
             }
+            #[cfg(feature = "image-pe")]
             object::File::Pe64(_) => {
                 PEImage::read_inner(base_addr, exe_path, cache_functions, object)
             }
