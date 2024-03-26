@@ -23,17 +23,34 @@ impl PatternSimple {
         self.sig.iter().zip(&self.mask)
     }
 }
+
+fn fmt_byte(f: &mut std::fmt::Formatter<'_>, sig: u8, mask: u8) -> std::fmt::Result {
+    if mask == 0 {
+        write!(f, "??")?;
+    } else if mask == 0xff {
+        write!(f, "{:02X}", sig)?;
+    } else if mask == 0x0f {
+        write!(f, "?{:X}", sig & 0xf)?;
+    } else if mask == 0xf0 {
+        write!(f, "{:X}?", sig >> 4)?;
+    } else {
+        for bit in (0..8).rev() {
+            if mask >> bit & 1 == 1 {
+                write!(f, "{}", sig >> bit & 1)?;
+            } else {
+                write!(f, "?")?;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Display for PatternSimple {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:02X}", self.sig[0])?;
         for (sig, mask) in self.iter().skip(1) {
-            if *mask == 0 {
-                write!(f, " ??")?;
-            } else if *mask == 0xff {
-                write!(f, " {:02X}", sig)?;
-            } else {
-                todo!("bit mask formatting")
-            }
+            write!(f, " ")?;
+            fmt_byte(f, *sig, *mask)?;
         }
         Ok(())
     }
@@ -252,20 +269,17 @@ impl Display for Pattern {
             if i == self.custom_offset {
                 write!(f, " |")?;
             }
+            write!(f, " ")?;
             if *mask == 0 {
                 if let Some((_offset, xref)) =
                     self.xrefs.iter().find(|(offset, _xref)| *offset == i)
                 {
-                    write!(f, " X0x{:X}", xref.0)?;
+                    write!(f, "X0x{:X}", xref.0)?;
                     iter.nth(2); // skip 3
-                } else {
-                    write!(f, " ??")?;
+                    continue;
                 }
-            } else if *mask == 0xff {
-                write!(f, " {:02X}", sig)?;
-            } else {
-                todo!("bit mask formatting")
             }
+            fmt_byte(f, *sig, *mask)?;
         }
         Ok(())
     }
@@ -681,6 +695,23 @@ mod test {
         assert_eq!(
             Pattern::new("12 X0x34 56").unwrap().simple.to_string(),
             "12 ?? ?? ?? ?? 56"
+        );
+
+        assert_eq!(
+            Pattern::new("12 ?3 45").unwrap().simple.to_string(),
+            "12 ?3 45"
+        );
+        assert_eq!(
+            Pattern::new("12 3? 45").unwrap().simple.to_string(),
+            "12 3? 45"
+        );
+        assert_eq!(
+            Pattern::new("12 ?0000001 45").unwrap().simple.to_string(),
+            "12 ?0000001 45"
+        );
+        assert_eq!(
+            Pattern::new("12 ??100??1 45").unwrap().simple.to_string(),
+            "12 ??100??1 45"
         );
     }
 
