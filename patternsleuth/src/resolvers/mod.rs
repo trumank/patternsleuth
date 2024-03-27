@@ -563,13 +563,13 @@ impl<'data> AsyncContext<'data> {
     }
 }
 
-#[tracing::instrument(skip_all, fields(stages))]
+#[tracing::instrument(level = "debug", skip_all, fields(stages))]
 pub fn eval<F, T: Send + Sync>(image: &Image<'_>, f: F) -> T
 where
     F: for<'ctx> FnOnce(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, T> + Send + Sync,
 {
     {
-        tracing::info!("starting eval");
+        tracing::debug!("starting eval");
 
         let ctx = AsyncContext::new(image);
         let (rx, tx) = std::sync::mpsc::channel();
@@ -593,7 +593,7 @@ where
         loop {
             i += 1;
 
-            tracing::info_span!("resolvers", stage = i).in_scope(|| {
+            tracing::debug_span!("resolvers", stage = i).in_scope(|| {
                 pool.run_until_stalled();
             });
 
@@ -605,15 +605,15 @@ where
                 let (patterns, rx): (Vec<_>, Vec<_>) = queue.into_iter().unzip();
                 let setup = patterns.iter().collect::<Vec<_>>();
 
-                let span = tracing::info_span!("patterns", patterns = setup.len()).entered();
+                let span = tracing::debug_span!("patterns", patterns = setup.len()).entered();
                 for p in &setup {
-                    tracing::info!("pattern = {p:?}");
+                    tracing::debug!("pattern = {p:?}");
                 }
 
                 let mut all_results = rx.into_iter().map(|rx| (rx, vec![])).collect::<Vec<_>>();
 
                 for section in image.memory.sections() {
-                    let span = tracing::info_span!(
+                    let span = tracing::debug_span!(
                         "section",
                         section = section.name(),
                         kind = format!("{:?}", section.kind()),
