@@ -242,7 +242,7 @@ mod util {
 )]
 pub struct KismetSystemLibrary(pub HashMap<String, usize>);
 
-impl_resolver!(@all KismetSystemLibrary, |ctx| async {
+impl_resolver!(all, KismetSystemLibrary, |ctx| async {
     let mem = &ctx.image().memory;
 
     let s = Pattern::from_bytes(
@@ -301,7 +301,7 @@ impl_resolver!(@all KismetSystemLibrary, |ctx| async {
 )]
 pub struct ConsoleManagerSingleton(usize);
 
-impl_resolver_singleton!(@all ConsoleManagerSingleton, |ctx| async {
+impl_resolver_singleton!(all, ConsoleManagerSingleton, |ctx| async {
     let strings = join_all([
         ctx.scan(
             Pattern::from_bytes(
@@ -350,7 +350,7 @@ impl_resolver_singleton!(@all ConsoleManagerSingleton, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct UObjectBaseUtilityGetPathName(pub usize);
-impl_resolver_singleton!(@all UObjectBaseUtilityGetPathName, |ctx| async {
+impl_resolver_singleton!(all, UObjectBaseUtilityGetPathName, |ctx| async {
     let patterns = [
         "40 53 48 81 EC 50 02 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 48 8D 44 24",
     ];
@@ -365,7 +365,7 @@ impl_resolver_singleton!(@all UObjectBaseUtilityGetPathName, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct UtilStringExtractor(pub HashSet<String>);
-impl_resolver!(@all UtilStringExtractor, |ctx| async {
+impl_resolver!(all, UtilStringExtractor, |ctx| async {
     let strings = ctx
         .scan(
             Pattern::new(
@@ -393,7 +393,7 @@ impl_resolver!(@all UtilStringExtractor, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct A(pub HashSet<usize>);
-impl_resolver!(@all A, |ctx| async {
+impl_resolver!(all, A, |ctx| async {
     let strings = ctx
         .scan(
             Pattern::new(

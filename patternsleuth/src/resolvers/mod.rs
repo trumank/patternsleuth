@@ -253,7 +253,7 @@ macro_rules! _cfg_image_elf {
 
 #[macro_export]
 macro_rules! _impl_resolver {
-    (@all $name:ident, |$ctx:ident| async $x:block ) => {
+    (all, $name:ident, |$ctx:ident| async $x:block ) => {
         $crate::_impl_resolver_inner!($name, |$ctx| async $x);
 
         impl $crate::resolvers::Singleton for $name {
@@ -263,7 +263,7 @@ macro_rules! _impl_resolver {
         }
     };
 
-    (@$arch:ident $name:ident, |$ctx:ident| async $x:block ) => {
+    ($arch:ident, $name:ident, |$ctx:ident| async $x:block ) => {
         $crate::resolvers::cfg_image::$arch! {
             impl $name where $name: $crate::resolvers::PleaseAddCollectForMe {
                 #[allow(non_snake_case)]
@@ -272,9 +272,9 @@ macro_rules! _impl_resolver {
         }
     };
 
-    (@collect $name:ident) => {
+    (collect, $name:ident) => {
         $crate::_impl_resolver_inner!($name, |ctx| async {
-            $crate::image::image_type_reflection!(@all impl_resolver; @generate; {ctx, $name})
+            $crate::image::image_type_reflection!(all, impl_resolver; generate; {ctx, $name})
         });
 
         impl $crate::resolvers::Singleton for $name {
@@ -286,7 +286,7 @@ macro_rules! _impl_resolver {
         impl $crate::resolvers::PleaseAddCollectForMe for $name {}
     };
 
-    (@generate $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }, {$ctx:ident, $name:ident}) => {
+    (generate, $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }, {$ctx:ident, $name:ident}) => {
         $crate::resolvers::matcharm_generator!(
             $enum_name_it { $( $img_ident( $img_ty, $img_feature )),* },
             { $ctx, $name }
@@ -296,7 +296,7 @@ macro_rules! _impl_resolver {
 
 #[macro_export]
 macro_rules! _impl_resolver_singleton {
-    (@all $name:ident, |$ctx:ident| async $x:block ) => {
+    (all, $name:ident, |$ctx:ident| async $x:block ) => {
         $crate::_impl_resolver_inner!($name, |$ctx| async $x);
 
         impl $crate::resolvers::Singleton for $name {
@@ -306,7 +306,7 @@ macro_rules! _impl_resolver_singleton {
         }
     };
 
-    (@$arch:ident $name:ident, |$ctx:ident| async $x:block ) => {
+    ($arch:ident, $name:ident, |$ctx:ident| async $x:block ) => {
         $crate::resolvers::cfg_image::$arch! {
             impl $name where $name: $crate::resolvers::PleaseAddCollectForMe {
                 #[allow(non_snake_case)]
@@ -315,9 +315,9 @@ macro_rules! _impl_resolver_singleton {
         }
     };
 
-    (@collect $name:ident) => {
+    (collect, $name:ident) => {
         $crate::_impl_resolver_inner!($name, |ctx| async {
-            $crate::image::image_type_reflection!(@all impl_resolver_singleton; @generate; {ctx, $name})
+            $crate::image::image_type_reflection!(all, impl_resolver_singleton; generate; {ctx, $name})
         });
 
         impl $crate::resolvers::Singleton for $name {
@@ -329,7 +329,7 @@ macro_rules! _impl_resolver_singleton {
         impl $crate::resolvers::PleaseAddCollectForMe for $name {}
     };
 
-    (@generate $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }, {$ctx:ident, $name:ident}) => {
+    (generate, $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }, {$ctx:ident, $name:ident}) => {
         $crate::resolvers::matcharm_generator!(
             $enum_name_it { $( $img_ident( $img_ty, $img_feature )),* },
             { $ctx, $name }
@@ -390,7 +390,7 @@ macro_rules! _impl_try_collector {
                 $member_vis $member_name: ::std::sync::Arc<$resolver>,
             )*
         }
-        $crate::_impl_resolver!(@all $struct_name, |ctx| async {
+        $crate::_impl_resolver!(all, $struct_name, |ctx| async {
             #[allow(non_snake_case)]
             let (
                 $( $member_name, )*
@@ -423,7 +423,7 @@ macro_rules! _impl_collector {
                 $member_vis $member_name: $crate::resolvers::Result<::std::sync::Arc<$resolver>>,
             )*
         }
-        $crate::_impl_resolver!(@all $struct_name, |ctx| async {
+        $crate::_impl_resolver!(all, $struct_name, |ctx| async {
             #[allow(non_snake_case)]
             let (
                 $( $member_name, )*

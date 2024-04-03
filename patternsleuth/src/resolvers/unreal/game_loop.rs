@@ -10,9 +10,9 @@ use crate::resolvers::{ensure_one, impl_resolver_singleton, unreal::util};
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct UGameEngineTick(pub usize);
-impl_resolver_singleton!(@collect UGameEngineTick);
+impl_resolver_singleton!(collect, UGameEngineTick);
 
-impl_resolver_singleton!(@PEImage UGameEngineTick, |ctx| async {
+impl_resolver_singleton!(PEImage, UGameEngineTick, |ctx| async {
     use patternsleuth_scanner::Pattern;
     use crate::resolvers::Result;
 
@@ -40,7 +40,7 @@ impl_resolver_singleton!(@PEImage UGameEngineTick, |ctx| async {
 });
 
 // on linux we use u16"causeevent="
-impl_resolver_singleton!(@ElfImage UGameEngineTick, |ctx| async {
+impl_resolver_singleton!(ElfImage, UGameEngineTick, |ctx| async {
     let strings = ["causeevent=\0", "CAUSEEVENT \0"];
     let strings: Vec<_> = join_all(strings.map(|s| ctx.scan(util::utf16_pattern(s)))).await.into_iter().flatten().collect();
 
@@ -58,9 +58,9 @@ impl_resolver_singleton!(@ElfImage UGameEngineTick, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FEngineLoopInit(pub usize);
-impl_resolver_singleton!(@collect FEngineLoopInit);
+impl_resolver_singleton!(collect, FEngineLoopInit);
 
-impl_resolver_singleton!(@PEImage FEngineLoopInit, |ctx| async {
+impl_resolver_singleton!(PEImage, FEngineLoopInit, |ctx| async {
     let search_strings = [
         "FEngineLoop::Init\0",
         "Failed to load UnrealEd Engine class '%s'.",
@@ -81,7 +81,7 @@ impl_resolver_singleton!(@PEImage FEngineLoopInit, |ctx| async {
     Ok(Self(ensure_one(fns)?))
 });
 
-impl_resolver_singleton!(@ElfImage FEngineLoopInit, |ctx| async {
+impl_resolver_singleton!(ElfImage, FEngineLoopInit, |ctx| async {
     let search_strings = [
         util::utf8_pattern("FEngineLoop::Init\0"),
         // this is a standalone function called by FEngineLoopInit

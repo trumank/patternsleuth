@@ -48,8 +48,8 @@ macro_rules! image_type_dispatch {
         #[allow(unused_macros)]
         #[macro_export]
         macro_rules! $enum_name_macro_it {
-            (@all $macroname:ident; @$id:ident; $arg:tt) => {
-                $macroname!(@$id $enum_name_it {$( $img_ident($img_ty, $img_feature),)*}, $arg)
+            (all, $macroname:ident; $id:ident; $arg:tt) => {
+                $macroname!($id, $enum_name_it {$( $img_ident($img_ty, $img_feature),)*}, $arg)
             };
         }
 

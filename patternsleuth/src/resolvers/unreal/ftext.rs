@@ -16,7 +16,7 @@ use crate::{
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FTextFString(pub usize);
-impl_resolver_singleton!(@all FTextFString, |ctx| async {
+impl_resolver_singleton!(all, FTextFString, |ctx| async {
     #[derive(Debug)]
     enum Directness {
         Direct,

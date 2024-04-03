@@ -17,7 +17,7 @@ use crate::{
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct GMalloc(pub usize);
-impl_resolver_singleton!(@all GMalloc, |ctx| async {
+impl_resolver_singleton!(all, GMalloc, |ctx| async {
     //eprintln!("GMalloc Scan Start!");
     let any = join!(
         ctx.resolve(GMallocPatterns::resolver()),
@@ -36,7 +36,7 @@ impl_resolver_singleton!(@all GMalloc, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct GMallocPatterns(pub usize);
-impl_resolver_singleton!(@all GMallocPatterns, |ctx| async {
+impl_resolver_singleton!(all, GMallocPatterns, |ctx| async {
     let patterns = [
         "48 ?? ?? f0 ?? 0f b1 ?? | ?? ?? ?? ?? 74 ?? ?? 85 ?? 74 ?? ?? 8b", // Purgatory
         "eb 03 ?? 8b ?? 48 8b ?? f0 ?? 0f b1 ?? | ?? ?? ?? ?? 74 ?? ?? 85 ?? 74 ?? ?? 8b", // Purg_notX
@@ -67,9 +67,9 @@ impl_resolver_singleton!(@all GMallocPatterns, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct GMallocString(pub usize);
-impl_resolver_singleton!(@collect GMallocString);
+impl_resolver_singleton!(collect, GMallocString);
 
-impl_resolver_singleton!(@PEImage GMallocString, |ctx| async {
+impl_resolver_singleton!(PEImage, GMallocString, |ctx| async {
     use std::collections::HashSet;
     use iced_x86::FlowControl;
     use crate::Image;
@@ -178,7 +178,7 @@ impl_resolver_singleton!(@PEImage GMallocString, |ctx| async {
     Ok(Self(try_ensure_one(fns)?))
 });
 
-impl_resolver_singleton!(@ElfImage GMallocString, |ctx| async {
+impl_resolver_singleton!(ElfImage, GMallocString, |ctx| async {
     use std::ops::Range;
     use futures::try_join;
 

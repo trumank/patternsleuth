@@ -18,7 +18,7 @@ use crate::{
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct StaticConstructObjectInternal(pub usize);
-impl_resolver_singleton!(@all StaticConstructObjectInternal, |ctx| async {
+impl_resolver_singleton!(all, StaticConstructObjectInternal, |ctx| async {
     let any = join!(
         ctx.resolve(StaticConstructObjectInternalPatterns::resolver()),
         ctx.resolve(StaticConstructObjectInternalString::resolver()),
@@ -37,7 +37,7 @@ impl_resolver_singleton!(@all StaticConstructObjectInternal, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct StaticConstructObjectInternalPatterns(pub usize);
-impl_resolver_singleton!(@all StaticConstructObjectInternalPatterns, |ctx| async {
+impl_resolver_singleton!(all, StaticConstructObjectInternalPatterns, |ctx| async {
     let patterns = [
         "48 89 44 24 28 C7 44 24 20 00 00 00 00 E8 | ?? ?? ?? ?? 48 8B 5C 24 ?? 48 8B ?? 24",
         "E8 | ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? C0 E9 ?? 32 88 ?? ?? ?? ?? 80 E1 01 30 88 ?? ?? ?? ?? 48",
@@ -71,9 +71,9 @@ impl_resolver_singleton!(@all StaticConstructObjectInternalPatterns, |ctx| async
 )]
 pub struct StaticConstructObjectInternalString(pub usize);
 
-impl_resolver!(@collect StaticConstructObjectInternalString);
+impl_resolver!(collect, StaticConstructObjectInternalString);
 
-impl_resolver!(@ElfImage StaticConstructObjectInternalString, |ctx| async {
+impl_resolver!(ElfImage, StaticConstructObjectInternalString, |ctx| async {
     let strings = ctx.scan(util::utf16_pattern("NewObject with empty name can\'t be used to create default")).await;
     let refs = util::scan_xrefs(ctx, &strings).await;
     let target_addr = refs.iter().take(6).flat_map(|&addr| -> Option<Vec<(usize, usize)>> {
@@ -108,7 +108,7 @@ impl_resolver!(@ElfImage StaticConstructObjectInternalString, |ctx| async {
     Ok(Self(ensure_one(target_addr)?.1))
 });
 
-impl_resolver!(@PEImage StaticConstructObjectInternalString, |ctx| async {
+impl_resolver!(PEImage, StaticConstructObjectInternalString, |ctx| async {
     use itertools::Itertools;
     use iced_x86::{Code, FlowControl, OpKind, Register};
 

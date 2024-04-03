@@ -30,7 +30,7 @@ impl Debug for EngineVersion {
     }
 }
 
-impl_resolver!(@all EngineVersion, |ctx| async {
+impl_resolver!(all, EngineVersion, |ctx| async {
     let patterns = [
         "C7 03 | 04 00 ?? 00 66 89 4B 04 48 3B F8 74 ?? 48",
         "C7 05 ?? ?? ?? ?? | 04 00 ?? 00 66 89 ?? ?? ?? ?? ?? C7 05",
@@ -83,9 +83,9 @@ pub struct EngineVersionStrings {
     pub build_date: String,
     pub build_version: String,
 }
-impl_resolver!(@collect EngineVersionStrings);
+impl_resolver!(collect, EngineVersionStrings);
 // "++UE5+Release-{}.{}"
-impl_resolver!(@ElfImage EngineVersionStrings, |ctx| async {
+impl_resolver!(ElfImage, EngineVersionStrings, |ctx| async {
     use crate::resolvers::{ensure_one, unreal::util};
 
     let pattern_name = util::utf16_pattern("++UE5+Release-");
@@ -123,7 +123,7 @@ impl_resolver!(@ElfImage EngineVersionStrings, |ctx| async {
 
 });
 
-impl_resolver!(@PEImage EngineVersionStrings, |ctx| async {
+impl_resolver!(PEImage, EngineVersionStrings, |ctx| async {
     use std::collections::HashSet;
     use crate::{Addressable, Matchable, MemoryTrait};
 
