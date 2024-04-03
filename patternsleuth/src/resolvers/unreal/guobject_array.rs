@@ -56,10 +56,16 @@ impl_resolver_singleton!(all, GUObjectArray, |ctx| async {
     ];
     let res0 = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
     let res1 = join_all(patterns1.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
-    let res1 = res1.iter().flatten().map(|a| -> Result<usize> {Ok(ctx.image().memory.u32_le(*a)? as usize)} );
-    Ok(GUObjectArray(try_ensure_one(res0.iter().flatten().map(
-        |a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) },
-    ).chain(res1))?))
+    let res1 = res1
+        .iter()
+        .flatten()
+        .map(|a| -> Result<usize> { Ok(ctx.image().memory.u32_le(*a)? as usize) });
+    Ok(GUObjectArray(try_ensure_one(
+        res0.iter()
+            .flatten()
+            .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) })
+            .chain(res1),
+    )?))
 });
 
 /// public: void __cdecl FUObjectArray::AllocateUObjectIndex(class UObjectBase *, bool)

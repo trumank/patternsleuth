@@ -70,9 +70,9 @@ pub struct GMallocString(pub usize);
 impl_resolver_singleton!(collect, GMallocString);
 
 impl_resolver_singleton!(PEImage, GMallocString, |ctx| async {
-    use std::collections::HashSet;
-    use iced_x86::FlowControl;
     use crate::Image;
+    use iced_x86::FlowControl;
+    use std::collections::HashSet;
 
     let strings = ctx.scan(util::utf16_pattern("DeleteFile %s\0")).await;
     let refs = util::scan_xrefs(ctx, &strings).await;
@@ -179,8 +179,8 @@ impl_resolver_singleton!(PEImage, GMallocString, |ctx| async {
 });
 
 impl_resolver_singleton!(ElfImage, GMallocString, |ctx| async {
-    use std::ops::Range;
     use futures::try_join;
+    use std::ops::Range;
 
     //eprintln!("GMalloc String Scan");
     let string_xref_used_by = |pattern: &'static str| async {
@@ -195,45 +195,47 @@ impl_resolver_singleton!(ElfImage, GMallocString, |ctx| async {
         Result::<Vec<usize>>::Ok(util::scan_xcalls(ctx, &fns).await)
     };
 
-    let find_string_pattern1 = || async {
-        string_xref_used_by("/proc/meminfo\0").await
-    };
+    let find_string_pattern1 = || async { string_xref_used_by("/proc/meminfo\0").await };
 
     let find_string_pattern2 = || async {
         let fns2 = string_xref_used_by("Refusing to run with the root privileges.\n\0").await?;
         //eprintln!("Found {} xcall fns2 @ {:?}", fns2.len(), fns2);
-        let fns2 = fns2.iter().map(|&x| x .. (x + 24)).collect_vec();
+        let fns2 = fns2.iter().map(|&x| x..(x + 24)).collect_vec();
         // another possible address for FMemory::GCreateMalloc
         Result::<Vec<Range<usize>>>::Ok(fns2)
     };
 
     let (fns, fns2) = try_join!(find_string_pattern1(), find_string_pattern2())?;
 
-    let fns = fns.into_iter().filter(|x| {
-        fns2.iter().any(|y| y.contains(x))
-    } ).map(|f| -> Result<Option<usize>> {
-        let mut possible_gmalloc = vec![];
-        // eprintln!("disassemble @ {}", f);
-        disassemble(ctx.image(), f, |inst| {
-            let cur = inst.ip() as usize;
-            if !(f..f + 20).contains(&cur)
-            {
-                return Ok(Control::Break);
-            }
+    let fns = fns
+        .into_iter()
+        .filter(|x| fns2.iter().any(|y| y.contains(x)))
+        .map(|f| -> Result<Option<usize>> {
+            let mut possible_gmalloc = vec![];
+            // eprintln!("disassemble @ {}", f);
+            disassemble(ctx.image(), f, |inst| {
+                let cur = inst.ip() as usize;
+                if !(f..f + 20).contains(&cur) {
+                    return Ok(Control::Break);
+                }
 
-            // find mov rdi
-            if inst.code() == Code::Mov_r64_rm64
-                && inst.memory_base() == Register::RIP
-                && inst.op0_kind() == OpKind::Register
-                && inst.op1_kind() == OpKind::Memory
-            {
-                // eprintln!("Found one possible gmlaaoc @ {:#08X}", inst.ip_rel_memory_address() as usize);
-                possible_gmalloc.push(inst.ip_rel_memory_address() as usize);
-            }
-            Ok(Control::Continue)
-        })?;
-        Ok((possible_gmalloc.len() == 2 && possible_gmalloc[0] == possible_gmalloc[1]).then_some(possible_gmalloc[0]))
-    }).flatten_ok();
+                // find mov rdi
+                if inst.code() == Code::Mov_r64_rm64
+                    && inst.memory_base() == Register::RIP
+                    && inst.op0_kind() == OpKind::Register
+                    && inst.op1_kind() == OpKind::Memory
+                {
+                    // eprintln!("Found one possible gmlaaoc @ {:#08X}", inst.ip_rel_memory_address() as usize);
+                    possible_gmalloc.push(inst.ip_rel_memory_address() as usize);
+                }
+                Ok(Control::Continue)
+            })?;
+            Ok(
+                (possible_gmalloc.len() == 2 && possible_gmalloc[0] == possible_gmalloc[1])
+                    .then_some(possible_gmalloc[0]),
+            )
+        })
+        .flatten_ok();
 
     Ok(Self(try_ensure_one(fns)?))
 });

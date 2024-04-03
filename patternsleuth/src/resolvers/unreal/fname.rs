@@ -31,8 +31,8 @@ FEngineLoop::LoadPreInitModules:
     RenderCore
 */
 impl_resolver_singleton!(ElfImage, FNameCtorWchar, |ctx| async {
-    use std::collections::HashSet;
     use crate::resolvers::ResolveError;
+    use std::collections::HashSet;
 
     let strings = [
         "\0Engine\0",
@@ -44,21 +44,30 @@ impl_resolver_singleton!(ElfImage, FNameCtorWchar, |ctx| async {
 
     // find the strings
     let strings = join_all(strings.iter().map(|s| ctx.scan(util::utf16_pattern(s)))).await;
-    let strings:Vec<Vec<_>> = strings.into_iter().map(|pats| pats.into_iter().map(|addr| addr + 2).collect() ).collect();
+    let strings: Vec<Vec<_>> = strings
+        .into_iter()
+        .map(|pats| pats.into_iter().map(|addr| addr + 2).collect())
+        .collect();
     //eprintln!("Find each pattern @ {:?}", strings);
     // find refs to them
-    let refs:Vec<_> = join_all(strings.iter().map(|addr| util::scan_xrefs(ctx, addr))).await;
+    let refs: Vec<_> = join_all(strings.iter().map(|addr| util::scan_xrefs(ctx, addr))).await;
     //eprintln!("Find pattern refs @ {:?}", refs);
-    let fns:Vec<_> = refs.into_iter().flat_map(|addr| util::root_functions(ctx, &addr).ok()).collect();
+    let fns: Vec<_> = refs
+        .into_iter()
+        .flat_map(|addr| util::root_functions(ctx, &addr).ok())
+        .collect();
     //eprintln!("Find pattern fns @ {:?}", fns);
     //strings.into_iter().map(|addr| async move { util::root_functions(ctx, &util::scan_xrefs(ctx, &addr).await ) } ).collect();
 
     // find fns of these refs
-    let fns = fns.into_iter().reduce(|x, y| {
-        let x: HashSet<usize> = HashSet::from_iter(x.into_iter());
-        let y: HashSet<usize> = HashSet::from_iter(y.into_iter());
-        x.intersection(&y).cloned().collect::<Vec<_>>()
-    }).unwrap();
+    let fns = fns
+        .into_iter()
+        .reduce(|x, y| {
+            let x: HashSet<usize> = HashSet::from_iter(x.into_iter());
+            let y: HashSet<usize> = HashSet::from_iter(y.into_iter());
+            x.intersection(&y).cloned().collect::<Vec<_>>()
+        })
+        .unwrap();
 
     // output fns
     //eprintln!("Found all fns at {:?}", fns);
@@ -81,12 +90,20 @@ impl_resolver_singleton!(ElfImage, FNameCtorWchar, |ctx| async {
         03f3032c e8  af  71       CALL       FName::FName     <- call                                void FName(undefined8 * this, us
                  dc  02
     */
-    let mem = ctx.image().memory.get_section_containing(fnLoadPreInitModules).unwrap();
+    let mem = ctx
+        .image()
+        .memory
+        .get_section_containing(fnLoadPreInitModules)
+        .unwrap();
     let index = fnLoadPreInitModules - mem.address();
     let mut result = None;
     for i in 0..48 {
         if pattern.is_match(mem.data(), mem.address(), index + i) {
-            result = ctx.image().memory.rip4(fnLoadPreInitModules + i + pattern.custom_offset).ok();
+            result = ctx
+                .image()
+                .memory
+                .rip4(fnLoadPreInitModules + i + pattern.custom_offset)
+                .ok();
         }
     }
     // how to scan code from X?
@@ -101,9 +118,9 @@ impl_resolver_singleton!(ElfImage, FNameCtorWchar, |ctx| async {
 });
 
 impl_resolver_singleton!(PEImage, FNameCtorWchar, |ctx| async {
-    use iced_x86::{Code, Decoder, DecoderOptions};
+    use crate::{resolvers::Context, MemoryTrait};
     use futures::join;
-    use crate::{MemoryTrait, resolvers::Context};
+    use iced_x86::{Code, Decoder, DecoderOptions};
 
     let strings = async {
         let strings = ["TGPUSkinVertexFactoryUnlimited\0", "MovementComponent0\0"];
@@ -193,15 +210,20 @@ impl_resolver_singleton!(collect, FNameToString);
 impl_resolver_singleton!(ElfImage, FNameToString, |ctx| async {
     let strings = ctx.scan(util::utf16_pattern("SkySphereMesh\0")).await;
     let str_addr = ensure_one(strings)?;
-    let pattern = Pattern::new(format!("e8 | ?? ?? ?? ?? 49 8b 5f 10 48 8d 7c 24 30 be 0x{str_addr:08x}")).unwrap();
+    let pattern = Pattern::new(format!(
+        "e8 | ?? ?? ?? ?? 49 8b 5f 10 48 8d 7c 24 30 be 0x{str_addr:08x}"
+    ))
+    .unwrap();
     let refs = ctx.scan(pattern).await;
-    Ok(Self(try_ensure_one(refs.into_iter().map(|a| Ok(ctx.image().memory.rip4(a)?)  ))?))
+    Ok(Self(try_ensure_one(
+        refs.into_iter().map(|a| Ok(ctx.image().memory.rip4(a)?)),
+    )?))
 });
 
 impl_resolver_singleton!(PEImage, FNameToString, |ctx| async {
-    use iced_x86::{Code, Decoder, DecoderOptions};
+    use crate::{resolvers::Context, MemoryTrait};
     use futures::join;
-    use crate::{MemoryTrait, resolvers::Context};
+    use iced_x86::{Code, Decoder, DecoderOptions};
 
     let patterns = async {
         let patterns = ["56 57 48 83 EC 28 48 89 D6 48 89 CF 83 79 ?? 00 74"];

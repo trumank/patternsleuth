@@ -13,8 +13,8 @@ pub struct UGameEngineTick(pub usize);
 impl_resolver_singleton!(collect, UGameEngineTick);
 
 impl_resolver_singleton!(PEImage, UGameEngineTick, |ctx| async {
-    use patternsleuth_scanner::Pattern;
     use crate::resolvers::Result;
+    use patternsleuth_scanner::Pattern;
 
     let strings = ctx
         .scan(Pattern::from_bytes(b"EngineTickMisc\x00".to_vec()).unwrap())
@@ -42,7 +42,11 @@ impl_resolver_singleton!(PEImage, UGameEngineTick, |ctx| async {
 // on linux we use u16"causeevent="
 impl_resolver_singleton!(ElfImage, UGameEngineTick, |ctx| async {
     let strings = ["causeevent=\0", "CAUSEEVENT \0"];
-    let strings: Vec<_> = join_all(strings.map(|s| ctx.scan(util::utf16_pattern(s)))).await.into_iter().flatten().collect();
+    let strings: Vec<_> = join_all(strings.map(|s| ctx.scan(util::utf16_pattern(s))))
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
 
     let refs = util::scan_xrefs(ctx, &strings).await;
 
@@ -88,15 +92,11 @@ impl_resolver_singleton!(ElfImage, FEngineLoopInit, |ctx| async {
         // util::utf16_pattern("Failed to load UnrealEd Engine class '%s'."),
         util::utf16_pattern("One or more modules failed PostEngineInit"),
     ];
-    let strings = join_all(
-        search_strings
-            .into_iter()
-            .map(|s| ctx.scan(s)),
-    )
-    .await
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
+    let strings = join_all(search_strings.into_iter().map(|s| ctx.scan(s)))
+        .await
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
 
     let refs = util::scan_xrefs(ctx, &strings).await;
     let fns = util::root_functions(ctx, &refs)?;

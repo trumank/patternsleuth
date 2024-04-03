@@ -74,43 +74,56 @@ pub struct StaticConstructObjectInternalString(pub usize);
 impl_resolver!(collect, StaticConstructObjectInternalString);
 
 impl_resolver!(ElfImage, StaticConstructObjectInternalString, |ctx| async {
-    let strings = ctx.scan(util::utf16_pattern("NewObject with empty name can\'t be used to create default")).await;
+    let strings = ctx
+        .scan(util::utf16_pattern(
+            "NewObject with empty name can\'t be used to create default",
+        ))
+        .await;
     let refs = util::scan_xrefs(ctx, &strings).await;
-    let target_addr = refs.iter().take(6).flat_map(|&addr| -> Option<Vec<(usize, usize)>> {
-        // find e8 call
-        let mut callsites = Vec::default();
-        // ...06f83ff0 is the real one?
-        disassemble(ctx.image(), addr, |inst| {
-            let cur = inst.ip() as usize;
-            if !(addr..addr + 130).contains(&cur) {
-                return Ok(Control::Break);
-            }
-            if  !inst.is_call_near_indirect()
-                && inst.is_call_near() {
-                // eprintln!("Found call to @ {:08x}", inst.ip_rel_memory_address());
-                callsites.push(inst.ip_rel_memory_address() as usize);
-            }
-            Ok(Control::Continue)
-        }).ok()?;
-        // eprintln!("");
-        // the seq is always
-        // call FStaticConstructObjectParameters::FStaticConstructObjectParameters .0
-        // call StaticConstructObjectInternal .1
+    let target_addr = refs
+        .iter()
+        .take(6)
+        .flat_map(|&addr| -> Option<Vec<(usize, usize)>> {
+            // find e8 call
+            let mut callsites = Vec::default();
+            // ...06f83ff0 is the real one?
+            disassemble(ctx.image(), addr, |inst| {
+                let cur = inst.ip() as usize;
+                if !(addr..addr + 130).contains(&cur) {
+                    return Ok(Control::Break);
+                }
+                if !inst.is_call_near_indirect() && inst.is_call_near() {
+                    // eprintln!("Found call to @ {:08x}", inst.ip_rel_memory_address());
+                    callsites.push(inst.ip_rel_memory_address() as usize);
+                }
+                Ok(Control::Continue)
+            })
+            .ok()?;
+            // eprintln!("");
+            // the seq is always
+            // call FStaticConstructObjectParameters::FStaticConstructObjectParameters .0
+            // call StaticConstructObjectInternal .1
 
-        let callsites = callsites.iter().zip(callsites.iter().skip(1)).map(|(&x, &y)| (x,y)).collect::<Vec<_>>();
-        Some(callsites)
-    }).reduce(|x, y| {
-        let x:HashSet<(usize, usize)> = HashSet::from_iter(x);
-        let y:HashSet<(usize, usize)> = HashSet::from_iter(y);
-        let z = x.intersection(&y);
-        z.cloned().collect()
-    }).unwrap_or_default();
+            let callsites = callsites
+                .iter()
+                .zip(callsites.iter().skip(1))
+                .map(|(&x, &y)| (x, y))
+                .collect::<Vec<_>>();
+            Some(callsites)
+        })
+        .reduce(|x, y| {
+            let x: HashSet<(usize, usize)> = HashSet::from_iter(x);
+            let y: HashSet<(usize, usize)> = HashSet::from_iter(y);
+            let z = x.intersection(&y);
+            z.cloned().collect()
+        })
+        .unwrap_or_default();
     Ok(Self(ensure_one(target_addr)?.1))
 });
 
 impl_resolver!(PEImage, StaticConstructObjectInternalString, |ctx| async {
-    use itertools::Itertools;
     use iced_x86::{Code, FlowControl, OpKind, Register};
+    use itertools::Itertools;
 
     use crate::{
         disassemble::disassemble_single,
