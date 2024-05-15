@@ -9,6 +9,7 @@ pub mod guobject_array;
 pub mod kismet;
 pub mod save_game;
 pub mod static_construct_object;
+pub mod static_find_object;
 
 use std::{
     collections::{HashMap, HashSet},
