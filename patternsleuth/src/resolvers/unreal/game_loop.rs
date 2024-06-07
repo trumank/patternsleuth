@@ -9,6 +9,20 @@ use crate::resolvers::{ensure_one, impl_resolver_singleton, unreal::util};
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
+pub struct Main(pub usize);
+impl_resolver_singleton!(collect, Main);
+impl_resolver_singleton!(PEImage, Main, |ctx| async {
+    let strings = ctx.scan(util::utf16_pattern("UnrealEngine4\0")).await;
+    let refs = util::scan_xrefs(ctx, &strings).await;
+    let fns = util::root_functions(ctx, &refs)?;
+    Ok(Main(ensure_one(fns)?))
+});
+
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct UGameEngineTick(pub usize);
 impl_resolver_singleton!(collect, UGameEngineTick);
 
