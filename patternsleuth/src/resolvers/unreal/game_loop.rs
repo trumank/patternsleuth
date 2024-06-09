@@ -15,7 +15,26 @@ impl_resolver_singleton!(PEImage, Main, |ctx| async {
     let strings = ctx.scan(util::utf16_pattern("UnrealEngine4\0")).await;
     let refs = util::scan_xrefs(ctx, &strings).await;
     let fns = util::root_functions(ctx, &refs)?;
-    Ok(Main(ensure_one(fns)?))
+    Ok(Self(ensure_one(fns)?))
+});
+
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct FEngineLoopTick(pub usize);
+impl_resolver_singleton!(collect, FEngineLoopTick);
+impl_resolver_singleton!(PEImage, FEngineLoopTick, |ctx| async {
+    let strings = ["DeferredTickTime\0", "ConcurrentWithSlateTickTasks_Wait\0"];
+    let strings: Vec<_> = join_all(strings.map(|s| ctx.scan(util::utf8_pattern(s))))
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
+    let refs = util::scan_xrefs(ctx, &strings).await;
+    let fns = util::root_functions(ctx, &refs)?;
+    Ok(Self(ensure_one(fns)?))
 });
 
 #[derive(Debug, PartialEq)]
