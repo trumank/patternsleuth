@@ -1,6 +1,4 @@
 pub mod image;
-#[cfg(feature = "patterns")]
-pub mod patterns;
 pub mod process;
 pub mod resolvers;
 #[cfg(feature = "symbols")]

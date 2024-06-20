@@ -19,11 +19,7 @@ use patternsleuth::image::Image;
 use patternsleuth::resolvers::{resolve_self, resolvers, NamedResolver};
 
 use patternsleuth::scanner::Xref;
-use patternsleuth::{
-    patterns::{get_patterns, Sig},
-    scanner::Pattern,
-    PatternConfig, Resolution, ResolutionType,
-};
+use patternsleuth::{scanner::Pattern, PatternConfig, Resolution, ResolutionType};
 
 #[derive(Parser)]
 enum Commands {
@@ -64,10 +60,6 @@ struct CommandScan {
     /// A game process ID to attach to and scan
     #[arg(long)]
     pid: Option<i32>,
-
-    /// A signature to scan for (can be specified multiple times). Scans for all signatures if omitted
-    #[arg(short, long)]
-    signature: Vec<Sig>,
 
     /// A resolver to scan for (can be specified multiple times)
     #[arg(short, long, value_parser(resolver_parser()))]
@@ -236,40 +228,40 @@ fn main() -> Result<()> {
     }
 }
 
+// TODO remove, only used for patterns/xrefs from CLI
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+struct Sig(String);
+impl std::fmt::Display for Sig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self, f)
+    }
+}
+
 fn scan(command: CommandScan) -> Result<()> {
-    let sig_filter = command.signature.into_iter().collect::<HashSet<_>>();
     let include_default = command.patterns.is_empty() && command.xref.is_empty();
-    let patterns = get_patterns()?
+    // TODO warn if empty?
+    let patterns = command
+        .patterns
         .into_iter()
-        .filter(|p| {
-            (command.resolver.is_empty() && sig_filter.is_empty())
-                .then_some(include_default)
-                .unwrap_or_else(|| sig_filter.contains(&p.sig))
+        .enumerate()
+        .map(|(i, p)| {
+            PatternConfig::new(
+                Sig("arg".to_string()),
+                format!("pattern {i}"),
+                None,
+                p,
+                resolve_self,
+            )
         })
-        .chain(
-            command
-                .patterns
-                .into_iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    PatternConfig::new(
-                        Sig::Custom("arg".to_string()),
-                        format!("pattern {i}"),
-                        None,
-                        p,
-                        resolve_self,
-                    )
-                })
-                .chain(command.xref.into_iter().enumerate().map(|(i, p)| {
-                    PatternConfig::xref(
-                        Sig::Custom("arg".to_string()),
-                        format!("xref {i}"),
-                        None,
-                        p,
-                        resolve_self,
-                    )
-                })),
-        )
+        .chain(command.xref.into_iter().enumerate().map(|(i, p)| {
+            PatternConfig::xref(
+                Sig("arg".to_string()),
+                format!("xref {i}"),
+                None,
+                p,
+                resolve_self,
+            )
+        }))
         .chain(command.pattern_config.into_iter().flat_map(|path| {
             let file = std::fs::read_to_string(path).unwrap();
             let config: HashMap<String, Vec<String>> = serde_json::from_str(&file).unwrap();
@@ -277,7 +269,7 @@ fn scan(command: CommandScan) -> Result<()> {
             config.into_iter().flat_map(|(symbol, patterns)| {
                 patterns.into_iter().enumerate().map(move |(i, p)| {
                     PatternConfig::new(
-                        Sig::Custom(format!("file {symbol}")),
+                        Sig(format!("file {symbol}")),
                         format!("#{i} {symbol}"),
                         None,
                         Pattern::new(p).unwrap(),
@@ -288,11 +280,12 @@ fn scan(command: CommandScan) -> Result<()> {
         }))
         .collect_vec();
 
-    let resolvers = command
-        .resolver
-        .iter()
-        .map(|res| res.getter)
-        .collect::<Vec<_>>();
+    let resolvers = if command.resolver.is_empty() && include_default {
+        resolvers().collect::<Vec<_>>()
+    } else {
+        command.resolver
+    };
+    let dyn_resolvers = resolvers.iter().map(|res| res.getter).collect::<Vec<_>>();
 
     let sigs = patterns
         .iter()
@@ -572,10 +565,10 @@ fn scan(command: CommandScan) -> Result<()> {
             GameEntry::Process(GameProcessEntry { pid }) => format!("pid={pid}"),
         };
 
-        let resolution =
-            tracing::info_span!("scan", game = game_name).in_scope(|| exe.resolve_many(&resolvers));
+        let resolution = tracing::info_span!("scan", game = game_name)
+            .in_scope(|| exe.resolve_many(&dyn_resolvers));
 
-        for (resolver, resolution) in command.resolver.iter().zip(&resolution) {
+        for (resolver, resolution) in resolvers.iter().zip(&resolution) {
             table.add_row(Row::new(
                 [
                     Cell::new(resolver.name),
@@ -635,7 +628,7 @@ fn scan(command: CommandScan) -> Result<()> {
                     .iter()
                     .map(|conf| format!("{:?}({})", conf.sig, conf.name)),
             )
-            .chain(command.resolver.iter().map(|r| r.name.to_string()))
+            .chain(resolvers.iter().map(|r| r.name.to_string()))
             .collect();
         summary.set_titles(Row::new(title_strs.iter().map(|s| Cell::new(s)).collect()));
         let mut totals = patterns.iter().map(|_| Summary::default()).collect_vec();
@@ -730,7 +723,7 @@ fn scan(command: CommandScan) -> Result<()> {
         ]
         .into_iter()
         .chain(totals.iter().map(Summary::format))
-        .chain(command.resolver.iter().enumerate().map(|(i, _)| {
+        .chain(resolvers.iter().enumerate().map(|(i, _)| {
             let ok = all_resolutions.values().filter(|r| r[i].is_ok()).count();
             format!(
                 "Ok={ok}/{} ({:.2}%)",
