@@ -17,6 +17,9 @@ impl_resolver_singleton!(PEImage, Main, |ctx| async {
     let fns = util::root_functions(ctx, &refs)?;
     Ok(Self(ensure_one(fns)?))
 });
+impl_resolver_singleton!(ElfImage, Main, |_ctx| async {
+    unimplemented!("ElfImage");
+});
 
 #[derive(Debug, PartialEq)]
 #[cfg_attr(
@@ -35,6 +38,9 @@ impl_resolver_singleton!(PEImage, FEngineLoopTick, |ctx| async {
     let refs = util::scan_xrefs(ctx, &strings).await;
     let fns = util::root_functions(ctx, &refs)?;
     Ok(Self(ensure_one(fns)?))
+});
+impl_resolver_singleton!(ElfImage, FEngineLoopTick, |_ctx| async {
+    unimplemented!("ElfImage");
 });
 
 #[derive(Debug, PartialEq)]
