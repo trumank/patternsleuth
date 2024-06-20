@@ -18,7 +18,7 @@ impl_resolver_singleton!(PEImage, Main, |ctx| async {
     Ok(Self(ensure_one(fns)?))
 });
 impl_resolver_singleton!(ElfImage, Main, |_ctx| async {
-    unimplemented!("ElfImage");
+    super::bail_out!("ElfImage unimplemented");
 });
 
 #[derive(Debug, PartialEq)]
@@ -40,7 +40,7 @@ impl_resolver_singleton!(PEImage, FEngineLoopTick, |ctx| async {
     Ok(Self(ensure_one(fns)?))
 });
 impl_resolver_singleton!(ElfImage, FEngineLoopTick, |_ctx| async {
-    unimplemented!("ElfImage");
+    super::bail_out!("ElfImage unimplemented");
 });
 
 #[derive(Debug, PartialEq)]

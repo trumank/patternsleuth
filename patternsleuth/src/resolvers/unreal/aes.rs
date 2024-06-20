@@ -120,4 +120,6 @@ impl_resolver!(PEImage, AESKeys, |ctx| async {
     ))
 });
 
-impl_resolver!(ElfImage, AESKeys, |_ctx| async { Ok(Self(vec![])) });
+impl_resolver!(ElfImage, AESKeys, |_ctx| async {
+    super::bail_out!("ElfImage unimplemented");
+});
