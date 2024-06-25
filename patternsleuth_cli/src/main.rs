@@ -196,10 +196,15 @@ struct CommandViewSymbol {
 #[derive(Parser)]
 struct CommandAutoGen {}
 
-fn find_ext<P: AsRef<Path>>(dir: P, ext: &str) -> Result<Option<PathBuf>> {
+fn find_ext<P: AsRef<Path>, E: AsRef<str>>(dir: P, ext: &[E]) -> Result<Option<PathBuf>> {
     for f in fs::read_dir(dir)? {
         let f = f?.path();
-        if f.is_file() && f.extension().and_then(std::ffi::OsStr::to_str) == Some(ext) {
+        if f.is_file()
+            && f.extension()
+                .and_then(std::ffi::OsStr::to_str)
+                .map(|e| ext.iter().any(|m| m.as_ref().eq_ignore_ascii_case(e)))
+                .unwrap_or_default()
+        {
             return Ok(Some(f));
         }
     }
@@ -1070,9 +1075,8 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameFileEntry>> {
                 return Ok(None);
             }
 
-            let Some(exe_path) = find_ext(entry.path(), "exe")
+            let Some(exe_path) = find_ext(entry.path(), &["exe", "elf"])
                 .transpose()
-                .or_else(|| find_ext(entry.path(), "elf").transpose())
                 .transpose()?
             else {
                 return Ok(None);
