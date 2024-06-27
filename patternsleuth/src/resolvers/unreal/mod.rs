@@ -8,6 +8,7 @@ pub mod game_loop;
 pub mod gmalloc;
 pub mod guobject_array;
 pub mod kismet;
+pub mod pak;
 pub mod save_game;
 pub mod static_construct_object;
 pub mod static_find_object;
