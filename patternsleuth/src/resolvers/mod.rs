@@ -66,27 +66,39 @@ pub fn resolve_rip_offset<const N: usize>(
 }
 
 /// Given an iterator of values, returns Ok(value) if all values are equal or Err
-pub fn ensure_one<T: PartialEq>(data: impl IntoIterator<Item = T>) -> Result<T> {
-    let mut iter = data.into_iter();
-    let first = iter.next().context("expected at least one value")?;
-    for value in iter {
-        if value != first {
-            bail_out!("iter returned multiple unique values");
-        }
-    }
-    Ok(first)
+pub fn ensure_one<T: std::fmt::Debug + PartialEq>(data: impl IntoIterator<Item = T>) -> Result<T> {
+    try_ensure_one(data.into_iter().map(|v| Ok(v)))
 }
 
 /// Given an iterator of values, returns Ok(value) if all values are equal or Err
-pub fn try_ensure_one<T: PartialEq>(data: impl IntoIterator<Item = Result<T>>) -> Result<T> {
-    let mut iter = data.into_iter();
-    let first = iter.next().context("expected at least one value")??;
-    for value in iter {
-        if value? != first {
-            bail_out!("iter returned multiple unique values");
+pub fn try_ensure_one<T: std::fmt::Debug + PartialEq>(
+    data: impl IntoIterator<Item = Result<T>>,
+) -> Result<T> {
+    let mut reached_max = false;
+
+    // TODO use a stack vec to eliminate heap allocation
+    let mut unique = vec![];
+    for value in data.into_iter() {
+        let value = value?;
+        if !unique.contains(&value) {
+            unique.push(value);
+        }
+        if unique.len() >= 4 {
+            reached_max = true;
+            break;
         }
     }
-    Ok(first)
+    match unique.len() {
+        0 => Err(ResolveError::Msg("expected at least one value".into())),
+        1 => Ok(unique.swap_remove(0)),
+        len => Err(ResolveError::Msg(
+            format!(
+                "found {}{len} unique values {unique:X?}",
+                if reached_max { ">=" } else { "" }
+            )
+            .into(),
+        )),
+    }
 }
 
 pub type Result<T> = std::result::Result<T, ResolveError>;
@@ -117,7 +129,7 @@ impl From<MemoryAccessError> for ResolveError {
 
 #[macro_export]
 macro_rules! _bail_out {
-    ($msg:literal) => {
+    ($msg:expr) => {
         return Err($crate::resolvers::ResolveError::Msg($msg.into()));
     };
 }
