@@ -7,7 +7,7 @@ use patternsleuth_scanner::Pattern;
 
 use crate::{
     disassemble::{disassemble, Control},
-    resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
+    resolvers::{impl_resolver_singleton, try_ensure_one, unreal::util, Result},
     MemoryAccessorTrait,
 };
 
@@ -19,15 +19,11 @@ use crate::{
 pub struct GMalloc(pub usize);
 impl_resolver_singleton!(all, GMalloc, |ctx| async {
     //eprintln!("GMalloc Scan Start!");
-    let any = join!(
+    let (patterns, strings) = join!(
         ctx.resolve(GMallocPatterns::resolver()),
         ctx.resolve(GMallocString::resolver()),
     );
-    Ok(Self(*ensure_one(
-        [any.0.map(|r| r.0), any.1.map(|r| r.0)]
-            .iter()
-            .filter_map(|r| r.as_ref().ok()),
-    )?))
+    Ok(Self(patterns.map(|r| r.0).or(strings.map(|r| r.0))?))
 });
 
 #[derive(Debug, PartialEq)]
