@@ -5,9 +5,7 @@ use futures::future::join_all;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{
-        ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util, Result,
-    },
+    resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
     MemoryAccessorTrait,
 };
 
@@ -334,7 +332,7 @@ impl_resolver_singleton!(all, FNameToStringVoid, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FNameToStringFString(pub usize);
-impl_resolver!(all, FNameToStringFString, |ctx| async {
+impl_resolver_singleton!(all, FNameToStringFString, |ctx| async {
     let patterns =
         ["48 8b 48 ?? 48 89 4c 24 ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00 48 8d"];
 
@@ -354,7 +352,7 @@ impl_resolver!(all, FNameToStringFString, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FNamePool(pub usize);
-impl_resolver!(all, FNamePool, |ctx| async {
+impl_resolver_singleton!(all, FNamePool, |ctx| async {
     let patterns = [
         "74 ?? 4C 8D 05 | ?? ?? ?? ?? EB ?? 48 8D 0D",
         "48 8d 0d | ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8b d0 c6 05 dc ?? ?? ?? ?? 48 8b 44 24 30 48 c1 e8 20 03 c0 48 03 44 da 10 48 83 c4 20 5b c3",

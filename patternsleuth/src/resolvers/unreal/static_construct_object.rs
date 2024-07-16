@@ -5,9 +5,7 @@ use patternsleuth_scanner::Pattern;
 
 use crate::{
     disassemble::{disassemble, Control},
-    resolvers::{
-        ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, unreal::util, Result,
-    },
+    resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
     MemoryAccessorTrait,
 };
 
@@ -71,9 +69,9 @@ impl_resolver_singleton!(all, StaticConstructObjectInternalPatterns, |ctx| async
 )]
 pub struct StaticConstructObjectInternalString(pub usize);
 
-impl_resolver!(collect, StaticConstructObjectInternalString);
+impl_resolver_singleton!(collect, StaticConstructObjectInternalString);
 
-impl_resolver!(ElfImage, StaticConstructObjectInternalString, |ctx| async {
+impl_resolver_singleton!(ElfImage, StaticConstructObjectInternalString, |ctx| async {
     let strings = ctx
         .scan(util::utf16_pattern(
             "NewObject with empty name can\'t be used to create default",
@@ -121,7 +119,7 @@ impl_resolver!(ElfImage, StaticConstructObjectInternalString, |ctx| async {
     Ok(Self(ensure_one(target_addr)?.1))
 });
 
-impl_resolver!(PEImage, StaticConstructObjectInternalString, |ctx| async {
+impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| async {
     use iced_x86::{Code, FlowControl, OpKind, Register};
     use itertools::Itertools;
 

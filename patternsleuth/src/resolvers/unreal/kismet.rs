@@ -18,7 +18,7 @@ use crate::{
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct UObjectSkipFunction(pub usize);
-impl_resolver!(all, UObjectSkipFunction, |ctx| async {
+impl_resolver_singleton!(all, UObjectSkipFunction, |ctx| async {
     let patterns = [
         "40 55 41 54 41 55 41 56 41 57 48 83 EC 30 48 8D 6C 24 20 48 89 5D 40 48 89 75 48 48 89 7D 50 48 8B 05 ?? ?? ?? ?? 48 33 C5 48 89 45 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 4D 8B ?? ?? 8B ?? 85 ?? 75 05 41 8B FC EB ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 ?? E0",
 
@@ -38,8 +38,8 @@ impl_resolver!(all, UObjectSkipFunction, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct GNatives(pub usize);
-impl_resolver!(collect, GNatives);
-impl_resolver!(PEImage, GNatives, |ctx| async {
+impl_resolver_singleton!(collect, GNatives);
+impl_resolver_singleton!(PEImage, GNatives, |ctx| async {
     use iced_x86::{Code, Register};
 
     let skip_function = ctx.resolve(UObjectSkipFunction::resolver()).await?;
@@ -64,7 +64,7 @@ impl_resolver!(PEImage, GNatives, |ctx| async {
     bail_out!("failed to not find LEA instruction");
 });
 
-impl_resolver!(ElfImage, GNatives, |ctx| async {
+impl_resolver_singleton!(ElfImage, GNatives, |ctx| async {
     let skip_function = ctx.resolve(UObjectSkipFunction::resolver()).await?;
     let bytes = ctx.image().memory.range_from(skip_function.0..)?;
 
