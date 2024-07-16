@@ -309,7 +309,12 @@ macro_rules! _impl_resolver {
 #[macro_export]
 macro_rules! _impl_resolver_singleton {
     (all, $name:ident, |$ctx:ident| async $x:block ) => {
-        $crate::_impl_resolver_inner!($name, |$ctx| async $x);
+        $crate::_impl_resolver_inner!($name, |$ctx| async {
+            if let Some(a) = std::env::var(concat!("PATTERNSLEUTH_RES_", stringify!($name))).ok().and_then(|s| (s.strip_prefix("0x").map(|s| usize::from_str_radix(s, 16).ok()).unwrap_or_else(|| s.parse().ok()))) {
+                return Ok($name(a));
+            }
+            $x
+        });
 
         impl $crate::resolvers::Singleton for $name {
             fn get(&self) -> Option<usize> {
@@ -329,6 +334,9 @@ macro_rules! _impl_resolver_singleton {
 
     (collect, $name:ident) => {
         $crate::_impl_resolver_inner!($name, |ctx| async {
+            if let Some(a) = std::env::var(concat!("PATTERNSLEUTH_RES_", stringify!($name))).ok().and_then(|s| (s.strip_prefix("0x").map(|s| usize::from_str_radix(s, 16).ok()).unwrap_or_else(|| s.parse().ok()))) {
+                return Ok($name(a));
+            }
             $crate::image::image_type_reflection!(all, impl_resolver_singleton; generate; {ctx, $name})
         });
 
