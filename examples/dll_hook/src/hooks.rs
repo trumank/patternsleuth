@@ -1,6 +1,6 @@
 use std::{
     ffi::c_void,
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{Arc, LazyLock, Mutex, Weak},
 };
 
 use anyhow::Result;
@@ -24,8 +24,8 @@ macro_rules! event {
 
             pub type Listener = dyn Fn( $($($arg_ty,)*)* ) + Send + Sync;
             fn get() -> &'static Mutex<Vec<Weak<Listener>>> {
-                static OBJECTS: OnceLock<Mutex<Vec<Weak<Listener>>>> = OnceLock::new();
-                OBJECTS.get_or_init(|| Default::default())
+                static OBJECTS: LazyLock<Mutex<Vec<Weak<Listener>>>> = LazyLock::new(|| Default::default());
+                &*OBJECTS
             }
             pub fn register(listener: Arc<Listener>) -> Arc<Listener> {
                 get().lock().unwrap().push(Arc::downgrade(&listener));
