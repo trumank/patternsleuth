@@ -2,6 +2,8 @@ use anyhow::{anyhow, Result};
 use object::{from_bytes, slice_from_bytes, Pod};
 use std::{collections::HashMap, path::Path};
 
+use crate::symbols::Symbol;
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 struct Header {
@@ -83,13 +85,15 @@ impl WrapRecord<'_, '_> {
 pub fn dump_ue_symbols<P: AsRef<Path>>(
     filename: P,
     base_address: usize,
-) -> Result<HashMap<usize, String>> {
+) -> Result<HashMap<usize, Symbol>> {
     let data = std::fs::read(filename)?;
     let symbols = RawUESymbols::new(data.as_slice())?;
     Ok(HashMap::from_iter(symbols.iter().map(|rec| {
         (
             rec.record.address as usize + base_address,
-            rec.symbol().to_string(),
+            Symbol {
+                name: rec.symbol().to_string(),
+            },
         )
     })))
 }

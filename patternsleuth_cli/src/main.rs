@@ -19,6 +19,7 @@ use patternsleuth::image::Image;
 use patternsleuth::resolvers::{resolve_self, resolvers, NamedResolver};
 
 use patternsleuth::scanner::Xref;
+use patternsleuth::symbols::Symbol;
 use patternsleuth::{scanner::Pattern, PatternConfig, Resolution, ResolutionType};
 
 #[derive(Parser)]
@@ -550,7 +551,7 @@ fn scan(command: CommandScan) -> Result<()> {
                                 line.push_str(&format!(
                                     "{}{}",
                                     " ".repeat(1 + max_len.unwrap() - line.len()),
-                                    symbol.bright_yellow()
+                                    symbol.name.bright_yellow()
                                 ));
                             }
                         }
@@ -985,7 +986,7 @@ fn diff_report(command: CommandDiffReport) -> Result<()> {
 
 fn symbols(command: CommandSymbols) -> Result<()> {
     let re = &command.symbol;
-    let filter = |name: &_| re.iter().any(|re| re.is_match(name));
+    let filter = |sym: &Symbol| re.iter().any(|re| re.is_match(&sym.name));
 
     use prettytable::{Cell, Row, Table};
 
@@ -1010,22 +1011,22 @@ fn symbols(command: CommandSymbols) -> Result<()> {
             }
         };
 
-        for (address, name) in exe.symbols.as_ref().unwrap() {
-            if filter(name) {
+        for (address, sym) in exe.symbols.as_ref().unwrap() {
+            if filter(sym) {
                 if let Ok(Some(full_range)) = exe.get_root_function_range(*address) {
                     cells.push((
-                        name.clone(),
+                        sym.clone(),
                         disassemble::disassemble_range(&exe, full_range),
                     ));
                 } else {
-                    println!("{:016x} [NO EXCEPT] {}", address, name);
+                    println!("{:016x} [NO EXCEPT] {}", address, sym.name);
                 }
             }
         }
     }
 
     let mut table = Table::new();
-    table.set_titles(cells.iter().map(|c| c.0.clone()).collect());
+    table.set_titles(cells.iter().map(|c| c.0.name.clone()).collect());
     table.add_row(Row::new(
         cells.into_iter().map(|c| Cell::new(&c.1)).collect(),
     ));

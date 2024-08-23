@@ -46,7 +46,9 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
             if let Some(symbols) = &exe.symbols {
                 if let Some(symbol) = symbols.get(&range.start) {
                     #[allow(clippy::unnecessary_to_owned)]
-                    output.buffer.push_str(&symbol.bright_yellow().to_string());
+                    output
+                        .buffer
+                        .push_str(&symbol.name.bright_yellow().to_string());
                     output.buffer.push_str(&"".normal().to_string());
                     output.buffer.push('\n');
                 }
@@ -168,7 +170,7 @@ pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
                     #[allow(clippy::unnecessary_to_owned)]
                     output
                         .buffer
-                        .push_str(&format!("{}\n", symbol).bright_yellow().to_string());
+                        .push_str(&format!("{}\n", symbol.name).bright_yellow().to_string());
                 }
             }
         } else {

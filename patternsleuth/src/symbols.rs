@@ -4,14 +4,20 @@ use std::{collections::HashMap, path::Path};
 
 use pdb::FallibleIterator;
 
-fn demangle(name: pdb::RawString<'_>) -> String {
-    let name = name.to_string().to_string();
-    msvc_demangler::demangle(&name, msvc_demangler::DemangleFlags::llvm())
-        .unwrap_or_else(|_| name.to_string())
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Symbol {
+    pub name: String,
+}
+impl Symbol {
+    pub fn demangle(&self) -> String {
+        let name = self.name.to_string().to_string();
+        msvc_demangler::demangle(&name, msvc_demangler::DemangleFlags::llvm())
+            .unwrap_or_else(|_| name.to_string())
+    }
 }
 
 fn print_symbol(
-    symbols: &mut HashMap<usize, String>,
+    symbols: &mut HashMap<usize, Symbol>,
     address_map: &pdb::AddressMap<'_>,
     base_address: usize,
     symbol: &pdb::Symbol<'_>,
@@ -19,10 +25,14 @@ fn print_symbol(
     #[allow(clippy::single_match)]
     match symbol.parse()? {
         pdb::SymbolData::Public(data) => {
-            let name_demangled = demangle(data.name);
             if let Some(rva) = data.offset.to_rva(address_map) {
                 let address = base_address + rva.0 as usize;
-                symbols.insert(address, name_demangled);
+                symbols.insert(
+                    address,
+                    Symbol {
+                        name: data.name.to_string().to_string(),
+                    },
+                );
             }
         }
         // procedure symbols don't seem to always be availble so instead we use the exception table to get the function bounds
@@ -46,7 +56,7 @@ fn print_symbol(
 }
 
 fn walk_symbols(
-    symbols_map: &mut HashMap<usize, String>,
+    symbols_map: &mut HashMap<usize, Symbol>,
     address_map: &pdb::AddressMap<'_>,
     base_address: usize,
     mut symbols: pdb::SymbolIter<'_>,
@@ -60,7 +70,7 @@ fn walk_symbols(
 pub fn dump_pdb_symbols<P: AsRef<Path>>(
     filename: P,
     base_address: usize,
-) -> Result<HashMap<usize, String>> {
+) -> Result<HashMap<usize, Symbol>> {
     let mut symbols = HashMap::new();
 
     let file = std::fs::File::open(filename)?;

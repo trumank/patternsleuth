@@ -1,8 +1,8 @@
 use std::{collections::HashMap, mem, ops::Range};
 
 use crate::{
-    Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, NamedMemorySection,
-    RuntimeFunction,
+    symbols::Symbol, Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait,
+    NamedMemorySection, RuntimeFunction,
 };
 
 use super::{Image, ImageType};
@@ -227,8 +227,8 @@ impl ElfImage {
                     .exists()
                     .then(|| -> Result<HashMap<_, _>> {
                         let syms = uesym::dump_ue_symbols(sym_path, base_address)?;
-                        Ok((functions.iter().flat_map(|f| -> Option<(usize, String)> {
-                            Some((f.start, syms.get(&f.start)?.to_owned()))
+                        Ok((functions.iter().flat_map(|f| -> Option<(usize, Symbol)> {
+                            Some((f.start, syms.get(&f.start)?.clone()))
                         }))
                         .collect())
                     })

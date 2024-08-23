@@ -125,7 +125,7 @@ pub(crate) fn auto_gen(_command: CommandAutoGen) -> Result<()> {
         symbol: String,
     }
 
-    let mut stmt = conn.prepare("SELECT COUNT(*) AS count, symbol FROM symbols JOIN functions USING(game, address) WHERE symbol LIKE '% %' GROUP BY symbol HAVING count > 20")?;
+    let mut stmt = conn.prepare("SELECT COUNT(*) AS count, symbol FROM symbols JOIN functions USING(game, address) WHERE demangled LIKE '% %' GROUP BY symbol HAVING count > 20")?;
     let rows = stmt.query_map((), |row| {
         Ok(QueryResult {
             symbol: row.get(1)?,
@@ -499,25 +499,22 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
     #[derive(Debug)]
     enum Insert {
         Function((String, usize, Vec<u8>)),
-        Symbol((String, usize, String)),
+        Symbol {
+            game: String,
+            address: usize,
+            symbol: String,
+            demangled: String,
+        },
         Xref((String, usize, usize, usize)),
     }
 
     let mut conn = Connection::open("data.db")?;
 
-    let existing_games = {
-        let mut stmt = conn.prepare("SELECT DISTINCT game FROM functions")?;
-        #[warn(clippy::let_and_return)]
-        let result = stmt
-            .query_map((), |row| {
-                Ok(std::path::PathBuf::from(row.get::<_, String>(0)?))
-            })?
-            .collect::<rusqlite::Result<HashSet<_>>>()?;
-        result
-    };
-
     conn.pragma_update(None, "synchronous", "OFF")?;
-    conn.pragma_update(None, "journal_mode", "MEMORY")?;
+    conn.pragma_update(None, "journal_mode", "OFF")?;
+    conn.pragma_update(None, "cache_size", "1000000")?;
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
+    conn.pragma_update(None, "locking_mode", "EXCLUSIVE")?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS functions (
@@ -531,7 +528,8 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS symbols (
             game      TEXT NOT NULL,
             address   INTEGER NOT NULL,
-            symbol    TEXT NOT NULL
+            symbol    TEXT NOT NULL,
+            demangled TEXT NOT NULL
         )",
         (),
     )?;
@@ -547,18 +545,29 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
 
     let (tx, rx) = bounded::<Insert>(0);
 
+    let existing_games = {
+        let mut stmt = conn.prepare("SELECT DISTINCT game FROM functions")?;
+        #[warn(clippy::let_and_return)]
+        let result = stmt
+            .query_map((), |row| {
+                Ok(std::path::PathBuf::from(row.get::<_, String>(0)?))
+            })?
+            .collect::<rusqlite::Result<HashSet<_>>>()?;
+        result
+    };
+
     crossbeam::scope(|scope| -> Result<()> {
         scope.spawn(|_| -> Result<()> {
             let transction = conn.transaction()?;
             while let Ok(msg) = rx.recv() {
                 match msg {
-                    Insert::Symbol(i) => {
+                    Insert::Symbol{game, address, symbol, demangled} => {
                         let r = transction.execute(
-                            "INSERT INTO symbols (game, address, symbol) VALUES (?1, ?2, ?3)",
-                            (&i.0, i.1, &i.2),
+                            "INSERT INTO symbols (game, address, symbol, demangled) VALUES (?1, ?2, ?3, ?4)",
+                            (game, address, symbol, demangled),
                         );
                         if let Err(e) = r {
-                            panic!("{:?} {:?}", e, i);
+                            panic!("{:?}", e);
                         }
                     }
                     Insert::Function(i) => {
@@ -629,12 +638,13 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
                 pb.set_message(format!("inserting symbols for {}", name));
 
                 symbols.iter().progress_with(pb).try_for_each(
-                    |(address, name)| -> Result<()> {
-                        tx.send(Insert::Symbol((
-                            exe_path.to_string_lossy().to_string(),
-                            *address,
-                            name.to_string(),
-                        )))
+                    |(address, sym)| -> Result<()> {
+                        tx.send(Insert::Symbol{
+                            game: exe_path.to_string_lossy().to_string(),
+                            address: *address,
+                            symbol: sym.name.to_string(),
+                            demangled: sym.demangle(),
+                        })
                         .unwrap();
 
                         Ok(())
