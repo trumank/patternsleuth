@@ -102,7 +102,7 @@ mod macos {
 
     use crate::Image;
 
-    pub fn read_image_from_pid<'data>(pid: i32) -> Result<Image<'data>> {
+    pub fn read_image_from_pid<'data>(_pid: i32) -> Result<Image<'data>> {
         todo!()
     }
 }
