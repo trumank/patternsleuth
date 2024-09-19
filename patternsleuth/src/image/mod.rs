@@ -36,6 +36,7 @@ pub use _image_type_reflection as image_type_reflection;
 pub struct Image<'data> {
     pub base_address: usize,
     pub memory: Memory<'data>,
+    #[cfg(feature = "symbols")]
     pub symbols: Option<HashMap<usize, symbols::Symbol>>,
     pub imports: HashMap<String, HashMap<String, usize>>,
     pub image_type: ImageType,

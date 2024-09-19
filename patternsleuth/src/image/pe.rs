@@ -222,23 +222,18 @@ impl PEImage {
     /// Read and parse ELF object, using data from memory
     pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
         base_address: usize,
-        exe_path: Option<P>,
+        #[allow(unused_variables)] exe_path: Option<P>,
         cache_functions: bool,
         memory: Memory<'data>,
         object: object::File<'_>,
     ) -> Result<Image<'data>, anyhow::Error> {
-        #[allow(unused_variables)]
+        #[cfg(feature = "symbols")]
         let symbols = if let Some(exe_path) = exe_path {
-            #[cfg(not(feature = "symbols"))]
-            unreachable!();
-            #[cfg(feature = "symbols")]
-            {
-                let pdb_path = exe_path.as_ref().with_extension("pdb");
-                pdb_path
-                    .exists()
-                    .then(|| symbols::dump_pdb_symbols(pdb_path, base_address))
-                    .transpose()?
-            }
+            let pdb_path = exe_path.as_ref().with_extension("pdb");
+            pdb_path
+                .exists()
+                .then(|| symbols::dump_pdb_symbols(pdb_path, base_address))
+                .transpose()?
         } else {
             None
         };
@@ -296,6 +291,7 @@ impl PEImage {
         let mut new = Image {
             base_address,
             memory,
+            #[cfg(feature = "symbols")]
             symbols,
             imports: get_imports().unwrap_or_default(),
             image_type: ImageType::PEImage(PEImage {

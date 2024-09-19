@@ -1,8 +1,8 @@
 use std::{collections::HashMap, mem, ops::Range};
 
 use crate::{
-    symbols::Symbol, Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait,
-    NamedMemorySection, RuntimeFunction,
+    Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, NamedMemorySection,
+    RuntimeFunction,
 };
 
 use super::{Image, ImageType};
@@ -84,7 +84,7 @@ impl ElfImage {
     /// Read and parse ELF object, using data from memory
     pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
         base_address: usize,
-        exe_path: Option<P>,
+        #[allow(unused_variables)] exe_path: Option<P>,
         linked: bool,
         memory: Memory<'data>,
         object: ElfFile64<'data>,
@@ -216,30 +216,28 @@ impl ElfImage {
             Ok(result)
         }?;
 
-        #[allow(unused_variables)]
+        #[cfg(feature = "symbols")]
         let symbols = if let Some(exe_path) = exe_path {
-            #[cfg(not(feature = "symbols"))]
-            unreachable!();
-            #[cfg(feature = "symbols")]
-            {
-                let sym_path = exe_path.as_ref().with_extension("sym");
-                sym_path
-                    .exists()
-                    .then(|| -> Result<HashMap<_, _>> {
-                        let syms = uesym::dump_ue_symbols(sym_path, base_address)?;
-                        Ok((functions.iter().flat_map(|f| -> Option<(usize, Symbol)> {
+            let sym_path = exe_path.as_ref().with_extension("sym");
+            sym_path
+                .exists()
+                .then(|| -> Result<HashMap<_, _>> {
+                    let syms = uesym::dump_ue_symbols(sym_path, base_address)?;
+                    Ok((functions.iter().flat_map(
+                        |f| -> Option<(usize, crate::symbols::Symbol)> {
                             Some((f.start, syms.get(&f.start)?.clone()))
-                        }))
-                        .collect())
-                    })
-                    .transpose()?
-            }
+                        },
+                    ))
+                    .collect())
+                })
+                .transpose()?
         } else {
             None
         };
         Ok(Image {
             base_address,
             memory,
+            #[cfg(feature = "symbols")]
             symbols,
             imports: HashMap::default(),
             image_type: ImageType::ElfImage(ElfImage {
