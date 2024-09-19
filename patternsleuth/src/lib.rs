@@ -31,112 +31,16 @@ pub struct ResolveContext<'data, 'pattern> {
     pub scan: &'pattern Scan,
 }
 
-#[derive(Debug)]
-pub struct Resolution {
-    /// intermediate addresses of interest before reaching the final address
-    /// can be used for inspecting/debugging patterns (shown with the --disassemble flag)
-    pub stages: Vec<usize>,
-    /// final, fully resolved address
-    pub res: ResolutionType,
-}
-
-#[derive(Debug)]
-pub enum ResolutionAction {
-    /// Performing another scan
-    Continue(Scan),
-    /// Finish scan
-    Finish(ResolutionType),
-}
-impl From<ResolutionType> for ResolutionAction {
-    fn from(val: ResolutionType) -> Self {
-        ResolutionAction::Finish(val)
-    }
-}
-impl From<Option<usize>> for ResolutionAction {
-    fn from(opt_address: Option<usize>) -> Self {
-        match opt_address {
-            Some(addr) => ResolutionType::Address(addr),
-            None => ResolutionType::Failed,
-        }
-        .into()
-    }
-}
-impl From<usize> for ResolutionAction {
-    fn from(address: usize) -> Self {
-        ResolutionType::Address(address).into()
-    }
-}
-impl From<Option<String>> for ResolutionAction {
-    fn from(opt_string: Option<String>) -> Self {
-        match opt_string {
-            Some(string) => ResolutionType::String(string),
-            None => ResolutionType::Failed,
-        }
-        .into()
-    }
-}
-impl From<String> for ResolutionAction {
-    fn from(string: String) -> Self {
-        ResolutionType::String(string).into()
-    }
-}
-
 #[derive(Debug, Hash, Ord, PartialOrd, Eq, PartialEq)]
-pub enum ResolutionType {
-    /// address of resolved match
-    Address(usize),
-    /// string resolution (e.g. Unreal Engine version)
-    String(String),
-    /// report no data and just count successful matches
-    Count,
-    /// error during resolution or fails some criteria
-    Failed,
-}
-
-impl From<Option<usize>> for ResolutionType {
-    fn from(opt_address: Option<usize>) -> Self {
-        match opt_address {
-            Some(addr) => ResolutionType::Address(addr),
-            None => ResolutionType::Failed,
-        }
-    }
-}
-impl From<usize> for ResolutionType {
-    fn from(address: usize) -> Self {
-        ResolutionType::Address(address)
-    }
-}
-impl From<Option<String>> for ResolutionType {
-    fn from(opt_string: Option<String>) -> Self {
-        match opt_string {
-            Some(string) => ResolutionType::String(string),
-            None => ResolutionType::Failed,
-        }
-    }
-}
-impl From<String> for ResolutionType {
-    fn from(string: String) -> Self {
-        ResolutionType::String(string)
-    }
+pub struct Resolution {
+    pub address: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct Scan {
     pub section: Option<object::SectionKind>,
     pub scan_type: ScanType,
-    pub resolve: Resolve,
 }
-/*
-impl Scan {
-    pub fn resolve(&self, ctx: ResolveContext) -> Resolution {
-        let mut stages = ResolveStages(vec![]);
-        Resolution {
-            res: (self.resolve)(ctx, &mut stages),
-            stages: stages.0,
-        }
-    }
-}
-*/
 #[derive(Debug, Clone)]
 pub enum ScanType {
     Pattern(Pattern),
@@ -167,11 +71,6 @@ impl From<Xref> for ScanType {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ResolveStages(pub Vec<usize>);
-
-type Resolve = fn(ctx: ResolveContext, stages: &mut ResolveStages) -> ResolutionAction;
-
 #[derive(Debug)]
 pub struct PatternConfig<S> {
     pub sig: S,
@@ -184,7 +83,6 @@ impl<S> PatternConfig<S> {
         name: String,
         section: Option<object::SectionKind>,
         pattern: Pattern,
-        resolve: Resolve,
     ) -> Self {
         Self {
             sig,
@@ -192,24 +90,16 @@ impl<S> PatternConfig<S> {
             scan: Scan {
                 section,
                 scan_type: pattern.into(),
-                resolve,
             },
         }
     }
-    pub fn xref(
-        sig: S,
-        name: String,
-        section: Option<object::SectionKind>,
-        xref: Xref,
-        resolve: Resolve,
-    ) -> Self {
+    pub fn xref(sig: S, name: String, section: Option<object::SectionKind>, xref: Xref) -> Self {
         Self {
             sig,
             name,
             scan: Scan {
                 section,
                 scan_type: xref.into(),
-                resolve,
             },
         }
     }
@@ -224,17 +114,12 @@ impl<'a, S: std::fmt::Debug + PartialEq> ScanResult<'a, S> {
         let mut address = None;
         for (config, res) in &self.results {
             if config.sig == sig {
-                match res.res {
-                    ResolutionType::Address(addr) => {
-                        if let Some(existing) = address {
-                            if existing != addr {
-                                bail!("sig {sig:?} matched multiple addresses")
-                            }
-                        } else {
-                            address = Some(addr)
-                        }
+                if let Some(existing) = address {
+                    if existing != res.address {
+                        bail!("sig {sig:?} matched multiple addresses")
                     }
-                    _ => bail!("sig {sig:?} matched a non-address"),
+                } else {
+                    address = Some(res.address)
                 }
             }
         }

@@ -6,9 +6,7 @@ use std::{
 
 use anyhow::Result;
 use itertools::Itertools;
-use patternsleuth::{
-    image::Image, resolvers::resolve_self, scanner::Pattern, PatternConfig, ResolutionType,
-};
+use patternsleuth::{image::Image, scanner::Pattern, PatternConfig};
 use prettytable::{Cell, Row, Table};
 use rayon::prelude::*;
 use rusqlite::{Connection, OptionalExtension};
@@ -154,7 +152,6 @@ pub(crate) fn auto_gen(_command: CommandAutoGen) -> Result<()> {
                 "".into(),
                 None,
                 pattern.clone(),
-                resolve_self,
             ))
         }
     }
@@ -182,18 +179,7 @@ pub(crate) fn auto_gen(_command: CommandAutoGen) -> Result<()> {
         let folded_scans = scan
             .results
             .iter()
-            .map(|(config, m)| {
-                (
-                    &config.sig.1,
-                    (
-                        config.sig.0,
-                        match m.res {
-                            ResolutionType::Address(addr) => addr,
-                            _ => unreachable!(),
-                        },
-                    ),
-                )
-            })
+            .map(|(config, m)| (&config.sig.1, (config.sig.0, m.address)))
             .fold(
                 HashMap::new(),
                 |mut map: HashMap<_, HashMap<usize, Vec<_>>>, (k, (i, v))| {

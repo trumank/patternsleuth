@@ -16,11 +16,11 @@ use indicatif::ProgressBar;
 use itertools::Itertools;
 use patricia_tree::StringPatriciaMap;
 use patternsleuth::image::Image;
-use patternsleuth::resolvers::{resolve_self, resolvers, NamedResolver};
+use patternsleuth::resolvers::{resolvers, NamedResolver};
 
 use patternsleuth::scanner::Xref;
 use patternsleuth::symbols::Symbol;
-use patternsleuth::{scanner::Pattern, PatternConfig, Resolution, ResolutionType};
+use patternsleuth::{scanner::Pattern, PatternConfig, Resolution};
 
 #[derive(Parser)]
 enum Commands {
@@ -250,23 +250,9 @@ fn scan(command: CommandScan) -> Result<()> {
         .patterns
         .into_iter()
         .enumerate()
-        .map(|(i, p)| {
-            PatternConfig::new(
-                Sig("arg".to_string()),
-                format!("pattern {i}"),
-                None,
-                p,
-                resolve_self,
-            )
-        })
+        .map(|(i, p)| PatternConfig::new(Sig("arg".to_string()), format!("pattern {i}"), None, p))
         .chain(command.xref.into_iter().enumerate().map(|(i, p)| {
-            PatternConfig::xref(
-                Sig("arg".to_string()),
-                format!("xref {i}"),
-                None,
-                p,
-                resolve_self,
-            )
+            PatternConfig::xref(Sig("arg".to_string()), format!("xref {i}"), None, p)
         }))
         .chain(command.pattern_config.into_iter().flat_map(|path| {
             let file = std::fs::read_to_string(path).unwrap();
@@ -279,7 +265,6 @@ fn scan(command: CommandScan) -> Result<()> {
                         format!("#{i} {symbol}"),
                         None,
                         Pattern::new(p).unwrap(),
-                        resolve_self,
                     )
                 })
             })
@@ -404,46 +389,15 @@ fn scan(command: CommandScan) -> Result<()> {
                     table.set_format(*format::consts::FORMAT_NO_BORDER);
                     for m in sig_scans.iter() {
                         let mut cells = vec![];
-                        match &m.1.res {
-                            ResolutionType::Address(address) => {
-                                cells.push(Cell::new(&format!(
-                                    "{}\n{}",
-                                    m.0.name,
-                                    disassemble::disassemble(
-                                        &exe,
-                                        *address,
-                                        m.1.stages
-                                            .is_empty()
-                                            .then_some(m.0.scan.scan_type.get_pattern())
-                                            .flatten()
-                                    )
-                                )));
-                            }
-                            ResolutionType::String(string) => {
-                                cells.push(Cell::new(&format!("{:?}\n{:?}", m.0.name, string)));
-                            }
-                            ResolutionType::Count => {
-                                #[allow(clippy::unnecessary_to_owned)]
-                                cells.push(Cell::new(&format!("{}\ncount", m.0.name)));
-                            }
-                            ResolutionType::Failed => {
-                                #[allow(clippy::unnecessary_to_owned)]
-                                cells.push(Cell::new(&format!("{}\n{}", m.0.name, "failed".red())));
-                            }
-                        }
-                        for (i, stage) in m.1.stages.iter().enumerate().rev() {
-                            cells.push(Cell::new(&format!(
-                                "stage[{}]\n{}",
-                                i,
-                                disassemble::disassemble(
-                                    &exe,
-                                    *stage,
-                                    (i == 0)
-                                        .then_some(m.0.scan.scan_type.get_pattern())
-                                        .flatten()
-                                )
-                            )));
-                        }
+                        cells.push(Cell::new(&format!(
+                            "{}\n{}",
+                            m.0.name,
+                            disassemble::disassemble(
+                                &exe,
+                                m.1.address,
+                                m.0.scan.scan_type.get_pattern()
+                            )
+                        )));
                         table.add_row(Row::new(cells));
                     }
                     cells.push(Cell::new(&table.to_string()));
@@ -452,39 +406,31 @@ fn scan(command: CommandScan) -> Result<()> {
                         let cells = sig_scans
                             .iter()
                             .fold(
-                                HashMap::<&ResolutionType, HashMap<&str, usize>>::new(),
+                                HashMap::<&Resolution, HashMap<&str, usize>>::new(),
                                 |mut map, m| {
-                                    *map.entry(&m.1.res)
-                                        .or_default()
-                                        .entry(&m.0.name)
-                                        .or_default() += 1;
+                                    *map.entry(m.1).or_default().entry(&m.0.name).or_default() += 1;
                                     map
                                 },
                             )
                             .iter()
                             // sort by pattern name, then match address
                             .sorted_by_key(|&data| data.0)
-                            .map(|(m, counts)| match &m {
-                                ResolutionType::Address(address) => {
-                                    let dis = disassemble::disassemble(&exe, *address, None);
+                            .map(|(m, counts)| {
+                                let dis = disassemble::disassemble(&exe, m.address, None);
 
-                                    let mut lines = vec![];
-                                    for (name, count) in counts.iter().sorted_by_key(|e| e.0) {
-                                        let count = if *count > 1 {
-                                            format!(" (x{count})")
-                                        } else {
-                                            "".to_string()
-                                        };
+                                let mut lines = vec![];
+                                for (name, count) in counts.iter().sorted_by_key(|e| e.0) {
+                                    let count = if *count > 1 {
+                                        format!(" (x{count})")
+                                    } else {
+                                        "".to_string()
+                                    };
 
-                                        lines.push(
-                                            format!("{:?}{}", name, count).normal().to_string(),
-                                        );
-                                    }
-                                    lines.push(dis);
-
-                                    Cell::new(&join(lines, "\n"))
+                                    lines.push(format!("{:?}{}", name, count).normal().to_string());
                                 }
-                                _ => todo!(),
+                                lines.push(dis);
+
+                                Cell::new(&join(lines, "\n"))
                             })
                             .collect::<Vec<_>>();
 
@@ -501,9 +447,9 @@ fn scan(command: CommandScan) -> Result<()> {
                             .iter()
                             // group and count matches by (pattern name, address)
                             .fold(
-                                HashMap::<(&String, &ResolutionType), usize>::new(),
+                                HashMap::<(&String, &Resolution), usize>::new(),
                                 |mut map, m| {
-                                    *map.entry((&m.0.name, &m.1.res)).or_default() += 1;
+                                    *map.entry((&m.0.name, m.1)).or_default() += 1;
                                     map
                                 },
                             )
@@ -518,31 +464,14 @@ fn scan(command: CommandScan) -> Result<()> {
                                     "".to_string()
                                 };
 
-                                match &m.1 {
-                                    ResolutionType::Address(address) => (
-                                        format!("{:016x} {:?}{}", address, m.0, count)
-                                            .normal()
-                                            .to_string(),
-                                        exe.symbols
-                                            .as_ref()
-                                            .and_then(|symbols| symbols.get(address)),
-                                    ),
-                                    ResolutionType::String(string) => (
-                                        format!("{:?} {:?}{}", string, m.0, count)
-                                            .normal()
-                                            .to_string(),
-                                        None,
-                                    ),
-
-                                    ResolutionType::Count => (
-                                        format!("count {:?}{}", m.0, count).normal().to_string(),
-                                        None,
-                                    ),
-                                    ResolutionType::Failed => (
-                                        format!("failed {:?}{}", m.0, count).red().to_string(),
-                                        None,
-                                    ),
-                                }
+                                (
+                                    format!("{:016x} {:?}{}", m.1.address, m.0, count)
+                                        .normal()
+                                        .to_string(),
+                                    exe.symbols
+                                        .as_ref()
+                                        .and_then(|symbols| symbols.get(&m.1.address)),
+                                )
                             })
                             .collect::<Vec<_>>();
                         let max_len = lines.iter().map(|(line, _)| line.len()).max();
@@ -613,15 +542,13 @@ fn scan(command: CommandScan) -> Result<()> {
         #[derive(Debug, Default)]
         struct Summary {
             matches: usize,
-            resolved: usize,
-            failed: usize,
         }
         impl Summary {
             fn format(&self) -> String {
-                if self.matches == 0 && self.failed == 0 && self.resolved == 0 {
+                if self.matches == 0 {
                     "none".to_owned()
                 } else {
-                    format!("M={} R={} F={}", self.matches, self.resolved, self.failed)
+                    format!("M={}", self.matches)
                 }
             }
         }
@@ -654,27 +581,11 @@ fn scan(command: CommandScan) -> Result<()> {
                     let res = all.get(&(game.to_string(), (&conf.sig, &conf.name)));
                     if let Some(res) = res {
                         for res in res {
-                            if let ResolutionType::Address(addr) = res.res {
-                                matched_addresses.insert(addr);
-                            }
+                            matched_addresses.insert(res.address);
                         }
-                        Summary {
-                            matches: res.len(),
-                            resolved: res
-                                .iter()
-                                .filter(|res| !matches!(res.res, ResolutionType::Failed))
-                                .count(),
-                            failed: res
-                                .iter()
-                                .filter(|res| matches!(res.res, ResolutionType::Failed))
-                                .count(),
-                        }
+                        Summary { matches: res.len() }
                     } else {
-                        Summary {
-                            matches: 0,
-                            resolved: 0,
-                            failed: 0,
-                        }
+                        Summary { matches: 0 }
                     }
                 })
                 .collect();
@@ -682,12 +593,6 @@ fn scan(command: CommandScan) -> Result<()> {
             for (i, s) in summaries.iter().enumerate() {
                 if s.matches > 0 {
                     totals[i].matches += 1;
-                }
-                if s.resolved > 0 {
-                    totals[i].resolved += 1;
-                }
-                if s.failed > 0 {
-                    totals[i].failed += 1;
                 }
             }
 

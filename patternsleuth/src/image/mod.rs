@@ -87,96 +87,64 @@ impl<'data> Image<'data> {
 
         struct PendingScan {
             original_config_index: usize,
-            stages: ResolveStages,
             scan: Scan,
         }
 
-        let mut scan_queue = pattern_configs
+        let scan_queue = pattern_configs
             .iter()
             .enumerate()
             .map(|(index, config)| PendingScan {
                 original_config_index: index,
-                stages: ResolveStages(vec![]),
                 scan: config.scan.clone(), // TODO clone isn't ideal but makes handling multi-stage scans a lot easier
             })
             .collect::<Vec<_>>();
 
-        while !scan_queue.is_empty() {
-            let mut new_queue = vec![];
-            for section in self.memory.sections() {
-                let base_address = section.address();
-                let section_name = section.name();
-                let data = section.data();
+        for section in self.memory.sections() {
+            let base_address = section.address();
+            let data = section.data();
 
-                let (pattern_scans, patterns): (Vec<_>, Vec<_>) = scan_queue
-                    .iter()
-                    .filter_map(|scan| {
-                        scan.scan
-                            .section
-                            .map(|s| s == section.kind())
-                            .unwrap_or(true)
-                            .then(|| {
-                                scan.scan
-                                    .scan_type
-                                    .get_pattern()
-                                    .map(|pattern| (scan, pattern))
-                            })
-                            .flatten()
-                    })
-                    .unzip();
+            let (pattern_scans, patterns): (Vec<_>, Vec<_>) = scan_queue
+                .iter()
+                .filter_map(|scan| {
+                    scan.scan
+                        .section
+                        .map(|s| s == section.kind())
+                        .unwrap_or(true)
+                        .then(|| {
+                            scan.scan
+                                .scan_type
+                                .get_pattern()
+                                .map(|pattern| (scan, pattern))
+                        })
+                        .flatten()
+                })
+                .unzip();
 
-                let (xref_scans, xrefs): (Vec<_>, Vec<_>) = scan_queue
-                    .iter()
-                    .filter_map(|scan| {
-                        scan.scan
-                            .section
-                            .map(|s| s == section.kind())
-                            .unwrap_or(true)
-                            .then(|| scan.scan.scan_type.get_xref().map(|xref| (scan, xref)))
-                            .flatten()
-                    })
-                    .unzip();
+            let (xref_scans, xrefs): (Vec<_>, Vec<_>) = scan_queue
+                .iter()
+                .filter_map(|scan| {
+                    scan.scan
+                        .section
+                        .map(|s| s == section.kind())
+                        .unwrap_or(true)
+                        .then(|| scan.scan.scan_type.get_xref().map(|xref| (scan, xref)))
+                        .flatten()
+                })
+                .unzip();
 
-                let scan_results = scanner::scan_pattern(&patterns, base_address, data)
-                    .into_iter()
-                    .chain(scanner::scan_xref(&xrefs, base_address, data))
-                    .zip(pattern_scans.iter().chain(xref_scans.iter()));
+            let scan_results = scanner::scan_pattern(&patterns, base_address, data)
+                .into_iter()
+                .chain(scanner::scan_xref(&xrefs, base_address, data))
+                .zip(pattern_scans.iter().chain(xref_scans.iter()));
 
-                for (addresses, scan) in scan_results {
-                    for address in addresses {
-                        let mut stages = scan.stages.clone();
-                        let action = (scan.scan.resolve)(
-                            ResolveContext {
-                                exe: self,
-                                memory: &self.memory,
-                                section: section_name.to_owned(),
-                                match_address: address,
-                                scan: &scan.scan,
-                            },
-                            &mut stages,
-                        );
-                        match action {
-                            ResolutionAction::Continue(new_scan) => {
-                                new_queue.push(PendingScan {
-                                    original_config_index: scan.original_config_index,
-                                    stages,
-                                    scan: new_scan,
-                                });
-                            }
-                            ResolutionAction::Finish(res) => {
-                                results.push((
-                                    &pattern_configs[scan.original_config_index],
-                                    Resolution {
-                                        stages: stages.0,
-                                        res,
-                                    },
-                                ));
-                            }
-                        }
-                    }
+            for (addresses, scan) in scan_results {
+                for address in addresses {
+                    results.push((
+                        &pattern_configs[scan.original_config_index],
+                        Resolution { address },
+                    ));
                 }
             }
-            scan_queue = new_queue;
         }
 
         Ok(ScanResult { results })
