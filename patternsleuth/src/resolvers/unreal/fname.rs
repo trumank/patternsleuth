@@ -314,7 +314,7 @@ impl_resolver_singleton!(all, FNameToStringVoid, |ctx| async {
         "E8 | ?? ?? ?? ?? ?? 01 00 00 00 ?? 39 ?? 48 0F 8E",
         "E8 | ?? ?? ?? ?? BD 01 00 00 00 41 39 6E ?? 0F 8E",
         "E8 | ?? ?? ?? ?? 48 8B 4C 24 ?? 8B FD 48 85 C9",
-        "E8 | ?? ?? ?? ?? 33 D2 48 8B C8 48 8B D8 E8 ?? ?? ?? ?? 48 8B 2B" // UE5.4
+        "E8 | ?? ?? ?? ?? 4C 8B C0 4C 8D 4F ?? 49 8B D5" // UE5.4
     ];
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
@@ -335,7 +335,10 @@ impl_resolver_singleton!(all, FNameToStringVoid, |ctx| async {
 pub struct FNameToStringFString(pub usize);
 impl_resolver_singleton!(all, FNameToStringFString, |ctx| async {
     let patterns =
-        ["48 8b 48 ?? 48 89 4c 24 ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00 48 8d"];
+        [
+            "48 0F 45 5C 24 ?? 48 8D 4C 24 ?? E8 | ?? ?? ?? ?? 83 7C 24 ?? ?? 48 8D 15", // UE5.4
+            "48 8b 48 ?? 48 89 4c 24 ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00 48 8d"
+        ];
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
