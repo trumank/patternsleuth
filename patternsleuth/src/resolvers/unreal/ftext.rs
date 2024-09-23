@@ -37,6 +37,8 @@ impl_resolver_singleton!(all, FTextFString, |ctx| async {
         (Directness::Indirect, "48 85 c9 74 13 f0 83 41 08 01 eb 0c 48 89 df e8 | ?? ?? ?? ?? 48 8d 43 10"),
         // FText::FText signature
         (Directness::Direct, "41 57 41 56 53 48 83 ec 20 49 89 f7 49 89 fe 0f 57 c0 0f 29 44 24 10 0f 29 04 24 48 8d 5c 24 10 48 89 e7 e8 ?? ?? ?? ?? 48 89 df e8 ?? ?? ?? ?? bf 60 00 00 00 e8"),
+        // UE 5.4
+        (Directness::Direct, "48 89 5C 24 ?? 48 89 74 24 ?? 57 48 83 EC ?? 48 8D 05 ?? ?? ?? ?? 33 F6 48 8B D9 48 89 44 24"),
     ];
 
     let res = join_all(
