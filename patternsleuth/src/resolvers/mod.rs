@@ -121,7 +121,7 @@ type Resolver<'ctx, T> = BoxFuture<'ctx, Result<T>>;
 pub trait Resolution: std::fmt::Debug + std::any::Any + Send + Sync + Singleton + DynEq {}
 
 /// Allow comparison of dyn Resolution
-/// https://users.rust-lang.org/t/how-to-compare-two-trait-objects-for-equality/88063/3
+/// <https://users.rust-lang.org/t/how-to-compare-two-trait-objects-for-equality/88063/3>
 pub trait DynEq: Any + DynEqHelper {
     fn as_any(&self) -> &dyn Any;
     fn as_dyn_eq_helper(&self) -> &dyn DynEqHelper;
