@@ -563,12 +563,14 @@ pub fn scan_xref(patterns: &[&Xref], base_address: usize, data: &[u8]) -> Vec<Ve
                             let addr = base_address + j;
                             {
                                 // walk backwards until unequal
-                                let mut i = i - 1;
-                                while let Some(prev) = patterns.get(i) {
+                                let mut i = i;
+                                while let Some(prev) =
+                                    (i > 0).then(|| patterns.get(i - 1)).flatten()
+                                {
                                     if prev.0 != address {
                                         break;
                                     }
-                                    matches.push((i, addr));
+                                    matches.push((i - 1, addr));
                                     i -= 1;
                                 }
                             }
