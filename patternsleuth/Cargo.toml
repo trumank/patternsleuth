@@ -39,7 +39,6 @@ windows = { workspace = true, optional = true, features = [
 
 [features]
 default = []
-patterns = []
 serde-resolvers = ["dep:serde", "dep:typetag"]
 symbols = ["dep:pdb", "dep:msvc-demangler"]
 process-external = ["image-pe", "dep:libc", "dep:windows"]
