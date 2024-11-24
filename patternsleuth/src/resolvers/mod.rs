@@ -482,8 +482,8 @@ impl<'data> AsyncContext<'data> {
         let PatternMatches { pattern, matches } = rx.await.unwrap();
         (tag, pattern, matches)
     }
-    pub async fn resolve<'ctx, T: Send + Sync + 'static>(
-        &'ctx self,
+    pub async fn resolve<T: Send + Sync + 'static>(
+        &self,
         resolver: &ResolverFactory<T>,
     ) -> Result<Arc<T>> {
         let t = TypeId::of::<T>();

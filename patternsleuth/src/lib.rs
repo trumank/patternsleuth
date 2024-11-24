@@ -109,7 +109,7 @@ impl<S> PatternConfig<S> {
 pub struct ScanResult<'a, S> {
     pub results: Vec<(&'a PatternConfig<S>, Resolution)>,
 }
-impl<'a, S: std::fmt::Debug + PartialEq> ScanResult<'a, S> {
+impl<S: std::fmt::Debug + PartialEq> ScanResult<'_, S> {
     pub fn get_unique_sig_address(&self, sig: S) -> Result<usize> {
         let mut address = None;
         for (config, res) in &self.results {
@@ -477,7 +477,7 @@ impl<'data> Memory<'data> {
         })
     }
 }
-impl<'data> Index<usize> for Memory<'data> {
+impl Index<usize> for Memory<'_> {
     type Output = u8;
     fn index(&self, index: usize) -> &Self::Output {
         self.sections
@@ -486,7 +486,7 @@ impl<'data> Index<usize> for Memory<'data> {
             .unwrap()
     }
 }
-impl<'data> Index<Range<usize>> for Memory<'data> {
+impl Index<Range<usize>> for Memory<'_> {
     type Output = [u8];
     fn index(&self, index: Range<usize>) -> &Self::Output {
         self.sections
@@ -618,7 +618,7 @@ pub mod disassemble {
             instruction: Default::default(),
         };
 
-        impl<'img, 'mem> Ctx<'img, 'mem> {
+        impl Ctx<'_, '_> {
             #[allow(unused)]
             fn print(&self) {
                 let mut formatter = NasmFormatter::new();
