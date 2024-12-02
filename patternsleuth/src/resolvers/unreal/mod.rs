@@ -5,6 +5,7 @@ pub mod fname;
 pub mod ftext;
 pub mod fuobject_hash_tables;
 pub mod game_loop;
+pub mod gengine;
 pub mod gmalloc;
 pub mod guobject_array;
 pub mod kismet;
