@@ -6,7 +6,7 @@ use patternsleuth_scanner::Pattern;
 
 use crate::{
     resolvers::{impl_resolver_singleton, try_ensure_one, Result},
-    MemoryAccessorTrait,
+    MemoryTrait,
 };
 
 /// public: static class FUObjectHashTables & __cdecl FUObjectHashTables::Get(void)

@@ -208,10 +208,7 @@ pub trait MemoryTrait<'data> {
     /// Return slice of u8 from end of `range` to start of block (not useful because start of block
     /// is unknown to caller)
     fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryAccessError>;
-}
 
-/// Memory accessor helpers
-pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
     /// Return i16 at `address`
     fn i16_le(&self, address: usize) -> Result<i16, MemoryAccessError> {
         Ok(i16::from_le_bytes(
@@ -287,8 +284,6 @@ pub trait MemoryAccessorTrait<'data>: MemoryTrait<'data> {
         Ok(String::from_utf16(data)?)
     }
 }
-
-impl<'data, T: MemoryTrait<'data>> MemoryAccessorTrait<'data> for T {}
 
 impl<'data, T: MemoryBlockTrait<'data>> MemoryTrait<'data> for T {
     fn index(&self, address: usize) -> Result<u8, MemoryAccessError> {

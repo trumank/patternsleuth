@@ -29,7 +29,7 @@ use crate::{
     resolvers::{
         bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, Result,
     },
-    Addressable, Image, Matchable, MemoryAccessorTrait,
+    Addressable, Image, Matchable, MemoryTrait,
 };
 
 #[allow(unused)]

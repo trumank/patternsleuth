@@ -6,7 +6,7 @@ use patternsleuth_scanner::Pattern;
 
 use crate::{
     resolvers::{impl_resolver_singleton, try_ensure_one},
-    MemoryAccessorTrait,
+    MemoryTrait,
 };
 
 /// private: __cdecl FText::FText(class FString &&)

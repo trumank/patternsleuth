@@ -7,7 +7,7 @@ use itertools::Itertools;
 use super::{Image, ImageType};
 #[cfg(feature = "symbols")]
 use crate::symbols;
-use crate::{Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, RuntimeFunction};
+use crate::{Memory, MemoryAccessError, MemoryTrait, RuntimeFunction};
 use object::Object;
 
 pub struct PEImage {

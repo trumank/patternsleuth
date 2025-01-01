@@ -1,9 +1,6 @@
 use std::{collections::HashMap, mem, ops::Range};
 
-use crate::{
-    Memory, MemoryAccessError, MemoryAccessorTrait, MemoryTrait, NamedMemorySection,
-    RuntimeFunction,
-};
+use crate::{Memory, MemoryAccessError, MemoryTrait, NamedMemorySection, RuntimeFunction};
 
 use super::{Image, ImageType};
 use gimli::{BaseAddresses, CieOrFde, EhFrame, EhFrameHdr, NativeEndian, UnwindSection};
