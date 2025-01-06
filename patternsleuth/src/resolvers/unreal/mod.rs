@@ -303,7 +303,7 @@ impl_resolver!(all, KismetSystemLibrary, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct ConsoleManagerSingleton(usize);
+pub struct ConsoleManagerSingleton(pub usize);
 
 impl_resolver_singleton!(all, ConsoleManagerSingleton, |ctx| async {
     let strings = join_all([
