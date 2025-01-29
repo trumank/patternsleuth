@@ -33,28 +33,28 @@ use crate::{
 };
 
 #[allow(unused)]
-mod util {
+pub mod util {
     use crate::resolvers::AsyncContext;
 
     use super::*;
 
     #[derive(Debug, Clone, Copy)]
-    pub(crate) struct Call {
-        pub(crate) index: usize,
-        pub(crate) ip: usize,
-        pub(crate) callee: usize,
+    pub struct Call {
+        pub index: usize,
+        pub ip: usize,
+        pub callee: usize,
     }
 
-    pub(crate) fn utf16(string: &str) -> Vec<u8> {
+    pub fn utf16(string: &str) -> Vec<u8> {
         string.encode_utf16().flat_map(u16::to_le_bytes).collect()
     }
-    pub(crate) fn utf8_pattern(string: &str) -> Pattern {
+    pub fn utf8_pattern(string: &str) -> Pattern {
         Pattern::from_bytes(string.as_bytes().to_vec()).unwrap()
     }
-    pub(crate) fn utf16_pattern(string: &str) -> Pattern {
+    pub fn utf16_pattern(string: &str) -> Pattern {
         Pattern::from_bytes(utf16(string)).unwrap()
     }
-    pub(crate) async fn scan_xrefs(
+    pub async fn scan_xrefs(
         ctx: &AsyncContext<'_>,
         addresses: impl IntoIterator<Item = &usize> + Copy,
     ) -> Vec<usize> {
@@ -95,7 +95,7 @@ mod util {
         refs.into_iter().flatten().collect()
     }
 
-    pub(crate) async fn scan_xcalls(
+    pub async fn scan_xcalls(
         ctx: &AsyncContext<'_>,
         addresses: impl IntoIterator<Item = &usize> + Copy,
     ) -> Vec<usize> {
@@ -124,7 +124,7 @@ mod util {
         refs.into_iter().flatten().collect()
     }
 
-    pub(crate) fn root_functions<'a, I>(ctx: &AsyncContext<'_>, addresses: I) -> Result<Vec<usize>>
+    pub fn root_functions<'a, I>(ctx: &AsyncContext<'_>, addresses: I) -> Result<Vec<usize>>
     where
         I: IntoIterator<Item = &'a usize> + Copy,
     {
@@ -137,7 +137,7 @@ mod util {
             .collect())
     }
 
-    pub(crate) fn find_calls(img: &Image<'_>, f: usize) -> Result<Vec<Call>> {
+    pub fn find_calls(img: &Image<'_>, f: usize) -> Result<Vec<Call>> {
         let mut calls = vec![];
 
         disassemble(img, f, |inst| {
@@ -172,7 +172,7 @@ mod util {
         Ok(calls)
     }
 
-    pub(crate) fn find_path(
+    pub fn find_path(
         img: &Image<'_>,
         f: usize,
         depth: usize,
