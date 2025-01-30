@@ -15,12 +15,13 @@ use clap::Parser;
 use indicatif::ProgressBar;
 use itertools::Itertools;
 use patricia_tree::StringPatriciaMap;
-use patternsleuth::image::Image;
-use patternsleuth::resolvers::{resolvers, NamedResolver};
+use patternsleuth_image::image::Image;
+use patternsleuth_image::{PatternConfig, Resolution};
+use patternsleuth_resolvers::{resolve_many, resolvers, NamedResolver};
 
-use patternsleuth::scanner::Xref;
-use patternsleuth::symbols::Symbol;
-use patternsleuth::{scanner::Pattern, PatternConfig, Resolution};
+use patternsleuth_image::symbols::Symbol;
+use patternsleuth_scanner::Pattern;
+use patternsleuth_scanner::Xref;
 
 #[derive(Parser)]
 enum Commands {
@@ -357,7 +358,7 @@ fn scan(command: CommandScan) -> Result<()> {
 
                 (
                     Cow::Owned(format!("PID={pid}")),
-                    patternsleuth::process::external::read_image_from_pid(*pid)?,
+                    patternsleuth_image::process::external::read_image_from_pid(*pid)?,
                 )
             }
         };
@@ -501,7 +502,7 @@ fn scan(command: CommandScan) -> Result<()> {
         };
 
         let resolution = tracing::info_span!("scan", game = game_name)
-            .in_scope(|| exe.resolve_many(&dyn_resolvers));
+            .in_scope(|| resolve_many(&exe, &dyn_resolvers));
 
         for (resolver, resolution) in resolvers.iter().zip(&resolution) {
             table.add_row(Row::new(
@@ -694,7 +695,7 @@ fn report(command: CommandReport) -> Result<()> {
             }
         };
 
-        let resolution = exe.resolve_many(&resolvers);
+        let resolution = resolve_many(&exe, &resolvers);
 
         let map = command
             .resolver
@@ -734,7 +735,7 @@ fn report(command: CommandReport) -> Result<()> {
 }
 fn diff_report(command: CommandDiffReport) -> Result<()> {
     use colored::Colorize;
-    use patternsleuth::resolvers::{Resolution, ResolveError};
+    use patternsleuth_resolvers::{Resolution, ResolveError};
     use prettytable::{Cell, Row, Table};
     type Report = BTreeMap<String, BTreeMap<String, Result<Box<dyn Resolution>, ResolveError>>>;
 

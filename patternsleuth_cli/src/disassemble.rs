@@ -4,7 +4,7 @@ use colored::{ColoredString, Colorize};
 use iced_x86::{
     Decoder, DecoderOptions, Formatter, FormatterOutput, FormatterTextKind, IntelFormatter, OpKind,
 };
-use patternsleuth::{image::Image, scanner::Pattern, MemoryTrait};
+use patternsleuth_image::{image::Image, scanner::Pattern, MemoryTrait};
 
 #[derive(Default)]
 struct Output {

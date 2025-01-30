@@ -6,7 +6,8 @@ use std::{
 
 use anyhow::Result;
 use itertools::Itertools;
-use patternsleuth::{image::Image, scanner::Pattern, PatternConfig};
+use patternsleuth_image::{image::Image, scanner::Pattern, PatternConfig};
+use patternsleuth_resolvers::resolve_many;
 use prettytable::{Cell, Row, Table};
 use rayon::prelude::*;
 use rusqlite::{Connection, OptionalExtension};
@@ -297,11 +298,11 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
 
             games.insert(name.to_string());
 
-            let resolution = exe.resolve_many(&resolvers);
+            let resolution = resolve_many(&exe, &resolvers);
             println!("{resolution:#x?}");
             for res in resolution.into_iter().flatten() {
                 let start = res.get().unwrap();
-                let bounds = patternsleuth::disassemble::function_range(&exe, start)?;
+                let bounds = patternsleuth_resolvers::disassemble::function_range(&exe, start)?;
                 functions.push(Function {
                     game: exe_path.to_string_lossy().to_string(),
                     address: start,
