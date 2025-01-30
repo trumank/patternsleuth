@@ -9,21 +9,12 @@ edition.workspace = true
 [dependencies]
 patternsleuth_scanner = { path = "../patternsleuth_scanner" }
 anyhow = { workspace = true }
-memchr = { workspace = true }
 object = { workspace = true }
-rayon = { workspace = true }
-strum = { workspace = true }
 pdb = { workspace = true, optional = true }
 msvc-demangler = { workspace = true, optional = true}
-iced-x86.workspace = true
-futures = "0.3.30"
-futures-scopes = "0.2.0"
-inventory = "0.3.14"
 itertools.workspace = true
 serde = { workspace = true, optional = true, features = ["derive"] }
-typetag = { version = "0.2.15", optional = true }
 gimli = { version = "0.28.1", optional = true }
-tracing = "0.1.40"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { version = "0.2.152", optional = true }
@@ -39,7 +30,7 @@ windows = { workspace = true, optional = true, features = [
 
 [features]
 default = []
-serde-resolvers = ["dep:serde", "dep:typetag"]
+serde-resolvers = ["dep:serde"]
 symbols = ["dep:pdb", "dep:msvc-demangler"]
 process-external = ["image-pe", "dep:libc", "dep:windows"]
 process-internal = ["dep:libc", "dep:windows"]

@@ -5,8 +5,8 @@ use futures::{future::join_all, try_join};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    {ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
     MemoryTrait,
+    {ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
 };
 
 #[derive(Debug, PartialEq)]

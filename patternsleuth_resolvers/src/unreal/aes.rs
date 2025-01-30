@@ -5,8 +5,7 @@ use futures::future::join_all;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    {impl_resolver, Result},
-    MemoryTrait,
+    MemoryTrait, {impl_resolver, Result},
 };
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]

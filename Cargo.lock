@@ -2660,23 +2660,14 @@ name = "patternsleuth_image"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "futures",
- "futures-scopes",
  "gimli",
- "iced-x86",
- "inventory",
  "itertools 0.12.0",
  "libc",
- "memchr",
  "msvc-demangler",
  "object",
  "patternsleuth_scanner",
  "pdb",
- "rayon",
  "serde",
- "strum",
- "tracing",
- "typetag",
  "windows 0.52.0",
 ]
 
@@ -2684,22 +2675,14 @@ dependencies = [
 name = "patternsleuth_resolvers"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "futures",
  "futures-scopes",
- "gimli",
  "iced-x86",
  "inventory",
  "itertools 0.12.0",
- "memchr",
- "msvc-demangler",
- "object",
  "patternsleuth_image",
  "patternsleuth_scanner",
- "pdb",
- "rayon",
  "serde",
- "strum",
  "tracing",
  "typetag",
 ]

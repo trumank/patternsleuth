@@ -8,13 +8,7 @@ edition.workspace = true
 
 [dependencies]
 patternsleuth_scanner = { path = "../patternsleuth_scanner" }
-anyhow = { workspace = true }
-memchr = { workspace = true }
-object = { workspace = true }
-rayon = { workspace = true }
-strum = { workspace = true }
-pdb = { workspace = true, optional = true }
-msvc-demangler = { workspace = true, optional = true}
+patternsleuth_image = { path = "../patternsleuth_image" }
 iced-x86.workspace = true
 futures = "0.3.30"
 futures-scopes = "0.2.0"
@@ -22,9 +16,7 @@ inventory = "0.3.14"
 itertools.workspace = true
 serde = { workspace = true, optional = true, features = ["derive"] }
 typetag = { version = "0.2.15", optional = true }
-gimli = { version = "0.28.1", optional = true }
 tracing = "0.1.40"
-patternsleuth_image = { version = "0.1.0", path = "../patternsleuth_image" }
 
 [features]
 default = ["image-pe", "image-elf"]

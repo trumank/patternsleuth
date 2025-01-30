@@ -5,8 +5,7 @@ use futures::future::join_all;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    {impl_resolver_singleton, try_ensure_one},
-    MemoryTrait,
+    MemoryTrait, {impl_resolver_singleton, try_ensure_one},
 };
 
 /// private: __cdecl FText::FText(class FString &&)

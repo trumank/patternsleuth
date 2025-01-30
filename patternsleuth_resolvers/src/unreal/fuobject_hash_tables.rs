@@ -5,8 +5,7 @@ use futures::future::join_all;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    {impl_resolver_singleton, try_ensure_one, Result},
-    MemoryTrait,
+    MemoryTrait, {impl_resolver_singleton, try_ensure_one, Result},
 };
 
 /// public: static class FUObjectHashTables & __cdecl FUObjectHashTables::Get(void)

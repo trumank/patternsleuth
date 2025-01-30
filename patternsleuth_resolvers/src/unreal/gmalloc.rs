@@ -7,8 +7,8 @@ use patternsleuth_scanner::Pattern;
 
 use crate::{
     disassemble::{disassemble, Control},
-    {impl_resolver_singleton, try_ensure_one, unreal::util, Result},
     MemoryTrait,
+    {impl_resolver_singleton, try_ensure_one, unreal::util, Result},
 };
 
 #[derive(Debug, PartialEq)]
