@@ -26,23 +26,8 @@ gimli = { version = "0.28.1", optional = true }
 tracing = "0.1.40"
 patternsleuth_image = { version = "0.1.0", path = "../patternsleuth_image" }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-libc = { version = "0.2.152", optional = true }
-
-[target.'cfg(windows)'.dependencies]
-windows = { workspace = true, optional = true, features = [
-  "Win32_Foundation",
-  "Win32_System_LibraryLoader",
-  "Win32_System_ProcessStatus",
-  "Win32_System_Threading",
-  "Win32_System_Diagnostics_Debug",
-] }
-
 [features]
-default = []
-serde-resolvers = ["dep:serde", "dep:typetag"]
-symbols = ["dep:pdb", "dep:msvc-demangler"]
-process-external = ["image-pe", "dep:libc", "dep:windows"]
-process-internal = ["dep:libc", "dep:windows"]
-image-pe = []
-image-elf = ["dep:gimli"]
+default = ["image-pe", "image-elf"]
+serde-resolvers = ["dep:serde", "dep:typetag", "patternsleuth_image/serde-resolvers"]
+image-pe = ["patternsleuth_image/image-pe"]
+image-elf = ["patternsleuth_image/image-elf"]

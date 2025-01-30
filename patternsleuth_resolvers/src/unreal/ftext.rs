@@ -5,7 +5,7 @@ use futures::future::join_all;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{impl_resolver_singleton, try_ensure_one},
+    {impl_resolver_singleton, try_ensure_one},
     MemoryTrait,
 };
 

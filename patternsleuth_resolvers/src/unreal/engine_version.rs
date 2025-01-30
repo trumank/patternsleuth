@@ -3,11 +3,11 @@ use std::fmt::{Debug, Display};
 use futures::future::join_all;
 
 use itertools::Itertools;
+use patternsleuth_image::{Addressable as _, Matchable as _};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{bail_out, impl_resolver, try_ensure_one},
-    MemoryTrait,
+    MemoryTrait, {bail_out, impl_resolver, try_ensure_one},
 };
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -86,7 +86,7 @@ pub struct EngineVersionStrings {
 impl_resolver!(collect, EngineVersionStrings);
 // "++UE5+Release-{}.{}"
 impl_resolver!(ElfImage, EngineVersionStrings, |ctx| async {
-    use crate::resolvers::{ensure_one, unreal::util};
+    use crate::{ensure_one, unreal::util};
 
     let pattern_name = util::utf16_pattern("++UE5+Release-");
     let name_scan = ctx.scan(pattern_name).await;
@@ -137,7 +137,7 @@ impl_resolver!(ElfImage, EngineVersionStrings, |ctx| async {
 });
 
 impl_resolver!(PEImage, EngineVersionStrings, |ctx| async {
-    use crate::{Addressable, Matchable, MemoryTrait};
+    use crate::MemoryTrait;
     use std::collections::HashSet;
 
     let patterns = [

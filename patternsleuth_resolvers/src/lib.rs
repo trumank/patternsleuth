@@ -1,6 +1,10 @@
+pub mod disassemble;
 pub mod unreal;
 
-use crate::{Image, MemoryAccessError};
+use image::Image;
+use patternsleuth_image::image;
+use patternsleuth_image::{MemoryAccessError, MemoryTrait};
+
 use futures::{
     channel::oneshot,
     executor::LocalPool,
@@ -84,7 +88,7 @@ impl From<MemoryAccessError> for ResolveError {
 #[macro_export]
 macro_rules! _bail_out {
     ($msg:expr) => {
-        return Err($crate::resolvers::ResolveError::Msg($msg.into()));
+        return Err($crate::ResolveError::Msg($msg.into()));
     };
 }
 pub use _bail_out as bail_out;
@@ -189,7 +193,7 @@ macro_rules! _matcharm_generator {
             let img = &$ctx.image().image_type;
             let mut res = None;
             $(
-                $crate::resolvers::cfg_image::$img_ident! {
+                $crate::cfg_image::$img_ident! {
                     if matches!(img, $crate::image::$enum_name_it::$img_ident(_)) {
                         res = Some($name::$img_ident($ctx).await);
                     }
@@ -222,7 +226,7 @@ macro_rules! _impl_resolver {
     (all, $name:ident, |$ctx:ident| async $x:block ) => {
         $crate::_impl_resolver_inner!($name, |$ctx| async $x);
 
-        impl $crate::resolvers::Singleton for $name {
+        impl $crate::Singleton for $name {
             fn get(&self) -> Option<usize> {
                 None
             }
@@ -230,10 +234,10 @@ macro_rules! _impl_resolver {
     };
 
     ($arch:ident, $name:ident, |$ctx:ident| async $x:block ) => {
-        $crate::resolvers::cfg_image::$arch! {
-            impl $name where $name: $crate::resolvers::PleaseAddCollectForMe {
+        $crate::cfg_image::$arch! {
+            impl $name where $name: $crate::PleaseAddCollectForMe {
                 #[allow(non_snake_case)]
-                pub async fn $arch($ctx: &$crate::resolvers::AsyncContext<'_>) -> $crate::resolvers::Result<$name> $x
+                pub async fn $arch($ctx: &$crate::AsyncContext<'_>) -> $crate::Result<$name> $x
             }
         }
     };
@@ -243,17 +247,17 @@ macro_rules! _impl_resolver {
             $crate::image::image_type_reflection!(all, impl_resolver; generate; {ctx, $name})
         });
 
-        impl $crate::resolvers::Singleton for $name {
+        impl $crate::Singleton for $name {
             fn get(&self) -> Option<usize> {
                 None
             }
         }
 
-        impl $crate::resolvers::PleaseAddCollectForMe for $name {}
+        impl $crate::PleaseAddCollectForMe for $name {}
     };
 
     (generate, $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }, {$ctx:ident, $name:ident}) => {
-        $crate::resolvers::matcharm_generator!(
+        $crate::matcharm_generator!(
             $enum_name_it { $( $img_ident( $img_ty, $img_feature )),* },
             { $ctx, $name }
         )
@@ -270,7 +274,7 @@ macro_rules! _impl_resolver_singleton {
             $x
         });
 
-        impl $crate::resolvers::Singleton for $name {
+        impl $crate::Singleton for $name {
             fn get(&self) -> Option<usize> {
                 Some(self.0)
             }
@@ -278,10 +282,10 @@ macro_rules! _impl_resolver_singleton {
     };
 
     ($arch:ident, $name:ident, |$ctx:ident| async $x:block ) => {
-        $crate::resolvers::cfg_image::$arch! {
-            impl $name where $name: $crate::resolvers::PleaseAddCollectForMe {
+        $crate::cfg_image::$arch! {
+            impl $name where $name: $crate::PleaseAddCollectForMe {
                 #[allow(non_snake_case)]
-                async fn $arch($ctx: &$crate::resolvers::AsyncContext<'_>) -> $crate::resolvers::Result<$name> $x
+                async fn $arch($ctx: &$crate::AsyncContext<'_>) -> $crate::Result<$name> $x
             }
         }
     };
@@ -294,17 +298,17 @@ macro_rules! _impl_resolver_singleton {
             $crate::image::image_type_reflection!(all, impl_resolver_singleton; generate; {ctx, $name})
         });
 
-        impl $crate::resolvers::Singleton for $name {
+        impl $crate::Singleton for $name {
             fn get(&self) -> Option<usize> {
                 Some(self.0)
             }
         }
 
-        impl $crate::resolvers::PleaseAddCollectForMe for $name {}
+        impl $crate::PleaseAddCollectForMe for $name {}
     };
 
     (generate, $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }, {$ctx:ident, $name:ident}) => {
-        $crate::resolvers::matcharm_generator!(
+        $crate::matcharm_generator!(
             $enum_name_it { $( $img_ident( $img_ty, $img_feature )),* },
             { $ctx, $name }
         )
@@ -313,30 +317,30 @@ macro_rules! _impl_resolver_singleton {
 #[macro_export]
 macro_rules! _impl_resolver_inner {
     ( $name:ident, |$ctx:ident| async $x:block ) => {
-        $crate::resolvers::inventory::submit! {
-            $crate::resolvers::NamedResolver { name: stringify!($name), getter: $name::dyn_resolver }
+        $crate::inventory::submit! {
+            $crate::NamedResolver { name: stringify!($name), getter: $name::dyn_resolver }
         }
 
-        #[cfg_attr(feature = "serde-resolvers", $crate::resolvers::typetag::serde)]
-        impl $crate::resolvers::Resolution for $name {}
+        #[cfg_attr(feature = "serde-resolvers", $crate::typetag::serde)]
+        impl $crate::Resolution for $name {}
 
         impl $name {
-            pub fn resolver() -> &'static $crate::resolvers::ResolverFactory<$name> {
-                static GLOBAL: ::std::sync::OnceLock<&$crate::resolvers::ResolverFactory<$name>> = ::std::sync::OnceLock::new();
+            pub fn resolver() -> &'static $crate::ResolverFactory<$name> {
+                static GLOBAL: ::std::sync::OnceLock<&$crate::ResolverFactory<$name>> = ::std::sync::OnceLock::new();
 
-                GLOBAL.get_or_init(|| &$crate::resolvers::ResolverFactory {
-                    factory: |$ctx: &$crate::resolvers::AsyncContext| -> $crate::resolvers::futures::future::BoxFuture<$crate::resolvers::Result<$name>> {
+                GLOBAL.get_or_init(|| &$crate::ResolverFactory {
+                    factory: |$ctx: &$crate::AsyncContext| -> $crate::futures::future::BoxFuture<$crate::Result<$name>> {
                         Box::pin(async $x)
                     },
                 })
             }
-            pub fn dyn_resolver() -> &'static $crate::resolvers::DynResolverFactory {
-                static GLOBAL: ::std::sync::OnceLock<&$crate::resolvers::DynResolverFactory> = ::std::sync::OnceLock::new();
+            pub fn dyn_resolver() -> &'static $crate::DynResolverFactory {
+                static GLOBAL: ::std::sync::OnceLock<&$crate::DynResolverFactory> = ::std::sync::OnceLock::new();
 
-                GLOBAL.get_or_init(|| &$crate::resolvers::DynResolverFactory {
-                    factory: |$ctx: &$crate::resolvers::AsyncContext| -> $crate::resolvers::futures::future::BoxFuture<$crate::resolvers::Result<::std::sync::Arc<dyn $crate::resolvers::Resolution>>> {
+                GLOBAL.get_or_init(|| &$crate::DynResolverFactory {
+                    factory: |$ctx: &$crate::AsyncContext| -> $crate::futures::future::BoxFuture<$crate::Result<::std::sync::Arc<dyn $crate::Resolution>>> {
                         Box::pin(async {
-                            $ctx.resolve(Self::resolver()).await.map(|ok| -> ::std::sync::Arc<dyn $crate::resolvers::Resolution> { ok })
+                            $ctx.resolve(Self::resolver()).await.map(|ok| -> ::std::sync::Arc<dyn $crate::Resolution> { ok })
                         })
                     },
                 })
@@ -368,7 +372,7 @@ macro_rules! _impl_try_collector {
             #[allow(non_snake_case)]
             let (
                 $( $member_name, )*
-            ) = $crate::resolvers::futures::try_join!(
+            ) = $crate::futures::try_join!(
                 $( ctx.resolve($resolver::resolver()), )*
             )?;
             Ok($struct_name {
@@ -394,14 +398,14 @@ macro_rules! _impl_collector {
         $struct_vis struct $struct_name {
             $(
                 $(#[$inner $($args)*])*
-                $member_vis $member_name: $crate::resolvers::Result<::std::sync::Arc<$resolver>>,
+                $member_vis $member_name: $crate::Result<::std::sync::Arc<$resolver>>,
             )*
         }
         $crate::_impl_resolver!(all, $struct_name, |ctx| async {
             #[allow(non_snake_case)]
             let (
                 $( $member_name, )*
-            ) = $crate::resolvers::futures::join!(
+            ) = $crate::futures::join!(
                 $( ctx.resolve($resolver::resolver()), )*
             );
             Ok($struct_name {

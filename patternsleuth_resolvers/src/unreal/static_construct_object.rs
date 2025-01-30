@@ -5,8 +5,8 @@ use patternsleuth_scanner::Pattern;
 
 use crate::{
     disassemble::{disassemble, Control},
-    resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
     MemoryTrait,
+    {ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
 };
 
 /// class UObject * __cdecl StaticConstructObject_Internal(struct FStaticConstructObjectParameters const &)
@@ -125,8 +125,7 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
 
     use crate::{
         disassemble::disassemble_single,
-        resolvers::{bail_out, Context, Result},
-        Image, MemoryTrait,
+        Image, MemoryTrait, {bail_out, Context, Result},
     };
 
     let strings = join_all(

@@ -2,12 +2,10 @@ use std::fmt::Debug;
 
 use futures::{future::join_all, join};
 
+use patternsleuth_image::{Addressable as _, Matchable as _};
 use patternsleuth_scanner::Pattern;
 
-use crate::{
-    resolvers::{ensure_one, impl_resolver, impl_resolver_singleton, Context},
-    Addressable, Matchable,
-};
+use crate::{ensure_one, impl_resolver, impl_resolver_singleton, Context};
 
 #[derive(Debug, PartialEq)]
 #[cfg_attr(
@@ -181,7 +179,7 @@ impl_resolver!(all, BlueprintLibraryInit, |ctx| async {
 pub struct UFunctionBind(pub usize);
 impl_resolver_singleton!(collect, UFunctionBind);
 impl_resolver_singleton!(PEImage, UFunctionBind, |ctx| async {
-    use crate::resolvers::unreal::util;
+    use crate::unreal::util;
 
     let string = async {
         let strings = ctx

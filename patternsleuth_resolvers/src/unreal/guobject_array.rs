@@ -5,7 +5,7 @@ use futures::{future::join_all, try_join};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
+    {ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
     MemoryTrait,
 };
 

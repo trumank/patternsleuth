@@ -6,7 +6,7 @@ use itertools::Itertools as _;
 use crate::{
     disassemble::{disassemble, Control},
     image::Image,
-    resolvers::{impl_resolver_singleton, try_ensure_one, unreal::util, Result},
+    {impl_resolver_singleton, try_ensure_one, unreal::util, Result},
 };
 
 #[derive(Debug, PartialEq)]

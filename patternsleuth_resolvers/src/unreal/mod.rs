@@ -22,19 +22,18 @@ use std::{
 use futures::future::join_all;
 use iced_x86::FlowControl;
 use itertools::Itertools;
+use patternsleuth_image::{Addressable as _, Matchable as _};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
     disassemble::{disassemble, Control},
-    resolvers::{
-        bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, Result,
-    },
-    Addressable, Image, Matchable, MemoryTrait,
+    Image, MemoryTrait,
+    {bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, Result},
 };
 
 #[allow(unused)]
 pub mod util {
-    use crate::resolvers::AsyncContext;
+    use crate::AsyncContext;
 
     use super::*;
 

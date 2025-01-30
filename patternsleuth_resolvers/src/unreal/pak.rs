@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use futures::future::join_all;
 
-use crate::resolvers::{ensure_one, impl_resolver_singleton, unreal::util};
+use crate::{ensure_one, impl_resolver_singleton, unreal::util};
 
 #[derive(Debug, PartialEq)]
 #[cfg_attr(

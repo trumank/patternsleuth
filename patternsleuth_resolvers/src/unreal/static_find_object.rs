@@ -1,9 +1,9 @@
-use crate::resolvers::{ensure_one, impl_resolver_singleton, unreal::util};
+use crate::{ensure_one, impl_resolver_singleton, unreal::util};
 
 /// ```
-/// class UObject * __cdecl StaticFindObjectFast(class UClass *, class UObject *, class FName, bool, bool, enum EObjectFlags, enum EInternalObjectFlags)
-/// class UObject * __cdecl StaticFindObjectFast(class UClass *, class UObject *, class FName, bool, enum EObjectFlags, enum EInternalObjectFlags)
-/// class UObject * __cdecl StaticFindObjectFast(class UClass *, class UObject *, class FName, bool, bool, enum EObjectFlags)
+/// //class UObject * __cdecl StaticFindObjectFast(class UClass *, class UObject *, class FName, bool, bool, enum EObjectFlags, enum EInternalObjectFlags)
+/// //class UObject * __cdecl StaticFindObjectFast(class UClass *, class UObject *, class FName, bool, enum EObjectFlags, enum EInternalObjectFlags)
+/// //class UObject * __cdecl StaticFindObjectFast(class UClass *, class UObject *, class FName, bool, bool, enum EObjectFlags)
 /// ```
 #[derive(Debug, PartialEq)]
 #[cfg_attr(

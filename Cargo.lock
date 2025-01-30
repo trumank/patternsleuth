@@ -2691,7 +2691,6 @@ dependencies = [
  "iced-x86",
  "inventory",
  "itertools 0.12.0",
- "libc",
  "memchr",
  "msvc-demangler",
  "object",
@@ -2703,7 +2702,6 @@ dependencies = [
  "strum",
  "tracing",
  "typetag",
- "windows 0.52.0",
 ]
 
 [[package]]

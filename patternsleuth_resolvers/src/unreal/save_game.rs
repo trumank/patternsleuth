@@ -4,7 +4,7 @@ use futures::future::join_all;
 
 use patternsleuth_scanner::Pattern;
 
-use crate::resolvers::{ensure_one, impl_resolver_singleton};
+use crate::{ensure_one, impl_resolver_singleton};
 
 /// public: static bool __cdecl UGameplayStatics::SaveGameToMemory(class USaveGame *, class TArray<unsigned char, class TSizedDefaultAllocator<32> > &)
 #[derive(Debug, PartialEq)]

@@ -2,14 +2,10 @@ use std::fmt::Debug;
 
 use futures::future::join_all;
 use iced_x86::{Decoder, DecoderOptions, Instruction};
+use patternsleuth_image::{Addressable as _, Matchable as _, MemoryTrait as _};
 use patternsleuth_scanner::Pattern;
 
-use crate::{
-    resolvers::{
-        bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, Result,
-    },
-    Addressable, Matchable, MemoryTrait,
-};
+use crate::{bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, Result};
 
 /// public: void __cdecl UObject::SkipFunction(struct FFrame &, void *const, class UFunction *)
 #[derive(Debug, PartialEq)]
