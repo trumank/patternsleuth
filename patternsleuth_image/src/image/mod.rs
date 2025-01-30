@@ -107,8 +107,7 @@ impl<'data> Image<'data> {
                 .filter_map(|scan| {
                     scan.scan
                         .section
-                        .map(|s| s == section.kind())
-                        .unwrap_or(true)
+                        .is_none_or(|s| s == section.kind())
                         .then(|| {
                             scan.scan
                                 .scan_type
@@ -124,8 +123,7 @@ impl<'data> Image<'data> {
                 .filter_map(|scan| {
                     scan.scan
                         .section
-                        .map(|s| s == section.kind())
-                        .unwrap_or(true)
+                        .is_none_or(|s| s == section.kind())
                         .then(|| scan.scan.scan_type.get_xref().map(|xref| (scan, xref)))
                         .flatten()
                 })

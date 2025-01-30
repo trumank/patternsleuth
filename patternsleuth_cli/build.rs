@@ -14,8 +14,7 @@ fn main() {
         .args(["diff-index", "--quiet", "HEAD"])
         .status()
         .ok()
-        .map(|status| !status.success())
-        .unwrap_or(false)
+        .is_some_and(|status| !status.success())
     {
         println!("cargo:rustc-env=GIT_DIRTY=true");
     }

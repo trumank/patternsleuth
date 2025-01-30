@@ -198,8 +198,7 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
                     if img
                         .memory
                         .range(ptr..ptr + cmp.len())
-                        .map(|data| data == cmp)
-                        .unwrap_or(false)
+                        .is_ok_and(|data| data == cmp)
                     {
                         is = true;
                         return Ok(Control::Exit);

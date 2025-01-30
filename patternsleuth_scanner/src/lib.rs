@@ -234,8 +234,7 @@ impl Pattern {
                     .checked_add_signed(i32::from_le_bytes(
                         data[index + offset..index + offset + 4].try_into().unwrap(),
                     ) as isize)
-                    .map(|x| x == xref.0)
-                    .unwrap_or(false)
+                    .is_some_and(|x| x == xref.0)
             })
     }
     pub fn captures<'data>(
