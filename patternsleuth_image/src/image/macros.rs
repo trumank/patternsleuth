@@ -9,6 +9,7 @@ macro_rules! image_type_dispatch {
         }
     ) => {
         image_type_dispatch!(@define_imagetype $enum_name_it $enum_tt);
+        #[allow(unused)]
         impl<'data> Image<'data> {
             $(
                 pub fn $fnname_it(&self, $($arg: $arg_ty),*) -> $ret {
@@ -32,6 +33,8 @@ macro_rules! image_type_dispatch {
                 #[cfg(feature = $img_feature)]
                 $enum_name_it::$img_ident(inner) => inner.$fnname_it($self, $args_tt),
             )*
+            #[allow(unreachable_patterns)]
+            _ => unreachable!(),
         }
     };
 
@@ -41,6 +44,8 @@ macro_rules! image_type_dispatch {
                 #[cfg(feature = $img_feature)]
                 $enum_name_it::$img_ident(inner) => inner.$fnname_it($self),
             )*
+            #[allow(unreachable_patterns)]
+            _ => unreachable!(),
         }
     };
 

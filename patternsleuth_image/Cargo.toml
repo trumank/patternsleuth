@@ -1,5 +1,5 @@
 [package]
-name = "patternsleuth"
+name = "patternsleuth_image"
 repository.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -24,7 +24,6 @@ serde = { workspace = true, optional = true, features = ["derive"] }
 typetag = { version = "0.2.15", optional = true }
 gimli = { version = "0.28.1", optional = true }
 tracing = "0.1.40"
-patternsleuth_image = { version = "0.1.0", path = "../patternsleuth_image" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { version = "0.2.152", optional = true }

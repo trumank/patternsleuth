@@ -1,5 +1,5 @@
 [package]
-name = "patternsleuth"
+name = "patternsleuth_resolvers"
 repository.workspace = true
 authors.workspace = true
 license.workspace = true

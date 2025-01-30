@@ -13,9 +13,6 @@ use pe::PEImage;
 
 use macros::*;
 
-#[cfg(not(any(feature = "image-pe", feature = "image-elf")))]
-compile_error!("requires at least one of image-pe or image-elf features");
-
 image_type_dispatch! {
     @enum ImageType as _image_type_reflection {
         PEImage(PEImage, "image-pe"),
@@ -44,6 +41,7 @@ pub struct Image<'data> {
 
 // Type-independent
 impl<'data> Image<'data> {
+    #[allow(unused)]
     pub fn read<P: AsRef<Path>>(
         base_addr: Option<usize>,
         data: &'data [u8],
@@ -66,19 +64,19 @@ impl<'data> Image<'data> {
     pub fn builder() -> ImageBuilder {
         Default::default()
     }
-    pub fn resolve<T: Send + Sync>(
-        &self,
-        resolver: &'static resolvers::ResolverFactory<T>,
-    ) -> resolvers::Result<T> {
-        resolvers::resolve(self, resolver)
-    }
+    //pub fn resolve<T: Send + Sync>(
+    //    &self,
+    //    resolver: &'static resolvers::ResolverFactory<T>,
+    //) -> resolvers::Result<T> {
+    //    resolvers::resolve(self, resolver)
+    //}
 
-    pub fn resolve_many(
-        &self,
-        resolvers: &[fn() -> &'static resolvers::DynResolverFactory],
-    ) -> Vec<resolvers::Result<std::sync::Arc<dyn resolvers::Resolution>>> {
-        resolvers::resolve_many(self, resolvers)
-    }
+    //pub fn resolve_many(
+    //    &self,
+    //    resolvers: &[fn() -> &'static resolvers::DynResolverFactory],
+    //) -> Vec<resolvers::Result<std::sync::Arc<dyn resolvers::Resolution>>> {
+    //    resolvers::resolve_many(self, resolvers)
+    //}
 
     pub fn scan<'patterns, S>(
         &self,

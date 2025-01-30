@@ -4,6 +4,8 @@ members = [
     "patternsleuth",
     "patternsleuth_cli",
     "patternsleuth_scanner",
+    "patternsleuth_image",
+    "patternsleuth_resolvers",
     "examples/*",
 ]
 default-members = ["patternsleuth_*"]
