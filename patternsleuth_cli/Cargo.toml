@@ -20,19 +20,14 @@ colored = { workspace = true }
 globset = { workspace = true }
 iced-x86 = { workspace = true }
 itertools = { workspace = true }
-memchr = { workspace = true }
 msvc-demangler = { workspace = true }
-object = { workspace = true }
-pdb = { workspace = true }
 prettytable-rs = { workspace = true }
 rayon.workspace = true
 regex = { workspace = true }
-strum = { workspace = true }
 indicatif = { version = "0.17.7", features = ["rayon"] }
 rusqlite = { version = "0.30.0", features = ["bundled"] }
 crossbeam = "0.8.4"
 patricia_tree = "0.8.0"
-libc = "0.2.152"
 serde = { workspace = true, features = ["rc"] }
 serde_json = "1.0.111"
 time = { version = "0.3.31", features = ["formatting", "macros", "local-offset"] }

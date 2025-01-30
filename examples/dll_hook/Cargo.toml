@@ -19,7 +19,7 @@ egui-winit = { version = "0.24.0", default-features = false }
 indexmap = "2.1.0"
 itertools.workspace = true
 parking_lot = "0.12.1"
-patternsleuth = { path = "../../patternsleuth", features = ["process-internal", "image-pe"] }
+patternsleuth_image = { path = "../../patternsleuth_image", features = ["process-internal", "image-pe"] }
 regex.workspace = true
 retour = { git = "https://github.com/Hpmason/retour-rs", features = ["static-detour"] }
 simple-log = "1.6.0"

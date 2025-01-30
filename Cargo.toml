@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "patternsleuth",
     "patternsleuth_cli",
     "patternsleuth_scanner",
     "patternsleuth_image",

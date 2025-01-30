@@ -1149,7 +1149,7 @@ dependencies = [
  "indexmap 2.1.0",
  "itertools 0.12.0",
  "parking_lot 0.12.1",
- "patternsleuth",
+ "patternsleuth_image",
  "regex",
  "retour",
  "simple-log",
@@ -2599,32 +2599,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "patternsleuth"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures",
- "futures-scopes",
- "gimli",
- "iced-x86",
- "inventory",
- "itertools 0.12.0",
- "libc",
- "memchr",
- "msvc-demangler",
- "object",
- "patternsleuth_image",
- "patternsleuth_scanner",
- "pdb",
- "rayon",
- "serde",
- "strum",
- "tracing",
- "typetag",
- "windows 0.52.0",
-]
-
-[[package]]
 name = "patternsleuth_cli"
 version = "0.1.0"
 dependencies = [
@@ -2636,22 +2610,17 @@ dependencies = [
  "iced-x86",
  "indicatif",
  "itertools 0.12.0",
- "libc",
- "memchr",
  "msvc-demangler",
- "object",
  "patricia_tree",
  "patternsleuth_image",
  "patternsleuth_resolvers",
  "patternsleuth_scanner",
- "pdb",
  "prettytable-rs",
  "rayon",
  "regex",
  "rusqlite",
  "serde",
  "serde_json",
- "strum",
  "time",
  "tracing",
  "tracing-subscriber",
@@ -3398,28 +3367,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
 
 [[package]]
-name = "strum"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
-dependencies = [
- "strum_macros",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.25.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23dc1fa9ac9c169a78ba62f0b841814b7abae11bdd047b9c58f893439e309ea0"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn 2.0.48",
-]
-
-[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3608,9 +3555,9 @@ dependencies = [
 
 [[package]]
 name = "tracing"
-version = "0.1.40"
+version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3523ab5a71916ccf420eebdf5521fcef02141234bbc0b8a49f2fdc4544364ef"
+checksum = "784e0ac535deb450455cbfa28a6f0df145ea1bb7ae51b821cf5e7927fdcfbdd0"
 dependencies = [
  "pin-project-lite",
  "tracing-attributes",
@@ -3619,9 +3566,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-attributes"
-version = "0.1.27"
+version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34704c8d6ebcbc939824180af020566b01a7c01f80641264eba0999f6c2b6be7"
+checksum = "395ae124c09f9e6918a2310af6038fba074bcf474ac352496d5910dd59a2226d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3630,9 +3577,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.32"
+version = "0.1.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c06d3da6113f116aaee68e4d601191614c9053067f9ab7f6edbcb161237daa54"
+checksum = "e672c95779cf947c5311f83787af4fa8fffd12fb27e4993211a84bdfd9610f9c"
 dependencies = [
  "once_cell",
  "valuable",
@@ -3651,9 +3598,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-subscriber"
-version = "0.3.18"
+version = "0.3.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad0f048c97dbd9faa9b7df56362b8ebcaa52adb06b498c050d2f4e32f90a7a8b"
+checksum = "e8189decb5ac0fa7bc8b96b7cb9b2701d60d48805aca84a238004d665fcc4008"
 dependencies = [
  "matchers",
  "nu-ansi-term",
@@ -3775,9 +3722,9 @@ checksum = "5e395fcf16a7a3d8127ec99782007af141946b4795001f876d54fb0d55978560"
 
 [[package]]
 name = "valuable"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "830b7e5d4d90034032940e4ace0d9a9a057e7a45cd94e6c007832e39edb82f6d"
+checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vcpkg"
