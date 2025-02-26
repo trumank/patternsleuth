@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use itertools::Itertools;
 
 use super::{Image, ImageType};
 #[cfg(feature = "symbols")]
 use crate::symbols;
-use crate::{MemTraitNew, Memory, MemoryAccessError, MemoryTrait, RuntimeFunction};
+use crate::{MemTraitNew, Memory, MemoryAccessError, RuntimeFunction};
 use object::Object;
 
 pub struct PEImage {
@@ -255,9 +255,9 @@ impl PEImage {
         let get_imports = || -> Result<_> {
             Ok(match object {
                 object::File::Pe64(ref inner) => {
+                    use object::LittleEndian as LE;
                     use object::pe::ImageNtHeaders64;
                     use object::read::pe::ImageThunkData;
-                    use object::LittleEndian as LE;
 
                     let mut imports: HashMap<String, HashMap<String, usize>> = Default::default();
 
@@ -314,6 +314,12 @@ impl PEImage {
     ) -> Result<Image<'_>, anyhow::Error> {
         let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
         let memory = Memory::new(&object)?;
-        Self::read_inner_memory(base_address, exe_path, cache_functions, Box::new(memory), object)
+        Self::read_inner_memory(
+            base_address,
+            exe_path,
+            cache_functions,
+            Box::new(memory),
+            object,
+        )
     }
 }

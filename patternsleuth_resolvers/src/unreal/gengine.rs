@@ -4,9 +4,9 @@ use iced_x86::Register;
 use itertools::Itertools as _;
 
 use crate::{
-    disassemble::{disassemble, Control},
+    disassemble::{Control, disassemble},
     image::Image,
-    {impl_resolver_singleton, try_ensure_one, unreal::util, Result},
+    {Result, impl_resolver_singleton, try_ensure_one, unreal::util},
 };
 
 #[derive(Debug, PartialEq)]

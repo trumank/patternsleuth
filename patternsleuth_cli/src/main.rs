@@ -7,17 +7,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
+use clap::Parser;
 use clap::builder::{
     IntoResettable, PossibleValue, PossibleValuesParser, TypedValueParser, ValueParser,
 };
-use clap::Parser;
 use indicatif::ProgressBar;
 use itertools::Itertools;
 use patricia_tree::StringPatriciaMap;
 use patternsleuth_image::image::Image;
 use patternsleuth_image::{PatternConfig, Resolution};
-use patternsleuth_resolvers::{resolve_many, resolvers, NamedResolver};
+use patternsleuth_resolvers::{NamedResolver, resolve_many, resolvers};
 
 use patternsleuth_image::symbols::Symbol;
 use patternsleuth_scanner::Pattern;
@@ -214,7 +214,7 @@ fn find_ext<P: AsRef<Path>, E: AsRef<str>>(dir: P, ext: &[E]) -> Result<Option<P
 }
 
 fn main() -> Result<()> {
-    use tracing_subscriber::{fmt, fmt::format::FmtSpan, EnvFilter};
+    use tracing_subscriber::{EnvFilter, fmt, fmt::format::FmtSpan};
 
     fmt()
         .compact()
@@ -292,7 +292,7 @@ fn scan(command: CommandScan) -> Result<()> {
     use colored::Colorize;
     use indicatif::ProgressIterator;
     use itertools::join;
-    use prettytable::{format, row, Cell, Row, Table};
+    use prettytable::{Cell, Row, Table, format, row};
 
     enum Output {
         Stdout,
@@ -403,7 +403,7 @@ fn scan(command: CommandScan) -> Result<()> {
                     }
                     cells.push(Cell::new(&table.to_string()));
                 } else if command.disassemble_merged {
-                    cells.push(Cell::new({
+                    cells.push(Cell::new(&{
                         let cells = sig_scans
                             .iter()
                             .fold(
@@ -440,10 +440,10 @@ fn scan(command: CommandScan) -> Result<()> {
 
                         table.add_row(Row::new(cells));
 
-                        &table.to_string()
+                        table.to_string()
                     }));
                 } else {
-                    cells.push(Cell::new({
+                    cells.push(Cell::new(&{
                         let mut lines = sig_scans
                             .iter()
                             // group and count matches by (pattern name, address)
@@ -485,7 +485,7 @@ fn scan(command: CommandScan) -> Result<()> {
                                 ));
                             }
                         }
-                        &join(lines.iter().map(|(line, _)| line), "\n").to_string()
+                        join(lines.iter().map(|(line, _)| line), "\n").to_string()
                     }));
                 }
             } else {

@@ -4,10 +4,7 @@ use futures::{future::join_all, try_join};
 
 use patternsleuth_scanner::Pattern;
 
-use crate::{
-    MemoryTrait,
-    {ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
-};
+use crate::{Result, ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util};
 
 #[derive(Debug, PartialEq)]
 #[cfg_attr(

@@ -2,17 +2,17 @@ pub mod disassemble;
 pub mod unreal;
 
 use image::Image;
+use patternsleuth_image::MemoryAccessError;
 use patternsleuth_image::image;
-use patternsleuth_image::{MemoryAccessError, MemoryTrait};
 
 use futures::{
     channel::oneshot,
     executor::LocalPool,
-    future::{join_all, BoxFuture},
+    future::{BoxFuture, join_all},
 };
 use futures_scopes::{
-    relay::{new_relay_scope, RelayScopeLocalSpawning},
     ScopedSpawnExt, SpawnScope,
+    relay::{RelayScopeLocalSpawning, new_relay_scope},
 };
 use patternsleuth_scanner::Pattern;
 use std::{
@@ -625,16 +625,16 @@ where
     }
 }
 
-pub fn resolve<'data, 'img, T: Send + Sync>(
-    image: &'img Image<'data>,
+pub fn resolve<T: Send + Sync>(
+    image: &Image<'_>,
     resolver: &'static ResolverFactory<T>,
 ) -> Result<T> {
     eval(image, |ctx| Box::pin(async { ctx.resolve(resolver).await }))
         .map(|ok| Arc::<T>::into_inner(ok).unwrap())
 }
 
-pub fn resolve_many<'data, 'img>(
-    image: &'img Image<'data>,
+pub fn resolve_many(
+    image: &Image<'_>,
     resolvers: &[fn() -> &'static DynResolverFactory],
 ) -> Vec<Result<Arc<dyn Resolution>>> {
     let fns = resolvers.iter().map(|r| r().factory).collect::<Vec<_>>();

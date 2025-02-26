@@ -3,12 +3,10 @@ use std::fmt::{Debug, Display};
 use futures::future::join_all;
 
 use itertools::Itertools;
-use patternsleuth_image::{Addressable as _, Matchable as _};
+use patternsleuth_image::Addressable as _;
 use patternsleuth_scanner::Pattern;
 
-use crate::{
-    MemoryTrait, {bail_out, impl_resolver, try_ensure_one},
-};
+use crate::{bail_out, impl_resolver, try_ensure_one};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(
@@ -137,7 +135,6 @@ impl_resolver!(ElfImage, EngineVersionStrings, |ctx| async {
 });
 
 impl_resolver!(PEImage, EngineVersionStrings, |ctx| async {
-    use crate::MemoryTrait;
     use std::collections::HashSet;
 
     let patterns = [

@@ -8,11 +8,12 @@ mod ue;
 
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use patternsleuth::resolvers::impl_try_collector;
-use patternsleuth::resolvers::unreal::blueprint_library::UFunctionBind;
 use patternsleuth::resolvers::unreal::UObjectBaseUtilityGetPathName;
+use patternsleuth::resolvers::unreal::blueprint_library::UFunctionBind;
 use patternsleuth::resolvers::unreal::{
+    KismetSystemLibrary,
     fname::FNameToString,
     game_loop::{FEngineLoopInit, UGameEngineTick},
     gmalloc::GMalloc,
@@ -20,9 +21,8 @@ use patternsleuth::resolvers::unreal::{
         FUObjectArrayAllocateUObjectIndex, FUObjectArrayFreeUObjectIndex, GUObjectArray,
     },
     kismet::{FFrameStep, FFrameStepExplicitProperty, FFrameStepViaExec},
-    KismetSystemLibrary,
 };
-use simple_log::{error, info, LogConfigBuilder};
+use simple_log::{LogConfigBuilder, error, info};
 use windows::Win32::{
     Foundation::HMODULE,
     System::{

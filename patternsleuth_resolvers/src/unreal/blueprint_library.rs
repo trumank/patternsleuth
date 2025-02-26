@@ -2,10 +2,10 @@ use std::fmt::Debug;
 
 use futures::{future::join_all, join};
 
-use patternsleuth_image::{Addressable as _, Matchable as _};
+use patternsleuth_image::Addressable as _;
 use patternsleuth_scanner::Pattern;
 
-use crate::{ensure_one, impl_resolver, impl_resolver_singleton, Context};
+use crate::{Context, ensure_one, impl_resolver, impl_resolver_singleton};
 
 #[derive(Debug, PartialEq)]
 #[cfg_attr(

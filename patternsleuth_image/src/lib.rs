@@ -17,7 +17,7 @@ use std::{
     path::Path,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use object::{File, Object, ObjectSection};
 
 use image::Image;
@@ -145,7 +145,14 @@ impl RuntimeFunction {
     }
 }
 
-pub trait MemTraitNew<'data>: MemoryTrait<'data> + Matchable<'data> + Index<usize, Output = u8> + Index<Range<usize>, Output = [u8]> + Send + Sync {
+pub trait MemTraitNew<'data>:
+    MemoryTrait<'data>
+    + Matchable<'data>
+    + Index<usize, Output = u8>
+    + Index<Range<usize>, Output = [u8]>
+    + Send
+    + Sync
+{
     fn sections(&self) -> Box<dyn Iterator<Item = &dyn SectionTraitNew<'data>> + '_>;
     fn get_section_containing(
         &self,
@@ -203,7 +210,7 @@ pub trait MemoryBlockTrait<'data> {
     /// Return starting address of block
     fn address(&self) -> usize;
     /// Returned contained memory
-    fn data(&self) -> &'data [u8];
+    fn data(&self) -> &[u8];
 }
 
 /// Potentially sparse section of memory
@@ -211,12 +218,12 @@ pub trait MemoryTrait<'data> {
     /// Return u8 at `address`
     fn index(&self, address: usize) -> Result<u8, MemoryAccessError>;
     /// Return slice of u8 at `range`
-    fn range(&self, range: Range<usize>) -> Result<&'data [u8], MemoryAccessError>;
+    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryAccessError>;
     /// Return slice of u8 from start of `range` to end of block
-    fn range_from(&self, range: RangeFrom<usize>) -> Result<&'data [u8], MemoryAccessError>;
+    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryAccessError>;
     /// Return slice of u8 from end of `range` to start of block (not useful because start of block
     /// is unknown to caller)
-    fn range_to(&self, range: RangeTo<usize>) -> Result<&'data [u8], MemoryAccessError>;
+    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryAccessError>;
 
     /// Return i16 at `address`
     fn i16_le(&self, address: usize) -> Result<i16, MemoryAccessError> {
@@ -299,15 +306,15 @@ impl<'data, T: MemoryBlockTrait<'data>> MemoryTrait<'data> for T {
         // TODO bounds
         Ok(self.data()[address - self.address()])
     }
-    fn range(&self, range: Range<usize>) -> Result<&'data [u8], MemoryAccessError> {
+    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryAccessError> {
         // TODO bounds
         Ok(&self.data()[range.start - self.address()..range.end - self.address()])
     }
-    fn range_from(&self, range: RangeFrom<usize>) -> Result<&'data [u8], MemoryAccessError> {
+    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryAccessError> {
         // TODO bounds
         Ok(&self.data()[range.start - self.address()..])
     }
-    fn range_to(&self, range: RangeTo<usize>) -> Result<&'data [u8], MemoryAccessError> {
+    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryAccessError> {
         // TODO bounds
         Ok(&self.data()[..range.end - self.address()])
     }
@@ -317,26 +324,26 @@ impl<'data> MemoryTrait<'data> for Memory<'data> {
     fn index(&self, address: usize) -> Result<u8, MemoryAccessError> {
         self.get_section_containing(address)?.index(address)
     }
-    fn range(&self, range: Range<usize>) -> Result<&'data [u8], MemoryAccessError> {
+    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryAccessError> {
         self.get_section_containing(range.start)?.range(range)
     }
-    fn range_from(&self, range: RangeFrom<usize>) -> Result<&'data [u8], MemoryAccessError> {
+    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryAccessError> {
         self.get_section_containing(range.start)?.range_from(range)
     }
-    fn range_to(&self, range: RangeTo<usize>) -> Result<&'data [u8], MemoryAccessError> {
+    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryAccessError> {
         self.get_section_containing(range.end)?.range_to(range)
     }
 }
 
 pub struct MemorySection<'data> {
     address: usize,
-    data: &'data [u8],
+    data: Cow<'data, [u8]>,
 }
 impl<'data> MemoryBlockTrait<'data> for MemorySection<'data> {
     fn address(&self) -> usize {
         self.address
     }
-    fn data(&self) -> &'data [u8] {
+    fn data(&self) -> &[u8] {
         &self.data
     }
 }
@@ -348,18 +355,18 @@ pub struct NamedMemorySection<'data> {
 }
 
 impl<'data> NamedMemorySection<'data> {
-    fn new(
+    fn new<D: Into<Cow<'data, [u8]>>>(
         name: String,
         address: usize,
         kind: object::SectionKind,
-        data: &'data [u8],
+        data: D,
     ) -> Self {
         Self {
             name,
             kind,
             section: MemorySection {
                 address,
-                data,
+                data: data.into(),
             },
         }
     }
@@ -388,7 +395,7 @@ impl<'data> MemoryBlockTrait<'data> for NamedMemorySection<'data> {
     fn address(&self) -> usize {
         self.section.address()
     }
-    fn data(&self) -> &'data [u8] {
+    fn data(&self) -> &[u8] {
         self.section.data()
     }
 }
@@ -431,20 +438,19 @@ impl<'data> Memory<'data> {
         })
     }
     pub fn new_external_data(sections: Vec<(object::Section<'_, '_>, Vec<u8>)>) -> Result<Self> {
-        todo!()
-        //Ok(Self {
-        //    sections: sections
-        //        .into_iter()
-        //        .map(|(s, d)| {
-        //            Ok(NamedMemorySection::new(
-        //                s.name()?.to_string(),
-        //                s.address() as usize,
-        //                s.kind(),
-        //                d,
-        //            ))
-        //        })
-        //        .collect::<Result<Vec<_>>>()?,
-        //})
+        Ok(Self {
+            sections: sections
+                .into_iter()
+                .map(|(s, d)| {
+                    Ok(NamedMemorySection::new(
+                        s.name()?.to_string(),
+                        s.address() as usize,
+                        s.kind(),
+                        d,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        })
     }
     pub fn new_internal_data(
         sections: Vec<(object::Section<'_, '_>, &'data [u8])>,

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Error, Result};
+use anyhow::{Context, Error, Result, bail};
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct PatternSimple {
@@ -35,8 +35,8 @@ fn fmt_byte(f: &mut std::fmt::Formatter<'_>, sig: u8, mask: u8) -> std::fmt::Res
         write!(f, "{:X}?", sig >> 4)?;
     } else {
         for bit in (0..8).rev() {
-            if mask >> bit & 1 == 1 {
-                write!(f, "{}", sig >> bit & 1)?;
+            if (mask >> bit) & 1 == 1 {
+                write!(f, "{}", (sig >> bit) & 1)?;
             } else {
                 write!(f, "?")?;
             }
@@ -876,7 +876,7 @@ mod test {
         let patterns = [&Pattern::new("01 02").unwrap()];
 
         // obtuse generator to test every combination of chunk boundaries
-        let data: Vec<_> = std::iter::repeat([1, 2, 3]).take(32).flatten().collect();
+        let data: Vec<_> = std::iter::repeat_n([1, 2, 3], 32).flatten().collect();
         let matches: Vec<_> = (0..3)
             .map(|offset| {
                 (0..len / 3)

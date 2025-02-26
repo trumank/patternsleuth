@@ -8,7 +8,7 @@ mod linux {
     use anyhow::Result;
 
     use crate::Image;
-    use libc::{dl_iterate_phdr, Elf64_Addr, Elf64_Phdr, Elf64_Sxword, Elf64_Xword, PT_LOAD};
+    use libc::{Elf64_Addr, Elf64_Phdr, Elf64_Sxword, Elf64_Xword, PT_LOAD, dl_iterate_phdr};
 
     #[repr(C)]
     #[derive(Debug)]
@@ -46,7 +46,9 @@ mod linux {
         if name.is_empty() {
             // find the main
             //eprintln!("Base addr from iter = {:08x}", (*info).dlpi_addr);
-            *image = *info;
+            unsafe {
+                *image = *info;
+            }
         }
         0
     }

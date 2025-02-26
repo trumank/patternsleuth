@@ -1,4 +1,4 @@
-use std::sync::{mpsc::Receiver, Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, RwLock, mpsc::Receiver};
 
 use eframe::egui;
 

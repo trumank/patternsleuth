@@ -4,9 +4,8 @@ use futures::{future::join_all, join};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    disassemble::{disassemble, Control},
-    MemoryTrait,
-    {ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
+    disassemble::{Control, disassemble},
+    {Result, ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util},
 };
 
 /// class UObject * __cdecl StaticConstructObject_Internal(struct FStaticConstructObjectParameters const &)
@@ -41,18 +40,18 @@ impl_resolver_singleton!(all, StaticConstructObjectInternalPatterns, |ctx| async
         "E8 | ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? C0 E9 ?? 32 88 ?? ?? ?? ?? 80 E1 01 30 88 ?? ?? ?? ?? 48",
         "E8 | ?? ?? ?? ?? 48 8B D8 48 39 75 30 74 15",
         /*
-                03f4df3f c6  44  24       MOV        byte ptr [RSP  + local_88 ],0x0
-                         30  00
-                03f4df44 0f  57  c0       XORPS      XMM0 ,XMM0
-                03f4df47 0f  11  44       MOVUPS     xmmword ptr [RSP  + local_80[0] ],XMM0
-                         24  38
-                03f4df4c 4c  89  ff       MOV        RDI ,R15
-                03f4df4f e8  2c  b6       CALL       StaticConstructObject_Internal                   undefined StaticConstructObject_
-                         02  03
-                03f4df54 48  89  c3       MOV        RBX ,RAX
+               03f4df3f c6  44  24       MOV        byte ptr [RSP  + local_88 ],0x0
+                        30  00
+               03f4df44 0f  57  c0       XORPS      XMM0 ,XMM0
+               03f4df47 0f  11  44       MOVUPS     xmmword ptr [RSP  + local_80[0] ],XMM0
+                        24  38
+               03f4df4c 4c  89  ff       MOV        RDI ,R15
+               03f4df4f e8  2c  b6       CALL       StaticConstructObject_Internal                   undefined StaticConstructObject_
+                        02  03
+               03f4df54 48  89  c3       MOV        RBX ,RAX
 
-         */
-        "c6 44 24 30  00 0f 57 c0 0f 11 44 24 38 4c 89 ff e8 | ?? ?? ?? ?? 48 89"
+        */
+        "c6 44 24 30  00 0f 57 c0 0f 11 44 24 38 4c 89 ff e8 | ?? ?? ?? ?? 48 89",
     ];
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
@@ -124,8 +123,9 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
     use itertools::Itertools;
 
     use crate::{
+        Image,
         disassemble::disassemble_single,
-        Image, MemoryTrait, {bail_out, Context, Result},
+        {Context, Result, bail_out},
     };
 
     let strings = join_all(

@@ -22,13 +22,13 @@ use std::{
 use futures::future::join_all;
 use iced_x86::FlowControl;
 use itertools::Itertools;
-use patternsleuth_image::{Addressable as _, Matchable as _};
+use patternsleuth_image::Addressable as _;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    disassemble::{disassemble, Control},
-    Image, MemoryTrait,
-    {bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one, Result},
+    Image,
+    disassemble::{Control, disassemble},
+    {Result, bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one},
 };
 
 #[allow(unused)]
@@ -136,7 +136,7 @@ pub mod util {
             .collect())
     }
 
-    pub fn find_calls<'a>(img: &Image, f: usize) -> Result<Vec<Call>> {
+    pub fn find_calls(img: &Image, f: usize) -> Result<Vec<Call>> {
         let mut calls = vec![];
 
         disassemble(img, f, |inst| {

@@ -2,7 +2,7 @@ use std::{collections::HashSet, ops::Range};
 
 use iced_x86::{Decoder, DecoderOptions, FlowControl, Formatter, Instruction, NasmFormatter};
 
-use crate::{Image, MemoryAccessError, MemoryTrait};
+use crate::{Image, MemoryAccessError};
 
 pub fn function_range(exe: &Image, address: usize) -> Result<Range<usize>, MemoryAccessError> {
     let min = address;
@@ -38,11 +38,7 @@ pub enum Control {
     Exit,
 }
 
-pub fn disassemble<F>(
-    exe: &Image,
-    address: usize,
-    mut visitor: F,
-) -> Result<(), MemoryAccessError>
+pub fn disassemble<F>(exe: &Image, address: usize, mut visitor: F) -> Result<(), MemoryAccessError>
 where
     F: FnMut(&Instruction) -> Result<Control, MemoryAccessError>,
 {
@@ -51,8 +47,8 @@ where
         queue: Vec<usize>,
         visited: HashSet<usize>,
         address: usize,
-        block: &'data [u8],
-        decoder: Decoder<'data>,
+        block: &'img [u8], // these lifetimes are NOT 'data because of oddities with how Cow<'data> is handled in Image
+        decoder: Decoder<'img>,
         instruction: Instruction,
     }
 
