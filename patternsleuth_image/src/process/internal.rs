@@ -124,7 +124,7 @@ mod windows {
         Threading::GetCurrentProcess,
     };
 
-    use crate::image::pe::PEImage;
+    use crate::image::pe::PEImageBuilder;
     use crate::{Image, Memory};
 
     pub fn read_image<'data>() -> Result<Image<'data>> {
@@ -162,6 +162,9 @@ mod windows {
 
         let memory = Memory::new_internal_data(sections)?;
 
-        PEImage::read_inner_memory::<String>(image_base_address, None, false, memory, object)
+        PEImageBuilder::new()
+            .object(object)?
+            .memory(Box::new(memory))
+            .build()
     }
 }

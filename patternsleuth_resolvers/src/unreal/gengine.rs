@@ -2,10 +2,10 @@ use std::fmt::Debug;
 
 use iced_x86::Register;
 use itertools::Itertools as _;
+use patternsleuth_image::image::Image;
 
 use crate::{
     disassemble::{Control, disassemble},
-    image::Image,
     {Result, impl_resolver_singleton, try_ensure_one, unreal::util},
 };
 

@@ -133,7 +133,7 @@ impl ElfImage {
                         .iter()
                         .find(|s| s.name == ".text")
                         .context("Cannot find .text section")?
-                        .address();
+                        .address;
                     let ehframe_hdr_start = base_address + p.p_vaddr as usize;
                     let bases = BaseAddresses::default()
                         .set_eh_frame_hdr(ehframe_hdr_start as _)

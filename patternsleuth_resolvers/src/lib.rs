@@ -1,9 +1,9 @@
 pub mod disassemble;
 pub mod unreal;
 
-use image::Image;
+use _image::Image;
 use patternsleuth_image::MemoryAccessError;
-use patternsleuth_image::image;
+pub use patternsleuth_image::image as _image;
 
 use futures::{
     channel::oneshot,
@@ -194,7 +194,7 @@ macro_rules! _matcharm_generator {
             let mut res = None;
             $(
                 $crate::cfg_image::$img_ident! {
-                    if matches!(img, $crate::image::$enum_name_it::$img_ident(_)) {
+                    if matches!(img, $crate::_image::$enum_name_it::$img_ident(_)) {
                         res = Some($name::$img_ident($ctx).await);
                     }
                 }
@@ -244,7 +244,7 @@ macro_rules! _impl_resolver {
 
     (collect, $name:ident) => {
         $crate::_impl_resolver_inner!($name, |ctx| async {
-            $crate::image::image_type_reflection!(all, impl_resolver; generate; {ctx, $name})
+            $crate::_image::image_type_reflection!(all, impl_resolver; generate; {ctx, $name})
         });
 
         impl $crate::Singleton for $name {
@@ -295,7 +295,7 @@ macro_rules! _impl_resolver_singleton {
             if let Some(a) = std::env::var(concat!("PATTERNSLEUTH_RES_", stringify!($name))).ok().and_then(|s| (s.strip_prefix("0x").map(|s| usize::from_str_radix(s, 16).ok()).unwrap_or_else(|| s.parse().ok()))) {
                 return Ok($name(a));
             }
-            $crate::image::image_type_reflection!(all, impl_resolver_singleton; generate; {ctx, $name})
+            $crate::_image::image_type_reflection!(all, impl_resolver_singleton; generate; {ctx, $name})
         });
 
         impl $crate::Singleton for $name {

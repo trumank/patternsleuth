@@ -7,7 +7,7 @@ use itertools::Itertools;
 use super::{Image, ImageType};
 #[cfg(feature = "symbols")]
 use crate::symbols;
-use crate::{MemTraitNew, Memory, MemoryAccessError, RuntimeFunction};
+use crate::{Memory, MemoryAccessError, RuntimeFunction, SectionedMemoryTrait};
 use object::Object;
 
 pub struct PEImage {
@@ -218,25 +218,15 @@ impl Image<'_> {
     }
 }
 
-impl PEImage {
-    /// Read and parse ELF object, using data from memory
-    pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
-        base_address: usize,
-        #[allow(unused_variables)] exe_path: Option<P>,
-        cache_functions: bool,
-        memory: Box<dyn MemTraitNew<'data> + 'data>,
-        object: object::File<'_>,
-    ) -> Result<Image<'data>, anyhow::Error> {
-        #[cfg(feature = "symbols")]
-        let symbols = if let Some(exe_path) = exe_path {
-            let pdb_path = exe_path.as_ref().with_extension("pdb");
-            pdb_path
-                .exists()
-                .then(|| symbols::dump_pdb_symbols(pdb_path, base_address))
-                .transpose()?
-        } else {
-            None
-        };
+/// Helper struct to extract info from object::File without hitting lifetime issues with memory
+struct PEImagePartial {
+    base_address: usize,
+    imports: HashMap<String, HashMap<String, usize>>,
+    exception_directory_range: Range<usize>,
+}
+impl PEImagePartial {
+    fn new(object: object::File<'_>) -> Result<Self> {
+        let base_address = object.relative_address_base() as usize;
 
         let get_ex_dir = || -> Result<Range<usize>> {
             Ok(match object {
@@ -287,15 +277,41 @@ impl PEImage {
                 _ => bail!("not a PE file"),
             })
         };
+        Ok(Self {
+            base_address,
+            imports: get_imports().unwrap_or_default(),
+            exception_directory_range: get_ex_dir().unwrap_or_default(),
+        })
+    }
+}
+
+impl PEImage {
+    fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
+        base_address: usize,
+        #[allow(unused_variables)] exe_path: Option<P>,
+        cache_functions: bool,
+        memory: Box<dyn SectionedMemoryTrait<'data> + 'data>,
+        partial: PEImagePartial,
+    ) -> Result<Image<'data>, anyhow::Error> {
+        #[cfg(feature = "symbols")]
+        let symbols = if let Some(exe_path) = exe_path {
+            let pdb_path = exe_path.as_ref().with_extension("pdb");
+            pdb_path
+                .exists()
+                .then(|| symbols::dump_pdb_symbols(pdb_path, base_address))
+                .transpose()?
+        } else {
+            None
+        };
 
         let mut new = Image {
             base_address,
             memory,
             #[cfg(feature = "symbols")]
             symbols,
-            imports: get_imports().unwrap_or_default(),
+            imports: partial.imports,
             image_type: ImageType::PEImage(PEImage {
-                exception_directory_range: get_ex_dir().unwrap_or_default(),
+                exception_directory_range: partial.exception_directory_range,
                 exception_children_cache: Default::default(),
             }),
         };
@@ -305,21 +321,79 @@ impl PEImage {
         }
         Ok(new)
     }
+}
 
-    pub fn read_inner<P: AsRef<std::path::Path>>(
-        base_addr: Option<usize>,
-        exe_path: Option<P>,
-        cache_functions: bool,
-        object: object::File<'_>,
-    ) -> Result<Image<'_>, anyhow::Error> {
-        let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
-        let memory = Memory::new(&object)?;
-        Self::read_inner_memory(
-            base_address,
-            exe_path,
+pub struct PEImageBuilder<'data, 'path> {
+    partial: Option<PEImagePartial>,
+    memory: Option<Box<dyn SectionedMemoryTrait<'data> + 'data>>,
+    exe_path: Option<&'path std::path::Path>,
+    cache_functions: bool,
+}
+impl Default for PEImageBuilder<'_, '_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl<'data, 'path> PEImageBuilder<'data, 'path> {
+    pub fn new() -> Self {
+        Self {
+            partial: None,
+            memory: None,
+            exe_path: None,
+            cache_functions: false,
+        }
+    }
+    pub fn cache_functions(self, cache_functions: bool) -> Self {
+        Self {
             cache_functions,
-            Box::new(memory),
-            object,
+            ..self
+        }
+    }
+    pub fn exe_path(self, exe_path: Option<&'path std::path::Path>) -> Self {
+        Self { exe_path, ..self }
+    }
+    pub fn memory(self, memory: Box<dyn SectionedMemoryTrait<'data> + 'data>) -> Self {
+        Self {
+            memory: Some(memory),
+            ..self
+        }
+    }
+    pub fn object(self, object: object::File<'_>) -> Result<Self> {
+        let partial = PEImagePartial::new(object)?;
+        Ok(Self {
+            partial: Some(partial),
+            ..self
+        })
+    }
+    pub fn object_from_memory(
+        self,
+        memory: Box<dyn SectionedMemoryTrait<'data> + 'data>,
+        base_address: usize,
+    ) -> Result<Self> {
+        let object = object::File::parse(memory.range_from(base_address..)?)?;
+        let partial = PEImagePartial::new(object)?;
+        Ok(Self {
+            partial: Some(partial),
+            memory: Some(memory),
+            ..self
+        })
+    }
+    pub fn memory_from_object(self, object: object::File<'data>) -> Result<Self> {
+        let memory = Box::new(Memory::new(&object)?);
+        let partial = PEImagePartial::new(object)?;
+        Ok(Self {
+            partial: Some(partial),
+            memory: Some(memory),
+            ..self
+        })
+    }
+    pub fn build(self) -> Result<Image<'data>> {
+        PEImage::read_inner_memory(
+            self.partial.as_ref().unwrap().base_address,
+            self.exe_path,
+            self.cache_functions,
+            self.memory.unwrap(),
+            self.partial.unwrap(),
         )
     }
 }

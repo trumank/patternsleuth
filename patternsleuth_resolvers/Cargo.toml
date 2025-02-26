@@ -19,7 +19,7 @@ typetag = { version = "0.2.15", optional = true }
 tracing = "0.1.40"
 
 [features]
-default = ["image-pe", "image-elf"]
+default = []
 serde-resolvers = ["dep:serde", "dep:typetag", "patternsleuth_image/serde-resolvers"]
 image-pe = ["patternsleuth_image/image-pe"]
 image-elf = ["patternsleuth_image/image-elf"]

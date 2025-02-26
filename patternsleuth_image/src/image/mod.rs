@@ -29,10 +29,11 @@ image_type_dispatch! {
 }
 
 pub use _image_type_reflection as image_type_reflection;
+use pe::PEImageBuilder;
 
 pub struct Image<'data> {
     pub base_address: usize,
-    pub memory: Box<dyn MemTraitNew<'data> + 'data>,
+    pub memory: Box<dyn SectionedMemoryTrait<'data> + 'data>,
     #[cfg(feature = "symbols")]
     pub symbols: Option<HashMap<usize, symbols::Symbol>>,
     pub imports: HashMap<String, HashMap<String, usize>>,
@@ -55,28 +56,16 @@ impl<'data> Image<'data> {
                 ElfImage::read_inner(base_addr, exe_path, cache_functions, object)
             }
             #[cfg(feature = "image-pe")]
-            object::File::Pe64(_) => {
-                PEImage::read_inner(base_addr, exe_path, cache_functions, object)
-            }
+            object::File::Pe64(_) => PEImageBuilder::new()
+                .memory_from_object(object)?
+                .exe_path(exe_path.as_ref().map(AsRef::as_ref))
+                .build(),
             _ => Err(Error::msg("Unsupported file format")),
         }
     }
     pub fn builder() -> ImageBuilder {
         Default::default()
     }
-    //pub fn resolve<T: Send + Sync>(
-    //    &self,
-    //    resolver: &'static resolvers::ResolverFactory<T>,
-    //) -> resolvers::Result<T> {
-    //    resolvers::resolve(self, resolver)
-    //}
-
-    //pub fn resolve_many(
-    //    &self,
-    //    resolvers: &[fn() -> &'static resolvers::DynResolverFactory],
-    //) -> Vec<resolvers::Result<std::sync::Arc<dyn resolvers::Resolution>>> {
-    //    resolvers::resolve_many(self, resolvers)
-    //}
 
     pub fn scan<'patterns, S>(
         &self,

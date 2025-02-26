@@ -13,7 +13,7 @@ use scanner::{Pattern, Xref};
 use std::{
     borrow::Cow,
     collections::HashMap,
-    ops::{Index, Range, RangeFrom, RangeTo},
+    ops::{Range, RangeFrom, RangeTo},
     path::Path,
 };
 
@@ -145,19 +145,12 @@ impl RuntimeFunction {
     }
 }
 
-pub trait MemTraitNew<'data>:
-    MemoryTrait<'data>
-    + Matchable<'data>
-    + Index<usize, Output = u8>
-    + Index<Range<usize>, Output = [u8]>
-    + Send
-    + Sync
-{
-    fn sections(&self) -> Box<dyn Iterator<Item = &dyn SectionTraitNew<'data>> + '_>;
+pub trait SectionedMemoryTrait<'data>: MemoryTrait<'data> + Send + Sync {
+    fn sections(&self) -> Box<dyn Iterator<Item = &dyn SectionTrait<'data>> + '_>;
     fn get_section_containing(
         &self,
         address: usize,
-    ) -> Result<&dyn SectionTraitNew<'data>, MemoryAccessError> {
+    ) -> Result<&dyn SectionTrait<'data>, MemoryAccessError> {
         self.sections()
             .find(|section| {
                 address >= section.address() && address < section.address() + section.data().len()
@@ -165,7 +158,7 @@ pub trait MemTraitNew<'data>:
             .ok_or(MemoryAccessError::MemoryOutOfBoundsError)
     }
 }
-pub trait SectionTraitNew<'a>: MemoryBlockTrait<'a> + MemoryTrait<'a> + Send + Sync {
+pub trait SectionTrait<'a>: MemoryBlockTrait<'a> + MemoryTrait<'a> + Send + Sync {
     fn name(&self) -> &str;
     fn kind(&self) -> object::SectionKind;
 }
@@ -299,6 +292,15 @@ pub trait MemoryTrait<'data> {
 
         Ok(String::from_utf16(data)?)
     }
+
+    fn captures(
+        &self,
+        pattern: &Pattern,
+        address: usize,
+    ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'_>>>, MemoryAccessError> {
+        // TODO bounds check data passed to captures
+        Ok(pattern.captures(self.range_from(address..)?, address, 0))
+    }
 }
 
 impl<'data, T: MemoryBlockTrait<'data>> MemoryTrait<'data> for T {
@@ -335,23 +337,11 @@ impl<'data> MemoryTrait<'data> for Memory<'data> {
     }
 }
 
-pub struct MemorySection<'data> {
-    address: usize,
-    data: Cow<'data, [u8]>,
-}
-impl<'data> MemoryBlockTrait<'data> for MemorySection<'data> {
-    fn address(&self) -> usize {
-        self.address
-    }
-    fn data(&self) -> &[u8] {
-        &self.data
-    }
-}
-
 pub struct NamedMemorySection<'data> {
     name: String,
     kind: object::SectionKind,
-    section: MemorySection<'data>,
+    address: usize,
+    data: Cow<'data, [u8]>,
 }
 
 impl<'data> NamedMemorySection<'data> {
@@ -364,10 +354,8 @@ impl<'data> NamedMemorySection<'data> {
         Self {
             name,
             kind,
-            section: MemorySection {
-                address,
-                data: data.into(),
-            },
+            address,
+            data: data.into(),
         }
     }
 }
@@ -378,41 +366,35 @@ impl NamedMemorySection<'_> {
     pub fn kind(&self) -> object::SectionKind {
         self.kind
     }
-    pub fn address(&self) -> usize {
-        self.section.address()
-    }
-    pub fn data(&self) -> &[u8] {
-        self.section.data()
-    }
     pub fn len(&self) -> usize {
-        self.section.data.len()
+        self.data.len()
     }
     pub fn is_empty(&self) -> bool {
-        self.section.data.is_empty()
+        self.data.is_empty()
     }
 }
 impl<'data> MemoryBlockTrait<'data> for NamedMemorySection<'data> {
     fn address(&self) -> usize {
-        self.section.address()
+        self.address
     }
     fn data(&self) -> &[u8] {
-        self.section.data()
+        &self.data
     }
 }
 
 struct Memory<'data> {
     sections: Vec<NamedMemorySection<'data>>,
 }
-impl<'data> MemTraitNew<'data> for Memory<'data> {
-    fn sections(&self) -> Box<dyn Iterator<Item = &dyn SectionTraitNew<'data>> + '_> {
+impl<'data> SectionedMemoryTrait<'data> for Memory<'data> {
+    fn sections(&self) -> Box<dyn Iterator<Item = &dyn SectionTrait<'data>> + '_> {
         Box::new(
             self.sections
                 .iter()
-                .map(|s| -> &dyn SectionTraitNew<'data> { s }),
+                .map(|s| -> &dyn SectionTrait<'data> { s }),
         )
     }
 }
-impl<'data> SectionTraitNew<'data> for NamedMemorySection<'data> {
+impl<'data> SectionTrait<'data> for NamedMemorySection<'data> {
     fn name(&self) -> &str {
         &self.name
     }
@@ -479,8 +461,7 @@ impl<'data> Memory<'data> {
         self.sections
             .iter()
             .find(|section| {
-                address >= section.section.address
-                    && address < section.section.address + section.section.data.len()
+                address >= section.address && address < section.address + section.data.len()
             })
             .ok_or(MemoryAccessError::MemoryOutOfBoundsError)
     }
@@ -490,47 +471,13 @@ impl<'data> Memory<'data> {
     {
         self.sections.iter().find_map(|section| {
             if section.kind == kind {
-                section
-                    .section
-                    .data
-                    .windows(4)
-                    .enumerate()
-                    .find_map(|(i, slice)| {
-                        filter(section.section.address + i, slice)
-                            .then_some(section.section.address + i)
-                    })
+                section.data.windows(4).enumerate().find_map(|(i, slice)| {
+                    filter(section.address + i, slice).then_some(section.address + i)
+                })
             } else {
                 None
             }
         })
-    }
-}
-impl Index<usize> for Memory<'_> {
-    type Output = u8;
-    fn index(&self, index: usize) -> &Self::Output {
-        self.sections
-            .iter()
-            .find_map(|section| section.section.data.get(index - section.section.address))
-            .unwrap()
-    }
-}
-impl Index<Range<usize>> for Memory<'_> {
-    type Output = [u8];
-    fn index(&self, index: Range<usize>) -> &Self::Output {
-        self.sections
-            .iter()
-            .find_map(|section| {
-                if index.start >= section.section.address
-                    && index.end <= section.section.address + section.section.data.len()
-                {
-                    let relative_range =
-                        index.start - section.section.address..index.end - section.section.address;
-                    Some(&section.section.data[relative_range])
-                } else {
-                    None
-                }
-            })
-            .unwrap()
     }
 }
 
@@ -550,25 +497,5 @@ impl Addressable for patternsleuth_scanner::Capture<'_> {
     }
     fn u32(&self) -> u32 {
         u32::from_le_bytes(self.data.try_into().unwrap())
-    }
-}
-
-pub trait Matchable<'data> {
-    fn captures(
-        &self,
-        pattern: &Pattern,
-        address: usize,
-    ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'_>>>, MemoryAccessError>;
-}
-
-impl<'data> Matchable<'data> for Memory<'data> {
-    fn captures(
-        &self,
-        pattern: &Pattern,
-        address: usize,
-    ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'_>>>, MemoryAccessError> {
-        let s = self.get_section_containing(address)?;
-        // TODO bounds check data passed to captures
-        Ok(pattern.captures(s.data(), s.address(), address - s.address()))
     }
 }
