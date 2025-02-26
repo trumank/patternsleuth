@@ -7,7 +7,7 @@ use itertools::Itertools;
 use super::{Image, ImageType};
 #[cfg(feature = "symbols")]
 use crate::symbols;
-use crate::{Memory, MemoryAccessError, MemoryTrait, RuntimeFunction};
+use crate::{MemTraitNew, Memory, MemoryAccessError, MemoryTrait, RuntimeFunction};
 use object::Object;
 
 pub struct PEImage {
@@ -65,9 +65,9 @@ impl PEImage {
 
                 let section = image.memory.get_section_containing(unwind_addr)?;
 
-                let has_chain_info = section.section.index(unwind_addr)? >> 3 == 0x4;
+                let has_chain_info = section.index(unwind_addr)? >> 3 == 0x4;
                 if has_chain_info {
-                    let unwind_code_count = section.section.index(unwind_addr + 2)?;
+                    let unwind_code_count = section.index(unwind_addr + 2)?;
 
                     unwind_addr += 4 + 2 * unwind_code_count as usize;
                     if unwind_addr % 4 != 0 {
@@ -169,7 +169,7 @@ impl Image<'_> {
         #[allow(irrefutable_let_patterns)]
         if let ImageType::PEImage(ref mut pe) = self.image_type {
             for i in pe.exception_directory_range.clone().step_by(12) {
-                let f = RuntimeFunction::read(&self.memory, self.base_address, i)?;
+                let f = RuntimeFunction::read(self.memory.as_ref(), self.base_address, i)?;
                 pe.exception_children_cache.insert(f.range.start, vec![]);
 
                 let Ok(section) = self.memory.get_section_containing(f.unwind) else {
@@ -179,9 +179,9 @@ impl Image<'_> {
                 };
 
                 let mut unwind = f.unwind;
-                let has_chain_info = section.section.index(unwind)? >> 3 == 0x4;
+                let has_chain_info = section.index(unwind)? >> 3 == 0x4;
                 if has_chain_info {
-                    let unwind_code_count = section.section.index(unwind + 2)?;
+                    let unwind_code_count = section.index(unwind + 2)?;
 
                     unwind += 4 + 2 * unwind_code_count as usize;
                     if unwind % 4 != 0 {
@@ -224,7 +224,7 @@ impl PEImage {
         base_address: usize,
         #[allow(unused_variables)] exe_path: Option<P>,
         cache_functions: bool,
-        memory: Memory<'data>,
+        memory: Box<dyn MemTraitNew<'data> + 'data>,
         object: object::File<'_>,
     ) -> Result<Image<'data>, anyhow::Error> {
         #[cfg(feature = "symbols")]
@@ -314,6 +314,6 @@ impl PEImage {
     ) -> Result<Image<'_>, anyhow::Error> {
         let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
         let memory = Memory::new(&object)?;
-        Self::read_inner_memory(base_address, exe_path, cache_functions, memory, object)
+        Self::read_inner_memory(base_address, exe_path, cache_functions, Box::new(memory), object)
     }
 }

@@ -87,7 +87,7 @@ mod linux {
             object.relative_address_base() as usize,
             None,
             false,
-            memory,
+            Box::new(memory),
             object,
         )
     }

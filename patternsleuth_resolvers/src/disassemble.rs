@@ -4,7 +4,7 @@ use iced_x86::{Decoder, DecoderOptions, FlowControl, Formatter, Instruction, Nas
 
 use crate::{Image, MemoryAccessError, MemoryTrait};
 
-pub fn function_range(exe: &Image<'_>, address: usize) -> Result<Range<usize>, MemoryAccessError> {
+pub fn function_range(exe: &Image, address: usize) -> Result<Range<usize>, MemoryAccessError> {
     let min = address;
     let mut max = min;
     disassemble(exe, address, |inst| {
@@ -18,8 +18,8 @@ pub fn function_range(exe: &Image<'_>, address: usize) -> Result<Range<usize>, M
     Ok(min..max)
 }
 
-pub fn disassemble_single<'mem, 'img: 'mem>(
-    exe: &'img Image<'mem>,
+pub fn disassemble_single(
+    exe: &Image,
     address: usize,
 ) -> Result<Option<Instruction>, MemoryAccessError> {
     Ok(Decoder::with_ip(
@@ -38,21 +38,21 @@ pub enum Control {
     Exit,
 }
 
-pub fn disassemble<'mem, 'img: 'mem, F>(
-    exe: &'img Image<'mem>,
+pub fn disassemble<F>(
+    exe: &Image,
     address: usize,
     mut visitor: F,
 ) -> Result<(), MemoryAccessError>
 where
     F: FnMut(&Instruction) -> Result<Control, MemoryAccessError>,
 {
-    struct Ctx<'mem, 'img: 'mem> {
-        exe: &'img Image<'mem>,
+    struct Ctx<'data, 'img> {
+        exe: &'img Image<'data>,
         queue: Vec<usize>,
         visited: HashSet<usize>,
         address: usize,
-        block: &'mem [u8],
-        decoder: Decoder<'mem>,
+        block: &'data [u8],
+        decoder: Decoder<'data>,
         instruction: Instruction,
     }
 

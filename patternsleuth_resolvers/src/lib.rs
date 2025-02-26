@@ -172,11 +172,11 @@ impl PartialEq for dyn Resolution {
 }
 
 pub struct DynResolverFactory {
-    pub factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> DynResolver<'ctx>,
+    pub factory: for<'ctx> fn(&'ctx AsyncContext<'_, '_>) -> DynResolver<'ctx>,
 }
 
 pub struct ResolverFactory<T> {
-    pub factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> Resolver<'ctx, T>,
+    pub factory: for<'ctx> fn(&'ctx AsyncContext<'_, '_>) -> Resolver<'ctx, T>,
 }
 
 pub use ::futures;
@@ -237,7 +237,7 @@ macro_rules! _impl_resolver {
         $crate::cfg_image::$arch! {
             impl $name where $name: $crate::PleaseAddCollectForMe {
                 #[allow(non_snake_case)]
-                pub async fn $arch($ctx: &$crate::AsyncContext<'_>) -> $crate::Result<$name> $x
+                pub async fn $arch($ctx: &$crate::AsyncContext<'_, '_>) -> $crate::Result<$name> $x
             }
         }
     };
@@ -285,7 +285,7 @@ macro_rules! _impl_resolver_singleton {
         $crate::cfg_image::$arch! {
             impl $name where $name: $crate::PleaseAddCollectForMe {
                 #[allow(non_snake_case)]
-                async fn $arch($ctx: &$crate::AsyncContext<'_>) -> $crate::Result<$name> $x
+                async fn $arch($ctx: &$crate::AsyncContext<'_, '_>) -> $crate::Result<$name> $x
             }
         }
     };
@@ -444,18 +444,18 @@ struct AsyncContextInnerWrite {
     queue: Vec<(Pattern, oneshot::Sender<PatternMatches>)>,
 }
 
-struct AsyncContextInnerRead<'data> {
+struct AsyncContextInnerRead<'img, 'data> {
     write: Mutex<AsyncContextInnerWrite>,
-    image: &'data Image<'data>,
+    image: &'img Image<'data>,
 }
 
 #[derive(Clone)]
-pub struct AsyncContext<'data> {
-    read: Arc<AsyncContextInnerRead<'data>>,
+pub struct AsyncContext<'img, 'data> {
+    read: Arc<AsyncContextInnerRead<'img, 'data>>,
 }
 
-impl<'data> AsyncContext<'data> {
-    fn new(image: &'data Image<'data>) -> Self {
+impl<'img, 'data> AsyncContext<'img, 'data> {
+    fn new(image: &'img Image<'data>) -> Self {
         Self {
             read: Arc::new(AsyncContextInnerRead {
                 write: Default::default(),
@@ -463,7 +463,7 @@ impl<'data> AsyncContext<'data> {
             }),
         }
     }
-    pub fn image(&self) -> &Image<'_> {
+    pub fn image(&self) -> &'img Image<'data> {
         self.read.image
     }
     pub async fn scan(&self, pattern: Pattern) -> Vec<usize> {
@@ -542,9 +542,9 @@ impl<'data> AsyncContext<'data> {
 }
 
 #[tracing::instrument(level = "debug", skip_all, fields(stages))]
-pub fn eval<F, T: Send + Sync>(image: &Image<'_>, f: F) -> T
+pub fn eval<'img, 'data, F, T: Send + Sync>(image: &'img Image<'data>, f: F) -> T
 where
-    F: for<'ctx> FnOnce(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, T> + Send + Sync,
+    F: for<'ctx> FnOnce(&'ctx AsyncContext<'_, '_>) -> BoxFuture<'ctx, T> + Send + Sync,
 {
     {
         tracing::debug!("starting eval");
@@ -625,16 +625,16 @@ where
     }
 }
 
-pub fn resolve<T: Send + Sync>(
-    image: &Image<'_>,
+pub fn resolve<'data, 'img, T: Send + Sync>(
+    image: &'img Image<'data>,
     resolver: &'static ResolverFactory<T>,
 ) -> Result<T> {
     eval(image, |ctx| Box::pin(async { ctx.resolve(resolver).await }))
         .map(|ok| Arc::<T>::into_inner(ok).unwrap())
 }
 
-pub fn resolve_many(
-    image: &Image<'_>,
+pub fn resolve_many<'data, 'img>(
+    image: &'img Image<'data>,
     resolvers: &[fn() -> &'static DynResolverFactory],
 ) -> Vec<Result<Arc<dyn Resolution>>> {
     let fns = resolvers.iter().map(|r| r().factory).collect::<Vec<_>>();

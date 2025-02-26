@@ -79,7 +79,7 @@ impl ElfImage {
 // read_inner
 impl ElfImage {
     /// Read and parse ELF object, using data from memory
-    pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
+    fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
         base_address: usize,
         #[allow(unused_variables)] exe_path: Option<P>,
         linked: bool,
@@ -233,7 +233,7 @@ impl ElfImage {
         };
         Ok(Image {
             base_address,
-            memory,
+            memory: Box::new(memory),
             #[cfg(feature = "symbols")]
             symbols,
             imports: HashMap::default(),

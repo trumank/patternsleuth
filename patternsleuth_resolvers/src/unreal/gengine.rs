@@ -20,7 +20,7 @@ impl_resolver_singleton!(PEImage, GEngine, |ctx| async {
     let strings = ctx.scan(util::utf16_pattern("rhi.DumpMemory\0")).await;
     let refs = util::scan_xrefs(ctx, &strings).await;
 
-    fn for_each(img: &Image<'_>, addr: usize) -> Result<Option<usize>> {
+    fn for_each(img: &Image, addr: usize) -> Result<Option<usize>> {
         let Some(root) = img.get_root_function(addr)? else {
             return Ok(None);
         };

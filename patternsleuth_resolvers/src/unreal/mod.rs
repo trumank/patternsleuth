@@ -54,7 +54,7 @@ pub mod util {
         Pattern::from_bytes(utf16(string)).unwrap()
     }
     pub async fn scan_xrefs(
-        ctx: &AsyncContext<'_>,
+        ctx: &AsyncContext<'_, '_>,
         addresses: impl IntoIterator<Item = &usize> + Copy,
     ) -> Vec<usize> {
         let refs_indirect = join_all(
@@ -95,7 +95,7 @@ pub mod util {
     }
 
     pub async fn scan_xcalls(
-        ctx: &AsyncContext<'_>,
+        ctx: &AsyncContext<'_, '_>,
         addresses: impl IntoIterator<Item = &usize> + Copy,
     ) -> Vec<usize> {
         let refs_indirect = join_all(
@@ -123,7 +123,7 @@ pub mod util {
         refs.into_iter().flatten().collect()
     }
 
-    pub fn root_functions<'a, I>(ctx: &AsyncContext<'_>, addresses: I) -> Result<Vec<usize>>
+    pub fn root_functions<'a, I>(ctx: &AsyncContext<'_, '_>, addresses: I) -> Result<Vec<usize>>
     where
         I: IntoIterator<Item = &'a usize> + Copy,
     {
@@ -136,7 +136,7 @@ pub mod util {
             .collect())
     }
 
-    pub fn find_calls(img: &Image<'_>, f: usize) -> Result<Vec<Call>> {
+    pub fn find_calls<'a>(img: &Image, f: usize) -> Result<Vec<Call>> {
         let mut calls = vec![];
 
         disassemble(img, f, |inst| {
@@ -171,8 +171,8 @@ pub mod util {
         Ok(calls)
     }
 
-    pub fn find_path(
-        img: &Image<'_>,
+    pub fn find_path<'a>(
+        img: &'a Image<'a>,
         f: usize,
         depth: usize,
         searched: &mut HashSet<usize>,

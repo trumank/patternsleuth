@@ -175,7 +175,7 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
         .into_iter()
         .flatten();
 
-    fn check_is_new_object(img: &Image<'_>, f: usize) -> Result<bool> {
+    fn check_is_new_object(img: &Image, f: usize) -> Result<bool> {
         let cmp = "NewObject with empty name can't"
             .encode_utf16()
             .flat_map(u16::to_le_bytes)
@@ -231,7 +231,7 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
         Ok(false)
     }
 
-    fn check_is_static_construct(img: &Image<'_>, f: usize) -> Result<bool> {
+    fn check_is_static_construct(img: &Image, f: usize) -> Result<bool> {
         let mut is = false;
         disassemble(img, f, |inst| {
             let cur = inst.ip() as usize;

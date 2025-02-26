@@ -330,7 +330,7 @@ fn scan(command: CommandScan) -> Result<()> {
         #[allow(unused_assignments)]
         let mut bin_data = None;
 
-        let (name, exe) = match game {
+        let (name, img) = match game {
             GameEntry::File(GameFileEntry { name, exe_path }) => {
                 output.println(format!("{:?} {:?}", name, exe_path.display()));
 
@@ -365,7 +365,7 @@ fn scan(command: CommandScan) -> Result<()> {
 
         games.insert(name.to_string());
 
-        let scan = exe.scan(&patterns)?;
+        let scan = img.scan(&patterns)?;
 
         // group results by Sig
         let folded_scans = scan
@@ -394,7 +394,7 @@ fn scan(command: CommandScan) -> Result<()> {
                             "{}\n{}",
                             m.0.name,
                             disassemble::disassemble(
-                                &exe,
+                                &img,
                                 m.1.address,
                                 m.0.scan.scan_type.get_pattern()
                             )
@@ -417,7 +417,7 @@ fn scan(command: CommandScan) -> Result<()> {
                             // sort by pattern name, then match address
                             .sorted_by_key(|&data| data.0)
                             .map(|(m, counts)| {
-                                let dis = disassemble::disassemble(&exe, m.address, None);
+                                let dis = disassemble::disassemble(&img, m.address, None);
 
                                 let mut lines = vec![];
                                 for (name, count) in counts.iter().sorted_by_key(|e| e.0) {
@@ -469,7 +469,7 @@ fn scan(command: CommandScan) -> Result<()> {
                                     format!("{:016x} {:?}{}", m.1.address, m.0, count)
                                         .normal()
                                         .to_string(),
-                                    exe.symbols
+                                    img.symbols
                                         .as_ref()
                                         .and_then(|symbols| symbols.get(&m.1.address)),
                                 )
@@ -502,7 +502,7 @@ fn scan(command: CommandScan) -> Result<()> {
         };
 
         let resolution = tracing::info_span!("scan", game = game_name)
-            .in_scope(|| resolve_many(&exe, &dyn_resolvers));
+            .in_scope(|| resolve_many(&img, &dyn_resolvers));
 
         for (resolver, resolution) in resolvers.iter().zip(&resolution) {
             table.add_row(Row::new(

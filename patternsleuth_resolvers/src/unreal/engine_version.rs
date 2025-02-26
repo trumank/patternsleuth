@@ -163,6 +163,7 @@ impl_resolver!(PEImage, EngineVersionStrings, |ctx| async {
     for (_, pattern, addresses) in res {
         for a in addresses {
             let caps = mem.captures(&pattern, a)?.unwrap();
+
             let date = caps[1].rip();
             if mem
                 .range(date..date + 6)
