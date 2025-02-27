@@ -119,7 +119,7 @@ mod windows {
     use anyhow::{Result, bail};
     use object::{Object, ObjectSection};
 
-    use crate::image::pe::PEImage;
+    use crate::image::pe::PEImageBuilder;
     use crate::{Image, Memory};
 
     use windows::Win32::Foundation::HMODULE;
@@ -132,7 +132,7 @@ mod windows {
     };
 
     pub fn read_image_from_pid<'data>(pid: i32) -> Result<Image<'data>> {
-        let (memory, base) = unsafe {
+        let memory = unsafe {
             let process = OpenProcess(
                 PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
                 false,
@@ -169,7 +169,7 @@ mod windows {
                 None,
             )?;
 
-            (mem, info.lpBaseOfDll as usize)
+            mem
         };
 
         let object = object::File::parse(memory.as_slice())?;
@@ -186,6 +186,9 @@ mod windows {
 
         let memory = Memory::new_external_data(sections)?;
 
-        PEImage::read_inner_memory::<String>(base, None, false, memory, object)
+        PEImageBuilder::new()
+            .object(object)?
+            .memory(Box::new(memory))
+            .build()
     }
 }
