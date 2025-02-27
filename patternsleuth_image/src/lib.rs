@@ -157,6 +157,13 @@ pub trait SectionedMemoryTrait<'data>: MemoryTrait<'data> + Send + Sync {
             })
             .ok_or(MemoryAccessError::MemoryOutOfBoundsError)
     }
+    fn read(&self, address: usize, buf: &mut [u8]) -> Result<(), MemoryAccessError> {
+        buf.copy_from_slice(
+            self.get_section_containing(address)?
+                .range(address..address + buf.len())?,
+        );
+        Ok(())
+    }
 }
 pub trait SectionTrait<'a>: MemoryBlockTrait<'a> + MemoryTrait<'a> + Send + Sync {
     fn name(&self) -> &str;
