@@ -131,7 +131,7 @@ impl<'data> Image<'data> {
                     object::File::Pe64(_) => {
                         return PEImageBuilder::new()
                             .object(object)?
-                            .memory(Box::new(Memory { sections }))
+                            .memory(Box::new(Memory::new_sections(sections)))
                             .exe_path(exe_path.as_ref().map(AsRef::as_ref))
                             .build();
                     }

@@ -9,6 +9,7 @@ pub mod scanner {
     pub use patternsleuth_scanner::*;
 }
 
+use itertools::Itertools;
 use scanner::{Pattern, Xref};
 use std::{
     borrow::Cow,
@@ -18,7 +19,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use object::{File, Object, ObjectSection};
+use object::{File, Object, ObjectSection, ReadRef};
 
 use image::Image;
 
@@ -391,7 +392,8 @@ impl<'data> MemoryBlockTrait<'data> for NamedMemorySection<'data> {
 }
 
 struct Memory<'data> {
-    pub sections: Vec<NamedMemorySection<'data>>,
+    sections: Vec<NamedMemorySection<'data>>,
+    section_addresses: Vec<usize>,
 }
 impl<'data> SectionedMemoryTrait<'data> for Memory<'data> {
     fn sections(&self) -> Box<dyn Iterator<Item = &dyn SectionTrait<'data>> + '_> {
@@ -401,6 +403,14 @@ impl<'data> SectionedMemoryTrait<'data> for Memory<'data> {
                 .map(|s| -> &dyn SectionTrait<'data> { s }),
         )
     }
+    fn get_section_containing(
+        &self,
+        address: usize,
+    ) -> Result<&dyn SectionTrait<'data>, MemoryAccessError> {
+        // use specialized version which is much faster
+        self.get_section_containing(address)
+            .map(|s| -> &dyn SectionTrait<'data> { s })
+    }
 }
 impl<'data> SectionTrait<'data> for NamedMemorySection<'data> {
     fn name(&self) -> &str {
@@ -409,9 +419,23 @@ impl<'data> SectionTrait<'data> for NamedMemorySection<'data> {
 }
 
 impl<'data> Memory<'data> {
+    pub fn new_sections(mut sections: Vec<NamedMemorySection<'data>>) -> Self {
+        sections.sort_by_key(|s| s.address);
+        // verify non-overlapping sections (dumps sometimes contain them so is disable ¯\_(ツ)_/¯)
+        //for (a, b) in sections.iter().tuple_windows() {
+        //    assert!(
+        //        a.address + a.data.len() < b.address,
+        //        "sections have overlapping memory"
+        //    );
+        //}
+        Self {
+            section_addresses: sections.iter().map(|s| s.address).collect(),
+            sections,
+        }
+    }
     pub fn new(object: &File<'data>) -> Result<Self> {
-        Ok(Self {
-            sections: object
+        Ok(Self::new_sections(
+            object
                 .sections()
                 .map(|s| {
                     Ok(NamedMemorySection::new(
@@ -424,11 +448,11 @@ impl<'data> Memory<'data> {
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?,
-        })
+        ))
     }
     pub fn new_external_data(sections: Vec<(object::Section<'_, '_>, Vec<u8>)>) -> Result<Self> {
-        Ok(Self {
-            sections: sections
+        Ok(Self::new_sections(
+            sections
                 .into_iter()
                 .map(|(s, d)| {
                     Ok(NamedMemorySection::new(
@@ -441,13 +465,13 @@ impl<'data> Memory<'data> {
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?,
-        })
+        ))
     }
     pub fn new_internal_data(
         sections: Vec<(object::Section<'_, '_>, &'data [u8])>,
     ) -> Result<Self> {
-        Ok(Self {
-            sections: sections
+        Ok(Self::new_sections(
+            sections
                 .into_iter()
                 .map(|(s, d)| {
                     Ok(NamedMemorySection::new(
@@ -460,7 +484,7 @@ impl<'data> Memory<'data> {
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?,
-        })
+        ))
     }
     pub fn sections(&self) -> &[NamedMemorySection] {
         &self.sections
@@ -469,12 +493,21 @@ impl<'data> Memory<'data> {
         &self,
         address: usize,
     ) -> Result<&NamedMemorySection<'data>, MemoryAccessError> {
-        self.sections
-            .iter()
-            .find(|section| {
-                address >= section.address && address < section.address + section.data.len()
-            })
-            .ok_or(MemoryAccessError::MemoryOutOfBoundsError)
+        match self.section_addresses.binary_search(&address) {
+            Ok(idx) => return Ok(&self.sections[idx]),
+            // Not an exact match, so we need the insertion point - 1
+            Err(idx) if idx > 0 => {
+                let prev_idx = idx - 1;
+                // Check if address is within the range
+                let section = &self.sections[prev_idx];
+                if address < section.address + section.data.len() {
+                    return Ok(section);
+                }
+            }
+            _ => {}
+        }
+
+        Err(MemoryAccessError::MemoryOutOfBoundsError)
     }
 }
 

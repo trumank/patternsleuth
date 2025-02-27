@@ -323,7 +323,7 @@ impl ElfImage {
                 })
                 .collect::<Vec<_>>();
 
-            let memory = Memory { sections };
+            let memory = Memory::new_sections(sections);
 
             Self::read_inner_memory(base_address, exe_path, linked, memory, object)
         } else {
