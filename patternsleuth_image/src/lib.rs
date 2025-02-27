@@ -160,7 +160,6 @@ pub trait SectionedMemoryTrait<'data>: MemoryTrait<'data> + Send + Sync {
 }
 pub trait SectionTrait<'a>: MemoryBlockTrait<'a> + MemoryTrait<'a> + Send + Sync {
     fn name(&self) -> &str;
-    fn kind(&self) -> object::SectionKind;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -337,9 +336,14 @@ impl<'data> MemoryTrait<'data> for Memory<'data> {
     }
 }
 
+#[derive(Default, Debug, PartialEq)]
+pub struct SectionFlags {
+    kind: Option<object::SectionKind>,
+}
+
 pub struct NamedMemorySection<'data> {
     name: String,
-    kind: object::SectionKind,
+    flags: SectionFlags,
     address: usize,
     data: Cow<'data, [u8]>,
 }
@@ -348,12 +352,12 @@ impl<'data> NamedMemorySection<'data> {
     fn new<D: Into<Cow<'data, [u8]>>>(
         name: String,
         address: usize,
-        kind: object::SectionKind,
+        flags: SectionFlags,
         data: D,
     ) -> Self {
         Self {
             name,
-            kind,
+            flags,
             address,
             data: data.into(),
         }
@@ -362,9 +366,6 @@ impl<'data> NamedMemorySection<'data> {
 impl NamedMemorySection<'_> {
     pub fn name(&self) -> &str {
         &self.name
-    }
-    pub fn kind(&self) -> object::SectionKind {
-        self.kind
     }
     pub fn len(&self) -> usize {
         self.data.len()
@@ -383,7 +384,7 @@ impl<'data> MemoryBlockTrait<'data> for NamedMemorySection<'data> {
 }
 
 struct Memory<'data> {
-    sections: Vec<NamedMemorySection<'data>>,
+    pub sections: Vec<NamedMemorySection<'data>>,
 }
 impl<'data> SectionedMemoryTrait<'data> for Memory<'data> {
     fn sections(&self) -> Box<dyn Iterator<Item = &dyn SectionTrait<'data>> + '_> {
@@ -398,9 +399,6 @@ impl<'data> SectionTrait<'data> for NamedMemorySection<'data> {
     fn name(&self) -> &str {
         &self.name
     }
-    fn kind(&self) -> object::SectionKind {
-        self.kind
-    }
 }
 
 impl<'data> Memory<'data> {
@@ -412,7 +410,9 @@ impl<'data> Memory<'data> {
                     Ok(NamedMemorySection::new(
                         s.name()?.to_string(),
                         s.address() as usize,
-                        s.kind(),
+                        SectionFlags {
+                            kind: Some(s.kind()),
+                        },
                         s.data()?,
                     ))
                 })
@@ -427,7 +427,9 @@ impl<'data> Memory<'data> {
                     Ok(NamedMemorySection::new(
                         s.name()?.to_string(),
                         s.address() as usize,
-                        s.kind(),
+                        SectionFlags {
+                            kind: Some(s.kind()),
+                        },
                         d,
                     ))
                 })
@@ -444,7 +446,9 @@ impl<'data> Memory<'data> {
                     Ok(NamedMemorySection::new(
                         s.name()?.to_string(),
                         s.address() as usize,
-                        s.kind(),
+                        SectionFlags {
+                            kind: Some(s.kind()),
+                        },
                         d,
                     ))
                 })
@@ -464,20 +468,6 @@ impl<'data> Memory<'data> {
                 address >= section.address && address < section.address + section.data.len()
             })
             .ok_or(MemoryAccessError::MemoryOutOfBoundsError)
-    }
-    pub fn find<F>(&self, kind: object::SectionKind, filter: F) -> Option<usize>
-    where
-        F: Fn(usize, &[u8]) -> bool,
-    {
-        self.sections.iter().find_map(|section| {
-            if section.kind == kind {
-                section.data.windows(4).enumerate().find_map(|(i, slice)| {
-                    filter(section.address + i, slice).then_some(section.address + i)
-                })
-            } else {
-                None
-            }
-        })
     }
 }
 

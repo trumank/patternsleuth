@@ -95,27 +95,15 @@ impl<'data> Image<'data> {
                 .iter()
                 .filter_map(|scan| {
                     scan.scan
-                        .section
-                        .is_none_or(|s| s == section.kind())
-                        .then(|| {
-                            scan.scan
-                                .scan_type
-                                .get_pattern()
-                                .map(|pattern| (scan, pattern))
-                        })
-                        .flatten()
+                        .scan_type
+                        .get_pattern()
+                        .map(|pattern| (scan, pattern))
                 })
                 .unzip();
 
             let (xref_scans, xrefs): (Vec<_>, Vec<_>) = scan_queue
                 .iter()
-                .filter_map(|scan| {
-                    scan.scan
-                        .section
-                        .is_none_or(|s| s == section.kind())
-                        .then(|| scan.scan.scan_type.get_xref().map(|xref| (scan, xref)))
-                        .flatten()
-                })
+                .filter_map(|scan| scan.scan.scan_type.get_xref().map(|xref| (scan, xref)))
                 .unzip();
 
             let scan_results = scanner::scan_pattern(&patterns, base_address, data)

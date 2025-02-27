@@ -252,17 +252,17 @@ impl ElfImage {
     ) -> Result<Image<'_>, anyhow::Error> {
         let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
         let linked = base_addr.is_some();
-        let calc_kind = |flag: u32| {
-            if flag & object::elf::PF_X == object::elf::PF_X {
-                SectionKind::Text
-            } else if flag & object::elf::PF_W == object::elf::PF_W {
-                SectionKind::Data
-            } else if flag & object::elf::PF_R == object::elf::PF_R {
-                SectionKind::ReadOnlyData
-            } else {
-                SectionKind::Unknown
-            }
-        };
+        //let calc_kind = |flag: u32| {
+        //    if flag & object::elf::PF_X == object::elf::PF_X {
+        //        SectionKind::Text
+        //    } else if flag & object::elf::PF_W == object::elf::PF_W {
+        //        SectionKind::Data
+        //    } else if flag & object::elf::PF_R == object::elf::PF_R {
+        //        SectionKind::ReadOnlyData
+        //    } else {
+        //        SectionKind::Unknown
+        //    }
+        //};
 
         // the elf may not contains section table if it's in memory, use phdr instead.
         if let File::Elf64(object) = object {
@@ -317,7 +317,7 @@ impl ElfImage {
                     NamedMemorySection::new(
                         section_name,
                         base_address + segment.p_vaddr as usize,
-                        calc_kind(segment.p_flags),
+                        crate::SectionFlags::default(),
                         &object.data()[offset_range],
                     )
                 })

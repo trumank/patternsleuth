@@ -594,7 +594,7 @@ where
                     let span = tracing::debug_span!(
                         "section",
                         section = section.name(),
-                        kind = format!("{:?}", section.kind()),
+                        //kind = format!("{:?}", section.kind()),
                         results = tracing::field::Empty
                     )
                     .entered();
