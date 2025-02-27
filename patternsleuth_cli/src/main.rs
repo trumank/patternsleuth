@@ -982,7 +982,7 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameFileEntry>> {
                 return Ok(None);
             }
 
-            let Some(exe_path) = find_ext(entry.path(), &["exe", "elf"])
+            let Some(exe_path) = find_ext(entry.path(), &["exe", "elf", "dmp"])
                 .transpose()
                 .transpose()?
             else {

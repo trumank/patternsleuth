@@ -15,6 +15,7 @@ msvc-demangler = { workspace = true, optional = true}
 itertools.workspace = true
 serde = { workspace = true, optional = true, features = ["derive"] }
 gimli = { version = "0.28.1", optional = true }
+minidump = "0.24.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { version = "0.2.152", optional = true }
