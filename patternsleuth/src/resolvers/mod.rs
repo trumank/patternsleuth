@@ -43,15 +43,12 @@ pub fn try_ensure_one<T: std::fmt::Debug + PartialEq>(
         }
     }
     match unique.len() {
-        0 => Err(ResolveError::Msg("expected at least one value".into())),
+        0 => Err(ResolveError::new_msg("expected at least one value")),
         1 => Ok(unique.swap_remove(0)),
-        len => Err(ResolveError::Msg(
-            format!(
-                "found {}{len} unique values {unique:X?}",
-                if reached_max { ">=" } else { "" }
-            )
-            .into(),
-        )),
+        len => Err(ResolveError::new_msg(format!(
+            "found {}{len} unique values {unique:X?}",
+            if reached_max { ">=" } else { "" }
+        ))),
     }
 }
 
@@ -61,15 +58,37 @@ pub type Result<T> = std::result::Result<T, ResolveError>;
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub enum ResolveError {
+pub struct ResolveError {
+    context: Vec<String>,
+    r#type: ResolveErrorType,
+}
+impl ResolveError {
+    fn new_msg(msg: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            context: vec![],
+            r#type: ResolveErrorType::Msg(msg.into()),
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub enum ResolveErrorType {
     Msg(Cow<'static, str>),
     MemoryAccessOutOfBounds(MemoryAccessError),
 }
 impl std::fmt::Display for ResolveError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            ResolveError::Msg(msg) => write!(f, "{msg}"),
-            ResolveError::MemoryAccessOutOfBounds(err) => err.fmt(f),
+        match &self.r#type {
+            ResolveErrorType::Msg(msg) => {
+                for ctx in self.context.iter().rev() {
+                    write!(f, "{ctx}: ")?;
+                }
+                write!(f, "{msg}")
+            }
+            ResolveErrorType::MemoryAccessOutOfBounds(err) => err.fmt(f),
         }
     }
 }
@@ -77,14 +96,17 @@ impl Error for ResolveError {}
 
 impl From<MemoryAccessError> for ResolveError {
     fn from(value: MemoryAccessError) -> Self {
-        Self::MemoryAccessOutOfBounds(value)
+        Self {
+            context: vec![],
+            r#type: ResolveErrorType::MemoryAccessOutOfBounds(value),
+        }
     }
 }
 
 #[macro_export]
 macro_rules! _bail_out {
     ($msg:expr) => {
-        return Err($crate::resolvers::ResolveError::Msg($msg.into()));
+        return Err($crate::resolvers::ResolveError::new_msg($msg));
     };
 }
 pub use _bail_out as bail_out;
@@ -99,7 +121,7 @@ impl<T> Context<T> for Option<T> {
     fn context(self, msg: &'static str) -> Result<T> {
         match self {
             Some(value) => Ok(value),
-            None => Err(ResolveError::Msg(msg.into())),
+            None => Err(ResolveError::new_msg(msg)),
         }
     }
 }
@@ -168,10 +190,12 @@ impl PartialEq for dyn Resolution {
 }
 
 pub struct DynResolverFactory {
+    pub name: &'static str,
     pub factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> DynResolver<'ctx>,
 }
 
 pub struct ResolverFactory<T> {
+    pub name: &'static str,
     pub factory: for<'ctx> fn(&'ctx AsyncContext<'_>) -> Resolver<'ctx, T>,
 }
 
@@ -352,6 +376,7 @@ macro_rules! _impl_resolver_inner {
                 static GLOBAL: ::std::sync::OnceLock<&$crate::resolvers::ResolverFactory<$name>> = ::std::sync::OnceLock::new();
 
                 GLOBAL.get_or_init(|| &$crate::resolvers::ResolverFactory {
+                    name: stringify!($name),
                     factory: |$ctx: &$crate::resolvers::AsyncContext| -> $crate::resolvers::futures::future::BoxFuture<$crate::resolvers::Result<$name>> {
                         Box::pin(async $x)
                     },
@@ -361,6 +386,7 @@ macro_rules! _impl_resolver_inner {
                 static GLOBAL: ::std::sync::OnceLock<&$crate::resolvers::DynResolverFactory> = ::std::sync::OnceLock::new();
 
                 GLOBAL.get_or_init(|| &$crate::resolvers::DynResolverFactory {
+                    name: stringify!($name),
                     factory: |$ctx: &$crate::resolvers::AsyncContext| -> $crate::resolvers::futures::future::BoxFuture<$crate::resolvers::Result<::std::sync::Arc<dyn $crate::resolvers::Resolution>>> {
                         Box::pin(async {
                             $ctx.resolve(Self::resolver()).await.map(|ok| -> ::std::sync::Arc<dyn $crate::resolvers::Resolution> { ok })
@@ -543,8 +569,16 @@ impl<'data> AsyncContext<'data> {
         }
 
         // compute the resolver value
+        let name = resolver.name;
         let resolver = (resolver.factory)(self);
-        let res = resolver.await.map(Arc::new);
+        let res = match resolver.await {
+            Err(mut e) => {
+                e.context.push(name.into());
+                Err(e)
+            }
+            res => res,
+        };
+        let res = res.map(Arc::new);
 
         let cache: Result<Arc<dyn Any + Send + Sync>> = match res.as_ref() {
             Ok(ok) => Ok(ok.clone()),

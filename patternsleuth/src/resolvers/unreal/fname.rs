@@ -105,7 +105,7 @@ impl_resolver_singleton!(ElfImage, FNameCtorWchar, |ctx| async {
         }
     }
     // how to scan code from X?
-    let result = result.ok_or(ResolveError::Msg("cannot find address".into()))?;
+    let result = result.ok_or(ResolveError::new_msg("cannot find address"))?;
     /*
     Post check
     if util::root_functions(ctx, &[result]).unwrap()[0] == result {
