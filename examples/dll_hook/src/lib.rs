@@ -1,18 +1,16 @@
-#![feature(backtrace_frames)]
-
 mod app;
 mod gui;
 mod hooks;
 mod object_cache;
 mod ue;
 
+use std::mem::MaybeUninit;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
-use patternsleuth::resolvers::impl_try_collector;
-use patternsleuth::resolvers::unreal::UObjectBaseUtilityGetPathName;
-use patternsleuth::resolvers::unreal::blueprint_library::UFunctionBind;
-use patternsleuth::resolvers::unreal::{
+use patternsleuth_resolvers::unreal::UObjectBaseUtilityGetPathName;
+use patternsleuth_resolvers::unreal::blueprint_library::UFunctionBind;
+use patternsleuth_resolvers::unreal::{
     KismetSystemLibrary,
     fname::FNameToString,
     game_loop::{FEngineLoopInit, UGameEngineTick},
@@ -22,6 +20,7 @@ use patternsleuth::resolvers::unreal::{
     },
     kismet::{FFrameStep, FFrameStepExplicitProperty, FFrameStepViaExec},
 };
+use patternsleuth_resolvers::{impl_try_collector, resolve};
 use simple_log::{LogConfigBuilder, error, info};
 use windows::Win32::{
     Foundation::HMODULE,
@@ -31,36 +30,7 @@ use windows::Win32::{
     },
 };
 
-// x3daudio1_7.dll
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn X3DAudioCalculate() {}
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn X3DAudioInitialize() {}
-
-// d3d9.dll
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn D3DPERF_EndEvent() {}
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn D3DPERF_BeginEvent() {}
-
-// d3d11.dll
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn D3D11CreateDevice() {}
-
-// dxgi.dll
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn CreateDXGIFactory() {}
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn CreateDXGIFactory1() {}
-
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(non_snake_case, unused_variables)]
 extern "system" fn DllMain(dll_module: HMODULE, call_reason: u32, _: *mut ()) -> bool {
     unsafe {
@@ -106,10 +76,8 @@ pub struct FFrameKismetExecutionMessage(usize);
 mod resolvers {
     use super::*;
 
-    use patternsleuth::{
-        resolvers::{futures::future::join_all, *},
-        scanner::Pattern,
-    };
+    use patternsleuth_image::scanner::Pattern;
+    use patternsleuth_resolvers::{futures::future::join_all, *};
 
     impl_resolver_singleton!(collect, FFrameKismetExecutionMessage);
     impl_resolver_singleton!(PEImage, FFrameKismetExecutionMessage, |ctx| async {
@@ -140,7 +108,7 @@ impl_try_collector! {
     }
 }
 
-static mut GLOBALS: Option<Globals> = None;
+static mut GLOBALS: MaybeUninit<Globals> = MaybeUninit::uninit();
 
 pub struct Globals {
     resolution: DllHookResolution,
@@ -173,7 +141,10 @@ impl Globals {
 }
 
 pub fn globals() -> &'static Globals {
-    unsafe { GLOBALS.as_ref().unwrap() }
+    #[allow(static_mut_refs)]
+    unsafe {
+        GLOBALS.assume_init_ref()
+    }
 }
 
 #[macro_export]
@@ -195,26 +166,29 @@ fn dump_backtrace() {
 }
 
 unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
-    let exe = patternsleuth::process::internal::read_image()?;
+    unsafe {
+        let exe = patternsleuth_image::process::internal::read_image()?;
 
-    info!("starting scan");
-    let resolution = exe.resolve(DllHookResolution::resolver())?;
-    info!("finished scan");
+        info!("starting scan");
+        let resolution = resolve(&exe, DllHookResolution::resolver())?;
+        info!("finished scan");
 
-    info!("results: {:?}", resolution);
+        info!("results: {:?}", resolution);
 
-    let guobject_array: &'static ue::FUObjectArray =
-        &*(resolution.guobject_array.0 as *const ue::FUObjectArray);
+        let guobject_array: &'static ue::FUObjectArray =
+            &*(resolution.guobject_array.0 as *const ue::FUObjectArray);
 
-    GLOBALS = Some(Globals {
-        guobject_array: guobject_array.into(),
-        resolution,
-        main_thread_id: std::thread::current().id(),
-    });
+        #[allow(static_mut_refs)]
+        GLOBALS.write(Globals {
+            guobject_array: guobject_array.into(),
+            resolution,
+            main_thread_id: std::thread::current().id(),
+        });
 
-    hooks::initialize()?;
+        hooks::initialize()?;
 
-    info!("initialized");
+        info!("initialized");
 
-    app::run(bin_dir)
+        app::run(bin_dir)
+    }
 }

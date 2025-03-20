@@ -76,6 +76,7 @@ pub unsafe fn initialize() -> Result<()> {
 
             //info!("tick time={:0.5}", delta_seconds);
 
+            #[allow(static_mut_refs)]
             GUOBJECT_LOCK.take();
             HookUGameEngineTick.call(game_engine, delta_seconds, idle_mode);
             GUOBJECT_LOCK = Some(globals().guobject_array());
