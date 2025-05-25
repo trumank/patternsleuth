@@ -29,15 +29,26 @@ impl_resolver_singleton!(ElfImage, Main, |_ctx| async {
 pub struct FEngineLoopTick(pub usize);
 impl_resolver_singleton!(collect, FEngineLoopTick);
 impl_resolver_singleton!(PEImage, FEngineLoopTick, |ctx| async {
-    let strings = ["DeferredTickTime\0", "ConcurrentWithSlateTickTasks_Wait\0"];
-    let strings: Vec<_> = join_all(strings.map(|s| ctx.scan(util::utf8_pattern(s))))
+    let strings = ["t.IdleWhenNotForeground\0", "r.OneFrameThreadLag\0"];
+
+    let strings: Vec<Vec<_>> = join_all(strings.map(|s| ctx.scan(util::utf16_pattern(s))))
         .await
         .into_iter()
-        .flatten()
         .collect();
-    let refs = util::scan_xrefs(ctx, &strings).await;
-    let fns = util::root_functions(ctx, &refs)?;
-    Ok(Self(ensure_one(fns)?))
+
+    let mut fns: Vec<Vec<usize>> = join_all(strings.iter().map(|s| util::scan_xrefs(ctx, s)))
+        .await
+        .into_iter()
+        .map(|refs| util::root_functions(ctx, &refs))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // maybe HashSet?
+    let mut common = fns.pop().unwrap();
+    for r in fns {
+        common.retain(|f| r.contains(f));
+    }
+
+    Ok(Self(ensure_one(common.into_iter())?))
 });
 impl_resolver_singleton!(ElfImage, FEngineLoopTick, |_ctx| async {
     super::bail_out!("ElfImage unimplemented");
