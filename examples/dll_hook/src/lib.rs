@@ -9,12 +9,10 @@ mod ue;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
-use patternsleuth::resolvers::impl_try_collector;
 use patternsleuth::resolvers::unreal::blueprint_library::UFunctionBind;
-use patternsleuth::resolvers::unreal::UObjectBaseUtilityGetPathName;
 use patternsleuth::resolvers::unreal::{
     fname::FNameToString,
-    game_loop::{FEngineLoopInit, UGameEngineTick},
+    game_loop::{FEngineLoopInit, FEngineLoopTick},
     gmalloc::GMalloc,
     guobject_array::{
         FUObjectArrayAllocateUObjectIndex, FUObjectArrayFreeUObjectIndex, GUObjectArray,
@@ -22,6 +20,7 @@ use patternsleuth::resolvers::unreal::{
     kismet::{FFrameStep, FFrameStepExplicitProperty, FFrameStepViaExec},
     KismetSystemLibrary,
 };
+use patternsleuth::resolvers::{impl_try_collector, resolve};
 use simple_log::{error, info, LogConfigBuilder};
 use windows::Win32::{
     Foundation::HMODULE,
@@ -111,13 +110,18 @@ mod resolvers {
         scanner::Pattern,
     };
 
-    impl_resolver_singleton!(collect, FFrameKismetExecutionMessage);
-    impl_resolver_singleton!(PEImage, FFrameKismetExecutionMessage, |ctx| async {
-        // void FFrame::KismetExecutionMessage(wchar16 const* Message, enum ELogVerbosity::Type Verbosity, class FName WarningId)
-        let patterns = ["48 89 5C 24 ?? 57 48 83 EC 40 0F B6 DA 48 8B F9"];
-        let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
-        Ok(Self(ensure_one(res.into_iter().flatten())?))
-    });
+    // impl_resolver_singleton!(collect, FFrameKismetExecutionMessage);
+    // impl_resolver_singleton!(PEImage, FFrameKismetExecutionMessage, |ctx| async {
+    //     // void FFrame::KismetExecutionMessage(wchar16 const* Message, enum ELogVerbosity::Type Verbosity, class FName WarningId)
+    //     let patterns = ["48 89 5C 24 ?? 57 48 83 EC 40 0F B6 DA 48 8B F9"];
+    //     let res = join_all(
+    //         patterns
+    //             .iter()
+    //             .map(|p| ctx.scan(Pattern::new(p).unwrap(), None)),
+    //     )
+    //     .await;
+    //     Ok(Self(ensure_one(res.into_iter().flatten())?))
+    // });
 }
 
 impl_try_collector! {
@@ -128,15 +132,15 @@ impl_try_collector! {
         fnametostring: FNameToString,
         allocate_uobject: FUObjectArrayAllocateUObjectIndex,
         free_uobject: FUObjectArrayFreeUObjectIndex,
-        game_tick: UGameEngineTick,
+        game_tick: FEngineLoopTick,
         engine_loop_init: FEngineLoopInit,
-        kismet_system_library: KismetSystemLibrary,
+        // kismet_system_library: KismetSystemLibrary,
         fframe_step_via_exec: FFrameStepViaExec,
         fframe_step: FFrameStep,
         fframe_step_explicit_property: FFrameStepExplicitProperty,
-        fframe_kismet_execution_message: FFrameKismetExecutionMessage,
+        // fframe_kismet_execution_message: FFrameKismetExecutionMessage,
         ufunction_bind: UFunctionBind,
-        uobject_base_utility_get_path_name: UObjectBaseUtilityGetPathName,
+        // uobject_base_utility_get_path_name: UObjectBaseUtilityGetPathName,
     }
 }
 
@@ -161,9 +165,9 @@ impl Globals {
     pub fn fname_to_string(&self) -> ue::FnFNameToString {
         unsafe { std::mem::transmute(self.resolution.fnametostring.0) }
     }
-    pub fn uobject_base_utility_get_path_name(&self) -> ue::FnUObjectBaseUtilityGetPathName {
-        unsafe { std::mem::transmute(self.resolution.uobject_base_utility_get_path_name.0) }
-    }
+    // pub fn uobject_base_utility_get_path_name(&self) -> ue::FnUObjectBaseUtilityGetPathName {
+    //     unsafe { std::mem::transmute(self.resolution.uobject_base_utility_get_path_name.0) }
+    // }
     pub fn guobject_array(&self) -> parking_lot::FairMutexGuard<'static, &ue::FUObjectArray> {
         self.guobject_array.lock()
     }
@@ -214,7 +218,10 @@ unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
 
     hooks::initialize()?;
 
-    info!("initialized");
-
-    app::run(bin_dir)
+    // app::run(bin_dir)
+    std::thread::spawn(move || {
+        //unsafe { testing(); }
+        gui::run().unwrap();
+    });
+    Ok(())
 }

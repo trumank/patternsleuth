@@ -113,55 +113,55 @@ pub unsafe fn initialize() -> Result<()> {
     )?;
     HookFreeUObject.enable()?;
 
-    HookKismetPrintString.initialize(
-        std::mem::transmute(
-            *globals()
-                .resolution
-                .kismet_system_library
-                .0
-                .get("PrintString")
-                .unwrap(),
-        ),
-        |_context, stack, _result| {
-            let stack = &mut *stack;
+    // HookKismetPrintString.initialize(
+    //     std::mem::transmute(
+    //         *globals()
+    //             .resolution
+    //             .kismet_system_library
+    //             .0
+    //             .get("PrintString")
+    //             .unwrap(),
+    //     ),
+    //     |_context, stack, _result| {
+    //         let stack = &mut *stack;
 
-            let mut ctx: Option<&ue::UObject> = None;
-            let mut string = ue::FString::default();
-            let mut print_to_screen = false;
-            let mut print_to_log = false;
-            let mut color = ue::FLinearColor::default();
-            let mut duration = 0f32;
+    //         let mut ctx: Option<&ue::UObject> = None;
+    //         let mut string = ue::FString::default();
+    //         let mut print_to_screen = false;
+    //         let mut print_to_log = false;
+    //         let mut color = ue::FLinearColor::default();
+    //         let mut duration = 0f32;
 
-            ue::kismet::arg(stack, &mut ctx);
-            ue::kismet::arg(stack, &mut string);
-            ue::kismet::arg(stack, &mut print_to_screen);
-            ue::kismet::arg(stack, &mut print_to_log);
-            ue::kismet::arg(stack, &mut color);
-            ue::kismet::arg(stack, &mut duration);
+    //         ue::kismet::arg(stack, &mut ctx);
+    //         ue::kismet::arg(stack, &mut string);
+    //         ue::kismet::arg(stack, &mut print_to_screen);
+    //         ue::kismet::arg(stack, &mut print_to_log);
+    //         ue::kismet::arg(stack, &mut color);
+    //         ue::kismet::arg(stack, &mut duration);
 
-            //let s = string.to_string();
-            //info!("PrintString({s:?})");
-            kismet_print_message::call(&string.to_string());
+    //         //let s = string.to_string();
+    //         //info!("PrintString({s:?})");
+    //         kismet_print_message::call(&string.to_string());
 
-            if !stack.code.is_null() {
-                stack.code = stack.code.add(1);
-            }
-        },
-    )?;
-    HookKismetPrintString.enable()?;
+    //         if !stack.code.is_null() {
+    //             stack.code = stack.code.add(1);
+    //         }
+    //     },
+    // )?;
+    // HookKismetPrintString.enable()?;
 
-    HookKismetExecutionMessage.initialize(
-        std::mem::transmute(globals().resolution.fframe_kismet_execution_message.0),
-        |message, verbosity, warning_id| {
-            kismet_execution_message::call(
-                widestring::U16CStr::from_ptr_str(message),
-                verbosity,
-                warning_id,
-            );
-            HookKismetExecutionMessage.call(message, verbosity, warning_id);
-        },
-    )?;
-    HookKismetExecutionMessage.enable()?;
+    // HookKismetExecutionMessage.initialize(
+    //     std::mem::transmute(globals().resolution.fframe_kismet_execution_message.0),
+    //     |message, verbosity, warning_id| {
+    //         kismet_execution_message::call(
+    //             widestring::U16CStr::from_ptr_str(message),
+    //             verbosity,
+    //             warning_id,
+    //         );
+    //         HookKismetExecutionMessage.call(message, verbosity, warning_id);
+    //     },
+    // )?;
+    // HookKismetExecutionMessage.enable()?;
 
     type ExecFn = unsafe extern "system" fn(*mut ue::UObject, *mut ue::kismet::FFrame, *mut c_void);
 
@@ -183,24 +183,24 @@ pub unsafe fn initialize() -> Result<()> {
         move |function| {
             HookUFunctionBind.call(function);
             if let Some(function) = function.as_mut() {
-                let path = function
-                    .ustruct
-                    .ufield
-                    .uobject
-                    .uobject_base_utility
-                    .uobject_base
-                    .get_path_name(None);
-                if let Some(hook) = hooks.get(path.as_str()) {
-                    simple_log::info!(
-                        "UFunction::Bind({path}) func = {:?} flags = {:?}",
-                        function.func,
-                        function.function_flags
-                    );
-                    function
-                        .function_flags
-                        .insert(ue::EFunctionFlags::FUNC_Native | ue::EFunctionFlags::FUNC_Final);
-                    function.func = *hook;
-                }
+                // let path = function
+                //     .ustruct
+                //     .ufield
+                //     .uobject
+                //     .uobject_base_utility
+                //     .uobject_base
+                //     .get_path_name(None);
+                // if let Some(hook) = hooks.get(path.as_str()) {
+                //     simple_log::info!(
+                //         "UFunction::Bind({path}) func = {:?} flags = {:?}",
+                //         function.func,
+                //         function.function_flags
+                //     );
+                //     function
+                //         .function_flags
+                //         .insert(ue::EFunctionFlags::FUNC_Native | ue::EFunctionFlags::FUNC_Final);
+                //     function.func = *hook;
+                // }
             }
         },
     )?;

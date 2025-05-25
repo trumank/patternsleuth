@@ -11,6 +11,7 @@ use indexmap::IndexMap;
 use super::*;
 
 pub fn run() -> Result<(), eframe::Error> {
+    info!("running gui");
     let event_loop_builder: Option<eframe::EventLoopBuilderHook> =
         Some(Box::new(|event_loop_builder| {
             event_loop_builder.with_any_thread(true);

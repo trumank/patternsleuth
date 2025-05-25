@@ -33,13 +33,13 @@ impl Display for FName {
 pub type FnUObjectBaseUtilityGetPathName =
     unsafe extern "system" fn(&UObjectBase, Option<&UObject>, &mut FString);
 impl UObjectBase {
-    pub fn get_path_name(&self, stop_outer: Option<&UObject>) -> String {
-        let mut string = FString::new();
-        unsafe {
-            (globals().uobject_base_utility_get_path_name())(self, stop_outer, &mut string);
-        }
-        string.to_string()
-    }
+    // pub fn get_path_name(&self, stop_outer: Option<&UObject>) -> String {
+    //     let mut string = FString::new();
+    //     unsafe {
+    //         (globals().uobject_base_utility_get_path_name())(self, stop_outer, &mut string);
+    //     }
+    //     string.to_string()
+    // }
 }
 
 #[derive(Debug)]
