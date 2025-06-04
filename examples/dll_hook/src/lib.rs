@@ -9,6 +9,7 @@ mod ue;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
+use patternsleuth::resolvers::impl_try_collector;
 use patternsleuth::resolvers::unreal::blueprint_library::UFunctionBind;
 use patternsleuth::resolvers::unreal::{
     fname::FNameToString,
@@ -18,9 +19,7 @@ use patternsleuth::resolvers::unreal::{
         FUObjectArrayAllocateUObjectIndex, FUObjectArrayFreeUObjectIndex, GUObjectArray,
     },
     kismet::{FFrameStep, FFrameStepExplicitProperty, FFrameStepViaExec},
-    KismetSystemLibrary,
 };
-use patternsleuth::resolvers::{impl_try_collector, resolve};
 use simple_log::{error, info, LogConfigBuilder};
 use windows::Win32::{
     Foundation::HMODULE,
@@ -29,35 +28,6 @@ use windows::Win32::{
         Threading::{GetCurrentThread, QueueUserAPC},
     },
 };
-
-// x3daudio1_7.dll
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn X3DAudioCalculate() {}
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn X3DAudioInitialize() {}
-
-// d3d9.dll
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn D3DPERF_EndEvent() {}
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn D3DPERF_BeginEvent() {}
-
-// d3d11.dll
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn D3D11CreateDevice() {}
-
-// dxgi.dll
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn CreateDXGIFactory() {}
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn CreateDXGIFactory1() {}
 
 #[no_mangle]
 #[allow(non_snake_case, unused_variables)]
@@ -99,31 +69,6 @@ fn setup() -> Result<PathBuf> {
     Ok(bin_dir.to_path_buf())
 }
 
-#[derive(Debug, PartialEq)]
-pub struct FFrameKismetExecutionMessage(usize);
-
-mod resolvers {
-    use super::*;
-
-    use patternsleuth::{
-        resolvers::{futures::future::join_all, *},
-        scanner::Pattern,
-    };
-
-    // impl_resolver_singleton!(collect, FFrameKismetExecutionMessage);
-    // impl_resolver_singleton!(PEImage, FFrameKismetExecutionMessage, |ctx| async {
-    //     // void FFrame::KismetExecutionMessage(wchar16 const* Message, enum ELogVerbosity::Type Verbosity, class FName WarningId)
-    //     let patterns = ["48 89 5C 24 ?? 57 48 83 EC 40 0F B6 DA 48 8B F9"];
-    //     let res = join_all(
-    //         patterns
-    //             .iter()
-    //             .map(|p| ctx.scan(Pattern::new(p).unwrap(), None)),
-    //     )
-    //     .await;
-    //     Ok(Self(ensure_one(res.into_iter().flatten())?))
-    // });
-}
-
 impl_try_collector! {
     #[derive(Debug, PartialEq, Clone)]
     struct DllHookResolution {
@@ -134,13 +79,10 @@ impl_try_collector! {
         free_uobject: FUObjectArrayFreeUObjectIndex,
         game_tick: FEngineLoopTick,
         engine_loop_init: FEngineLoopInit,
-        // kismet_system_library: KismetSystemLibrary,
         fframe_step_via_exec: FFrameStepViaExec,
         fframe_step: FFrameStep,
         fframe_step_explicit_property: FFrameStepExplicitProperty,
-        // fframe_kismet_execution_message: FFrameKismetExecutionMessage,
         ufunction_bind: UFunctionBind,
-        // uobject_base_utility_get_path_name: UObjectBaseUtilityGetPathName,
     }
 }
 
@@ -165,9 +107,6 @@ impl Globals {
     pub fn fname_to_string(&self) -> ue::FnFNameToString {
         unsafe { std::mem::transmute(self.resolution.fnametostring.0) }
     }
-    // pub fn uobject_base_utility_get_path_name(&self) -> ue::FnUObjectBaseUtilityGetPathName {
-    //     unsafe { std::mem::transmute(self.resolution.uobject_base_utility_get_path_name.0) }
-    // }
     pub fn guobject_array(&self) -> parking_lot::FairMutexGuard<'static, &ue::FUObjectArray> {
         self.guobject_array.lock()
     }
@@ -216,12 +155,13 @@ unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
         main_thread_id: std::thread::current().id(),
     });
 
-    hooks::initialize()?;
+    let (tx_main, rx_ui) = std::sync::mpsc::sync_channel::<crate::gui::GuiRet>(0);
+    let (tx_ui, rx_main) = std::sync::mpsc::sync_channel::<crate::gui::GuiFn>(0);
 
-    // app::run(bin_dir)
+    hooks::initialize((tx_main, rx_main))?;
+
     std::thread::spawn(move || {
-        //unsafe { testing(); }
-        gui::run().unwrap();
+        gui::run((tx_ui, rx_ui)).unwrap();
     });
     Ok(())
 }

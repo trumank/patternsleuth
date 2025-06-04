@@ -53,7 +53,12 @@ event!(kismet_print_message(message: &str));
 pub type UObjectLock = parking_lot::FairMutexGuard<'static, &'static ue::FUObjectArray>;
 static mut GUOBJECT_LOCK: Option<UObjectLock> = None;
 
-pub unsafe fn initialize() -> Result<()> {
+pub unsafe fn initialize(
+    (tx_main, rx_main): (
+        std::sync::mpsc::SyncSender<crate::gui::GuiRet>,
+        std::sync::mpsc::Receiver<crate::gui::GuiFn>,
+    ),
+) -> Result<()> {
     assert_main_thread!();
 
     GUOBJECT_LOCK = Some(globals().guobject_array());
@@ -74,8 +79,14 @@ pub unsafe fn initialize() -> Result<()> {
         move |game_engine, delta_seconds, idle_mode| {
             assert_main_thread!();
 
-            //info!("tick time={:0.5}", delta_seconds);
+            // info!("tick time={:0.5}", delta_seconds);
 
+            if let Ok(f) = rx_main.try_recv() {
+                let ret = f();
+                tx_main.send(ret).unwrap();
+            }
+
+            #[allow(static_mut_refs)]
             GUOBJECT_LOCK.take();
             HookUGameEngineTick.call(game_engine, delta_seconds, idle_mode);
             GUOBJECT_LOCK = Some(globals().guobject_array());
