@@ -177,6 +177,7 @@ pub struct ResolverFactory<T> {
 
 pub use ::futures;
 pub use ::inventory;
+pub use ::paste;
 #[cfg(feature = "serde-resolvers")]
 pub use ::typetag;
 
@@ -317,8 +318,19 @@ macro_rules! _impl_resolver_inner {
             $crate::resolvers::NamedResolver { name: stringify!($name), getter: $name::dyn_resolver }
         }
 
-        #[cfg_attr(feature = "serde-resolvers", $crate::resolvers::typetag::serde)]
-        impl $crate::resolvers::Resolution for $name {}
+
+        // workaround for https://github.com/dtolnay/typetag/issues/88
+        $crate::resolvers::paste::paste! {
+            #[allow(non_snake_case)]
+            mod [<impl_$name>] {
+                use super::$name;
+
+                #[cfg(feature = "serde-resolvers")]
+                use $crate::resolvers::typetag;
+                #[cfg_attr(feature = "serde-resolvers", $crate::resolvers::typetag::serde)]
+                impl $crate::resolvers::Resolution for $name {}
+            }
+        }
 
         impl $name {
             pub fn resolver() -> &'static $crate::resolvers::ResolverFactory<$name> {
