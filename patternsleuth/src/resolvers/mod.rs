@@ -311,13 +311,13 @@ macro_rules! _impl_resolver_singleton {
         )
     };
 }
+
 #[macro_export]
-macro_rules! _impl_resolver_inner {
-    ( $name:ident, |$ctx:ident| async $x:block ) => {
+macro_rules! _impl_resolver_innerer {
+    ( $name:ident, |$ctx:ident| async $x:block, $serde:expr ) => {
         $crate::resolvers::inventory::submit! {
             $crate::resolvers::NamedResolver { name: stringify!($name), getter: $name::dyn_resolver }
         }
-
 
         // workaround for https://github.com/dtolnay/typetag/issues/88
         $crate::resolvers::paste::paste! {
@@ -325,9 +325,9 @@ macro_rules! _impl_resolver_inner {
             mod [<impl_$name>] {
                 use super::$name;
 
-                #[cfg(feature = "serde-resolvers")]
+                #[cfg($serde)]
                 use $crate::resolvers::typetag;
-                #[cfg_attr(feature = "serde-resolvers", $crate::resolvers::typetag::serde)]
+                #[cfg_attr($serde, $crate::resolvers::typetag::serde)]
                 impl $crate::resolvers::Resolution for $name {}
             }
         }
@@ -355,6 +355,22 @@ macro_rules! _impl_resolver_inner {
             }
         }
     };
+}
+
+// because `cfg` attributes inside macros use context where they are used, and not the origin crate, use cfg to swap out the macro itself
+#[cfg(not(feature = "serde-resolvers"))]
+#[macro_export]
+macro_rules! _impl_resolver_inner {
+    ( $name:ident, |$ctx:ident| async $x:block ) => {
+        $crate::_impl_resolver_innerer!( $name, |$ctx| async $x, false);
+    }
+}
+#[cfg(feature = "serde-resolvers")]
+#[macro_export]
+macro_rules! _impl_resolver_inner {
+    ( $name:ident, |$ctx:ident| async $x:block ) => {
+        $crate::_impl_resolver_innerer!( $name, |$ctx| async $x, true);
+    }
 }
 
 #[macro_export]
