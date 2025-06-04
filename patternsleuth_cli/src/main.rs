@@ -973,11 +973,7 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameFileEntry>> {
             //eprintln!("FSOK!");
             let dir_name = entry.file_name();
             let name = dir_name.to_string_lossy().to_string();
-            if !games_filter
-                .is_empty()
-                .then_some(true)
-                .unwrap_or_else(|| games_filter.iter().any(|g| g.is_match(&name)))
-            {
+            if !(games_filter.is_empty() || games_filter.iter().any(|g| g.is_match(&name))) {
                 return Ok(None);
             }
 
