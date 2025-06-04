@@ -312,25 +312,40 @@ macro_rules! _impl_resolver_singleton {
     };
 }
 
+// because `cfg` attributes inside macros use context where they are used, and not the origin crate, use cfg to swap out the macro itself
+#[cfg(not(feature = "serde-resolvers"))]
 #[macro_export]
 macro_rules! _impl_resolver_innerer {
-    ( $name:ident, |$ctx:ident| async $x:block, $serde:expr ) => {
-        $crate::resolvers::inventory::submit! {
-            $crate::resolvers::NamedResolver { name: stringify!($name), getter: $name::dyn_resolver }
-        }
-
+    ( $name:ident ) => {
+        impl $crate::resolvers::Resolution for $name {}
+    };
+}
+#[cfg(feature = "serde-resolvers")]
+#[macro_export]
+macro_rules! _impl_resolver_innerer {
+    ( $name:ident ) => {
         // workaround for https://github.com/dtolnay/typetag/issues/88
         $crate::resolvers::paste::paste! {
             #[allow(non_snake_case)]
             mod [<impl_$name>] {
                 use super::$name;
 
-                #[cfg($serde)]
                 use $crate::resolvers::typetag;
-                #[cfg_attr($serde, $crate::resolvers::typetag::serde)]
+                #[$crate::resolvers::typetag::serde]
                 impl $crate::resolvers::Resolution for $name {}
             }
         }
+    };
+}
+
+#[macro_export]
+macro_rules! _impl_resolver_inner {
+    ( $name:ident, |$ctx:ident| async $x:block ) => {
+        $crate::resolvers::inventory::submit! {
+            $crate::resolvers::NamedResolver { name: stringify!($name), getter: $name::dyn_resolver }
+        }
+
+        $crate::_impl_resolver_innerer!($name);
 
         impl $name {
             pub fn resolver() -> &'static $crate::resolvers::ResolverFactory<$name> {
@@ -355,22 +370,6 @@ macro_rules! _impl_resolver_innerer {
             }
         }
     };
-}
-
-// because `cfg` attributes inside macros use context where they are used, and not the origin crate, use cfg to swap out the macro itself
-#[cfg(not(feature = "serde-resolvers"))]
-#[macro_export]
-macro_rules! _impl_resolver_inner {
-    ( $name:ident, |$ctx:ident| async $x:block ) => {
-        $crate::_impl_resolver_innerer!( $name, |$ctx| async $x, false);
-    }
-}
-#[cfg(feature = "serde-resolvers")]
-#[macro_export]
-macro_rules! _impl_resolver_inner {
-    ( $name:ident, |$ctx:ident| async $x:block ) => {
-        $crate::_impl_resolver_innerer!( $name, |$ctx| async $x, true);
-    }
 }
 
 #[macro_export]
