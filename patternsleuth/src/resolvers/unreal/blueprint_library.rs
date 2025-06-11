@@ -37,7 +37,7 @@ impl_resolver!(all, BlueprintLibraryInit, |ctx| async {
     let class_str = ctx.scan(class_str).await;
 
     let pattern_dyn_init_class = |s: usize| {
-        Pattern::new(format!("41 b9 ?? ?? ?? ?? 48 8d 15 X0x{:x} 41 b8 28 00 00 00 48 8d 0d [ ?? ?? ?? ?? ] e9 [ ?? ?? ?? ?? ]", s)).unwrap()
+        Pattern::new(format!("41 b9 ?? ?? ?? ?? 48 8d 15 X0x{s:x} 41 b8 28 00 00 00 48 8d 0d [ ?? ?? ?? ?? ] e9 [ ?? ?? ?? ?? ]")).unwrap()
     };
     let pattern_dyn_init_object = |s: usize| {
         Pattern::new(format!(
@@ -46,7 +46,7 @@ impl_resolver!(all, BlueprintLibraryInit, |ctx| async {
                 33 c0
                 4c 8d 0d ?? ?? ?? ??
                 48 89 44 24 30
-                4c 8d 05 X0x{:x}
+                4c 8d 05 X0x{s:x}
                 48 89 44 24 28
                 48 8d 15 [ ?? ?? ?? ?? ]
                 48 8d 0d [ ?? ?? ?? ?? ]
@@ -54,8 +54,7 @@ impl_resolver!(all, BlueprintLibraryInit, |ctx| async {
                 e8 [ ?? ?? ?? ?? ]
                 48 83 c4 48
                 c3
-            ",
-            s
+            "
         ))
         .unwrap()
     };

@@ -195,7 +195,7 @@ pub(crate) fn auto_gen(_command: CommandAutoGen) -> Result<()> {
             for (pattern_index, addresses) in results {
                 if addresses.len() > 1 {
                     let sig = (pattern_index, *symbol);
-                    println!("\t{:?} matched multiple, removing", sig);
+                    println!("\t{sig:?} matched multiple, removing");
                     to_remove.insert(sig);
                     bad.insert(sig);
                 } else {
@@ -417,7 +417,7 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
                     .map(|f| &f.function.data[..f.function.data.len().min(max)])
                     .collect::<Vec<_>>(),
             ) {
-                println!("{}", pattern);
+                println!("{pattern}");
                 patterns.push(pattern);
                 println!(
                     "{:#?}",
@@ -432,7 +432,7 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
 
         println!("./run.sh scan --skip-exceptions --summary \\");
         for pattern in &patterns {
-            println!("  -p '{}' \\", pattern);
+            println!("  -p '{pattern}' \\");
         }
 
         for (group, pattern) in groups.iter().zip(patterns) {
@@ -553,7 +553,7 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
                             (game, address, symbol, demangled),
                         );
                         if let Err(e) = r {
-                            panic!("{:?}", e);
+                            panic!("{e:?}");
                         }
                     }
                     Insert::Function(i) => {
@@ -562,7 +562,7 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
                             i.clone(),
                         );
                         if let Err(e) = r {
-                            panic!("{:?} {:?}", e, i);
+                            panic!("{e:?} {i:?}");
                         }
                     }
                     Insert::Xref(i) => {
@@ -571,7 +571,7 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
                             i.clone(),
                         );
                         if let Err(e) = r {
-                            panic!("{:?} {:?}", e, i);
+                            panic!("{e:?} {i:?}");
                         }
                     }
                 }
@@ -621,7 +621,7 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
 
                 let pb = m.add(indicatif::ProgressBar::new(symbols.len() as u64));
                 pb.set_style(sty.clone());
-                pb.set_message(format!("inserting symbols for {}", name));
+                pb.set_message(format!("inserting symbols for {name}"));
 
                 symbols.iter().progress_with(pb).try_for_each(
                     |(address, sym)| -> Result<()> {
@@ -642,7 +642,7 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
 
                 let pb = m.add(indicatif::ProgressBar::new(functions.len() as u64));
                 pb.set_style(sty.clone());
-                pb.set_message(format!("inserting functions for {}", name));
+                pb.set_message(format!("inserting functions for {name}"));
 
                 functions.iter().progress_with(pb).try_for_each(
                     |function| -> Result<()> {

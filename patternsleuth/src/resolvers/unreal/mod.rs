@@ -262,8 +262,7 @@ impl_resolver!(all, KismetSystemLibrary, |ctx| async {
         ctx.scan(
             Pattern::new(format!(
         // fragile (only 4.25-4.27 most likely)
-        "4c 8d 0d [ ?? ?? ?? ?? ] 88 4c 24 70 4c 8d 05 ?? ?? ?? ?? 49 89 43 e0 48 8d 15 X0x{:x}",
-        s
+        "4c 8d 0d [ ?? ?? ?? ?? ] 88 4c 24 70 4c 8d 05 ?? ?? ?? ?? 49 89 43 e0 48 8d 15 X0x{s:x}"
     ))
             .unwrap(),
         )

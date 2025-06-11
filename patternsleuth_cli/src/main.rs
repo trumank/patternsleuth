@@ -426,7 +426,7 @@ fn scan(command: CommandScan) -> Result<()> {
                                         "".to_string()
                                     };
 
-                                    lines.push(format!("{:?}{}", name, count).normal().to_string());
+                                    lines.push(format!("{name:?}{count}").normal().to_string());
                                 }
                                 lines.push(dis);
 
@@ -508,11 +508,11 @@ fn scan(command: CommandScan) -> Result<()> {
                 [
                     Cell::new(resolver.name),
                     match resolution {
-                        Ok(res) => Cell::new(&format!("{:#x?}", res)),
+                        Ok(res) => Cell::new(&format!("{res:#x?}")),
                         Err(err) =>
                         {
                             #[allow(clippy::unnecessary_to_owned)]
-                            Cell::new(&format!("{:x?}", err).red().to_string())
+                            Cell::new(&format!("{err:x?}").red().to_string())
                         }
                     },
                 ]
@@ -616,10 +616,10 @@ fn scan(command: CommandScan) -> Result<()> {
             if let Some(res) = all_resolutions.get(game) {
                 for res in res {
                     match res {
-                        Ok(res) => row.push(Cell::new(&format!("{:x?}", res))),
+                        Ok(res) => row.push(Cell::new(&format!("{res:x?}"))),
                         Err(err) => {
                             #[allow(clippy::unnecessary_to_owned)]
-                            row.push(Cell::new(&format!("{:x?}", err).red().to_string()));
+                            row.push(Cell::new(&format!("{err:x?}").red().to_string()));
                         }
                     }
                 }
@@ -630,7 +630,7 @@ fn scan(command: CommandScan) -> Result<()> {
 
         let total_strs = [
             format!("total={}", games.len()),
-            format!("0={} 1={} >1={}", no_matches, one_match, gt_one_match),
+            format!("0={no_matches} 1={one_match} >1={gt_one_match}"),
         ]
         .into_iter()
         .chain(totals.iter().map(Summary::format))
@@ -778,7 +778,7 @@ fn diff_report(command: CommandDiffReport) -> Result<()> {
     }
 
     fn format_res(res: Result<&dyn Resolution, &ResolveError>) -> String {
-        local(format!("{:x?}", res).bold(), |s| match res {
+        local(format!("{res:x?}").bold(), |s| match res {
             Ok(_) => s,
             Err(_) => s.red(),
         })
@@ -787,7 +787,7 @@ fn diff_report(command: CommandDiffReport) -> Result<()> {
 
     fn format_percent_diff(percent_diff: f32) -> String {
         local(
-            format!("{:+.2?}%", percent_diff).bold(),
+            format!("{percent_diff:+.2?}%").bold(),
             |s| match percent_diff {
                 f if f < 0. => s.red(),
                 f if f > 0. => s.green(),
