@@ -111,7 +111,7 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
                         Some(*p.simple.mask.get(offset)? != 0)
                     })
                     .unwrap_or_default();
-                let s = format!("{:02x}", b);
+                let s = format!("{b:02x}");
                 let mut colored = if highlight {
                     s.bright_white()
                 } else {
@@ -140,7 +140,7 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
     } else {
         output
             .buffer
-            .push_str(&format!("{:016x}\nno section", address));
+            .push_str(&format!("{address:016x}\nno section"));
     }
     output.buffer
 }
@@ -192,7 +192,7 @@ pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
 
             let index = instruction.ip() as usize - address;
             for b in data[index..index + instruction.len()].iter() {
-                let s = format!("{:02x}", b);
+                let s = format!("{b:02x}");
                 #[allow(clippy::unnecessary_to_owned)]
                 output.buffer.push_str(&s.bright_white().to_string());
                 output.buffer.push(' ');
@@ -208,7 +208,7 @@ pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
     } else {
         output
             .buffer
-            .push_str(&format!("{:016x}\nno section", address));
+            .push_str(&format!("{address:016x}\nno section"));
     }
     output.buffer
 }
@@ -255,7 +255,7 @@ where
                 })
                 .unwrap_or_default();
 
-            let s = format!("{:02x}", b);
+            let s = format!("{b:02x}");
             let mut colored = if highlight {
                 s.bright_white()
             } else {

@@ -19,7 +19,7 @@ impl PatternSimple {
     pub fn len(&self) -> usize {
         self.sig.len()
     }
-    pub fn iter(&self) -> std::iter::Zip<std::slice::Iter<u8>, std::slice::Iter<u8>> {
+    pub fn iter(&self) -> std::iter::Zip<std::slice::Iter<'_, u8>, std::slice::Iter<'_, u8>> {
         self.sig.iter().zip(&self.mask)
     }
 }
@@ -28,7 +28,7 @@ fn fmt_byte(f: &mut std::fmt::Formatter<'_>, sig: u8, mask: u8) -> std::fmt::Res
     if mask == 0 {
         write!(f, "??")?;
     } else if mask == 0xff {
-        write!(f, "{:02X}", sig)?;
+        write!(f, "{sig:02X}")?;
     } else if mask == 0x0f {
         write!(f, "?{:X}", sig & 0xf)?;
     } else if mask == 0xf0 {
