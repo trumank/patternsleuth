@@ -43,6 +43,15 @@ pub fn init() {
                             s.filtered.insert(*id, cache.clone());
                         }
                         s.objects.insert(*id, cache);
+
+                        if let Some(obj) = ctx.get_ref(*id) {
+                            if let Some(func) = obj.cast::<ue::UFunction>() {
+                                let script = &func.script;
+                                if script.len() > 100 {
+                                    println!("created giga {}", func.path());
+                                }
+                            }
+                        }
                     }
                     ObjectEvent::Deleted { id } => {
                         s.objects.remove(id);
@@ -58,7 +67,7 @@ pub fn init() {
         }
     });
 
-    std::thread::spawn(move || run((tx_ui, rx_ui)).unwrap());
+    // std::thread::spawn(move || run((tx_ui, rx_ui)).unwrap());
 }
 
 fn run(channels: (Sender<GuiFn>, Receiver<GuiRet>)) -> Result<(), eframe::Error> {
@@ -197,16 +206,13 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                 .default_height(500.)
                 .show(ctx, |ui| {
                     if let Some(object) = object {
-                        let class = unsafe { object.class_private.as_ref().unwrap() };
+                        let class = object.class();
                         let cast_flags = class.class_cast_flags;
                         ui.label(format!("cast flags {cast_flags:?}"));
-                        if cast_flags.contains(EClassCastFlags::CASTCLASS_UFunction) {
+                        if let Some(func) = object.cast::<ue::UFunction>() {
                             ui.label("function");
 
-                            let func = unsafe {
-                                &*((&*object) as *const ue::UObjectBase as *const ue::UFunction)
-                            };
-                            let script = &func.ustruct.script;
+                            let script = &func.script;
                             ui.label(&format!("script {script:?}"));
                         }
                     }

@@ -491,6 +491,12 @@ bitflags::bitflags! {
     }
 }
 
+// unsafe because wrong cast flags can result in UB
+unsafe trait ObjTrait {
+    const CAST_FLAGS: EClassCastFlags;
+}
+// impl ObjTrait for UObjectBase {}
+
 #[derive(Debug)]
 #[repr(C)]
 pub struct UObjectBase {
@@ -503,6 +509,21 @@ pub struct UObjectBase {
 }
 
 impl UObjectBase {
+    pub fn class(&self) -> &UClass {
+        // TODO thread safe class access? i guess if we have a reference to the containing object it's fine?
+        unsafe { self.class_private.as_ref().unwrap() }
+    }
+    pub fn is<T: ObjTrait>(&self) -> bool {
+        self.class().class_cast_flags.contains(T::CAST_FLAGS)
+    }
+    pub fn cast<T: ObjTrait>(&self) -> Option<&T> {
+        self.is::<T>()
+            .then(|| unsafe { std::mem::transmute::<&Self, &T>(self) })
+    }
+    pub fn cast_mut<T: ObjTrait>(&mut self) -> Option<&mut T> {
+        self.is::<T>()
+            .then(|| unsafe { std::mem::transmute::<&mut Self, &mut T>(self) })
+    }
     pub fn path(&self) -> String {
         let mut path = String::new();
 
@@ -530,6 +551,10 @@ pub struct UObjectBaseUtility {
 }
 
 impl_deref!(UObject, uobject_base_utility: UObjectBaseUtility);
+unsafe impl ObjTrait for UObject {
+    // TODO not sure if this works? special case UObject?
+    const CAST_FLAGS: EClassCastFlags = EClassCastFlags::CASTCLASS_None;
+}
 #[derive(Debug)]
 #[repr(C)]
 pub struct UObject {
@@ -545,6 +570,9 @@ struct FOutputDevice {
 }
 
 impl_deref!(UField, uobject: UObject);
+unsafe impl ObjTrait for UField {
+    const CAST_FLAGS: EClassCastFlags = EClassCastFlags::CASTCLASS_UField;
+}
 #[derive(Debug)]
 #[repr(C)]
 pub struct UField {
@@ -588,6 +616,9 @@ pub struct FProperty {
 }
 
 impl_deref!(UStruct, ufield: UField);
+unsafe impl ObjTrait for UStruct {
+    const CAST_FLAGS: EClassCastFlags = EClassCastFlags::CASTCLASS_UStruct;
+}
 #[derive(Debug)]
 #[repr(C)]
 pub struct UStruct {
@@ -609,6 +640,9 @@ pub struct UStruct {
 }
 
 impl_deref!(UFunction, ustruct: UStruct);
+unsafe impl ObjTrait for UFunction {
+    const CAST_FLAGS: EClassCastFlags = EClassCastFlags::CASTCLASS_UFunction;
+}
 #[derive(Debug)]
 #[repr(C)]
 pub struct UFunction {
@@ -626,6 +660,9 @@ pub struct UFunction {
 }
 
 impl_deref!(UClass, ustruct: UStruct);
+unsafe impl ObjTrait for UClass {
+    const CAST_FLAGS: EClassCastFlags = EClassCastFlags::CASTCLASS_UClass;
+}
 #[derive(Debug)]
 #[repr(C)]
 pub struct UClass {
