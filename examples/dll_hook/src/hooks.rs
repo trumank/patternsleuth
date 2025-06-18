@@ -5,7 +5,11 @@ use std::{
 
 use anyhow::Result;
 
-use crate::{assert_main_thread, globals, ue};
+use crate::{
+    assert_main_thread, globals,
+    object_cache::{ObjectEvent, ObjectRegistry, UObjectPtr},
+    ue,
+};
 
 retour::static_detour! {
     static HookUGameEngineTick: unsafe extern "system" fn(*mut c_void, f32, u8);
@@ -20,7 +24,7 @@ retour::static_detour! {
 pub type UObjectLock = parking_lot::FairMutexGuard<'static, &'static ue::FUObjectArray>;
 static mut GUOBJECT_LOCK: Option<UObjectLock> = None;
 
-pub struct GameTick;
+pub struct GameTick(pub Vec<ObjectEvent>);
 pub struct CreateUObject<'a>(pub &'a ue::UObjectBase);
 pub struct DeleteUObject<'a>(pub &'a ue::UObjectBase);
 
@@ -48,7 +52,8 @@ pub unsafe fn initialize() -> Result<()> {
             // info!("tick time={:0.5}", delta_seconds);
 
             HookUGameEngineTick.call(game_engine, delta_seconds, idle_mode);
-            crate::events::fire(GameTick);
+            let events = ObjectRegistry::drain_events();
+            crate::events::fire(GameTick(events));
         },
     )?;
     HookUGameEngineTick.enable()?;
@@ -57,7 +62,7 @@ pub unsafe fn initialize() -> Result<()> {
         std::mem::transmute(globals().resolution.allocate_uobject.0),
         |this, object, merging_threads| {
             HookAllocateUObject.call(this, object, merging_threads);
-            crate::events::fire(CreateUObject(&*object));
+            ObjectRegistry::on_object_created(UObjectPtr(object as *mut _));
         },
     )?;
     HookAllocateUObject.enable()?;
@@ -65,7 +70,7 @@ pub unsafe fn initialize() -> Result<()> {
     HookFreeUObject.initialize(
         std::mem::transmute(globals().resolution.free_uobject.0),
         |this, object| {
-            crate::events::fire(DeleteUObject(&*this));
+            ObjectRegistry::on_object_deleted(UObjectPtr(this as *mut _));
             HookFreeUObject.call(this, object);
         },
     )?;

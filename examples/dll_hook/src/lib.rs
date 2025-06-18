@@ -157,20 +157,9 @@ unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
         main_thread_id: std::thread::current().id(),
     });
 
-    let (tx_main, rx_ui) = crossbeam_channel::bounded::<crate::gui::GuiRet>(0);
-    let (tx_ui, rx_main) = crossbeam_channel::bounded::<crate::gui::GuiFn>(0);
-
     hooks::initialize()?;
 
-    events::register(move |hooks::GameTick| {
-        if let Ok(f) = rx_main.try_recv() {
-            #[allow(clippy::unit_arg)]
-            tx_main.send(f()).unwrap();
-        }
-    });
+    gui::init();
 
-    std::thread::spawn(move || {
-        gui::run((tx_ui, rx_ui)).unwrap();
-    });
     Ok(())
 }

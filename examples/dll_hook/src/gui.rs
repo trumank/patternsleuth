@@ -1,5 +1,5 @@
-use crossbeam_channel::{bounded, Receiver, Sender};
-use std::sync::{Arc, Mutex, OnceLock};
+use crossbeam_channel::{Receiver, Sender};
+use std::cell::RefCell;
 
 use eframe::egui;
 
@@ -9,10 +9,53 @@ use egui_winit::winit::platform::windows::EventLoopBuilderExtWindows;
 use egui_winit::winit::platform::x11::EventLoopBuilderExtX11;
 use indexmap::IndexMap;
 
+use crate::object_cache::{ObjectEvent, ObjectId};
+
 use super::*;
 
 pub type GuiFn = Box<dyn FnOnce() -> GuiRet + Send + Sync>;
 pub type GuiRet = ();
+
+thread_local! {
+    static STATE: RefCell<InnerState> = RefCell::new(InnerState::new());
+}
+
+pub fn init() {
+    let (tx_main, rx_ui) = crossbeam_channel::bounded::<crate::gui::GuiRet>(0);
+    let (tx_ui, rx_main) = crossbeam_channel::bounded::<crate::gui::GuiFn>(0);
+
+    events::register(move |hooks::GameTick(events)| {
+        STATE.with_borrow_mut(|s| {
+            for e in events {
+                match e {
+                    ObjectEvent::Created { id } => {
+                        let Some(ptr) = id.get_ptr() else {
+                            continue;
+                        };
+                        let object = unsafe { &*ptr.0 };
+                        let name = object.path();
+                        let cache = ObjectCache { name };
+                        if s.filter.matches(&cache) {
+                            s.filtered.insert(*id, cache.clone());
+                        }
+                        s.objects.insert(*id, cache);
+                    }
+                    ObjectEvent::Deleted { id } => {
+                        s.objects.remove(id);
+                        s.filtered.remove(id);
+                    }
+                }
+            }
+        });
+
+        if let Ok(f) = rx_main.try_recv() {
+            #[allow(clippy::unit_arg)]
+            tx_main.send(f()).unwrap();
+        }
+    });
+
+    std::thread::spawn(move || run((tx_ui, rx_ui)).unwrap());
+}
 
 pub fn run(channels: (Sender<GuiFn>, Receiver<GuiRet>)) -> Result<(), eframe::Error> {
     let event_loop_builder: Option<eframe::EventLoopBuilderHook> =
@@ -69,39 +112,28 @@ impl ObjectFilter {
     }
 }
 
-#[derive(Default, Clone)]
-struct ObjectNameCache {
-    names: IndexMap<ObjectIndex, ObjectCache>,
-}
-impl ObjectNameCache {
-    fn get(&self, index: ObjectIndex) -> Option<&ObjectCache> {
-        self.names.get(&index)
-    }
-    fn remove(&mut self, index: ObjectIndex) {
-        self.names.remove(&index);
-    }
-    fn get_or_init<'a>(&'a mut self, object: &ue::UObjectBase) -> &'a ObjectCache {
-        self.names
-            .entry(object.internal_index)
-            .or_insert_with(|| ObjectCache {
-                name: object.path(),
-            })
-    }
-}
-
 struct MyApp {
     tx_ui: Sender<GuiFn>,
     rx_ui: Receiver<GuiRet>,
-    inner_state: Arc<Mutex<InnerState>>,
 }
 
 struct InnerState {
     buh: i32,
-    events: Receiver<Event>,
     filter: ObjectFilter,
-    filtered: IndexMap<ObjectIndex, ObjectCache>,
     kismet_log: String,
-    objects: ObjectNameCache,
+    objects: IndexMap<ObjectId, ObjectCache>,
+    filtered: IndexMap<ObjectId, ObjectCache>,
+}
+impl InnerState {
+    fn new() -> Self {
+        Self {
+            buh: 0,
+            filter: ObjectFilter::default(),
+            filtered: Default::default(),
+            objects: Default::default(),
+            kismet_log: "".to_string(),
+        }
+    }
 }
 
 macro_rules! move_clone {
@@ -117,106 +149,38 @@ macro_rules! move_clone {
 
 impl MyApp {
     fn new((tx_ui, rx_ui): (Sender<GuiFn>, Receiver<GuiRet>)) -> Self {
-        let (tx, events) = crossbeam_channel::unbounded();
-        let ctx: Arc<OnceLock<egui::Context>> = Default::default();
-        let state = Arc::new(Mutex::new(InnerState {
-            buh: 0,
-            events,
-            filter: ObjectFilter::default(),
-            filtered: Default::default(),
-            objects: Default::default(),
-            kismet_log: "".to_string(),
-        }));
-
-        crate::events::register(move_clone!(
-            (tx, ctx, state),
-            move |hooks::CreateUObject(object)| {
-                info!("before create_uobject");
-                state.lock().unwrap().objects.get_or_init(object);
-                tx.send(Event::CreateUObject(
-                    object.internal_index,
-                    ObjectCache {
-                        name: object.path(),
-                    },
-                ))
-                .unwrap();
-                if let Some(ctx) = ctx.get() {
-                    ctx.request_repaint();
-                }
-            }
-        ));
-
-        crate::events::register(move_clone!(
-            (tx, ctx, state),
-            move |hooks::DeleteUObject(object)| {
-                info!("before delete_uobject");
-                state.lock().unwrap().objects.remove(object.internal_index);
-                tx.send(Event::DeleteUObject(object.internal_index))
-                    .unwrap();
-                if let Some(ctx) = ctx.get() {
-                    ctx.request_repaint();
-                }
-            }
-        ));
-        // let kismet_message = move_clone!(
-        //     (tx, ctx),
-        //     Arc::new(
-        //         move |message: &widestring::U16CStr, verbosity: u8, warning_id: ue::FName| {
-        //             tx.send(Event::KismetMessage {
-        //                 message: message.to_string().unwrap(),
-        //                 verbosity,
-        //                 warning_id,
-        //             })
-        //             .unwrap();
-        //             if let Some(ctx) = ctx.get() {
-        //                 ctx.request_repaint();
-        //             }
-        //         },
-        //     )
-        // );
-        // let txc = tx.clone();
-        // let kismet_print = Arc::new(move |message: &str| {
-        //     txc.send(Event::KismetPrintMessage {
-        //         message: message.into(),
-        //     })
-        //     .unwrap();
-        // });
-        Self {
-            tx_ui,
-            rx_ui,
-            inner_state: state,
-        }
+        Self { tx_ui, rx_ui }
     }
 }
 fn ui(state: &mut InnerState, ctx: &egui::Context) {
     assert_main_thread!();
 
-    for event in state.events.try_iter() {
-        match event {
-            Event::CreateUObject(index, object) => {
-                if state.filter.matches(&object) {
-                    state.filtered.insert(index, object.clone());
-                }
-            }
-            Event::DeleteUObject(index) => {
-                state.filtered.remove(&index);
-            }
-            Event::KismetMessage {
-                message,
-                verbosity: _,
-                warning_id: _,
-            } => {
-                state
-                    .kismet_log
-                    .push_str(&format!("Kismet VM: {message}\n"));
-            }
-            Event::KismetPrintMessage { message } => {
-                state
-                    .kismet_log
-                    .push_str(&format!("PrintString: {message}\n"));
-            }
-        };
-    }
+    // for event in state.events.try_iter() {
+    //     match event {
+    //         Event::CreateUObject(index, object) => {
+    //             if state.filter.matches(&object) {
+    //                 state.filtered.insert(index, object.clone());
+    //             }
+    //         }
+    //         Event::DeleteUObject(index) => {
+    //             state.filtered.remove(&index);
+    //         }
+    //         Event::KismetMessage {
+    //             message,
+    //             verbosity: _,
+    //             warning_id: _,
+    //         } => {
+    //             state
+    //                 .kismet_log
+    //                 .push_str(&format!("Kismet VM: {message}\n"));
+    //         }
+    //         Event::KismetPrintMessage { message } => {
+    //             state
+    //                 .kismet_log
+    //                 .push_str(&format!("PrintString: {message}\n"));
+    //         }
+    //     };
+    // }
 
     ctx.set_visuals(egui::Visuals::dark());
 
@@ -231,11 +195,10 @@ fn ui(state: &mut InnerState, ctx: &egui::Context) {
             if res.changed() {
                 state.filtered = state
                     .objects
-                    .names
                     .iter()
-                    .filter_map(|(index, obj)| {
+                    .filter_map(|(id, obj)| {
                         if state.filter.matches(obj) {
-                            Some((*index, obj.clone()))
+                            Some((*id, obj.clone()))
                         } else {
                             None
                         }
@@ -258,7 +221,7 @@ fn ui(state: &mut InnerState, ctx: &egui::Context) {
                     .skip(row_range.start)
                     .take(row_range.len())
                 {
-                    ui.label(format!("{i:10} {}", obj.name));
+                    ui.label(format!("{i:10?} {}", obj.name));
                 }
                 ui.allocate_space(ui.available_size());
             },
@@ -348,11 +311,11 @@ impl eframe::App for MyApp {
         ctx.set_visuals(egui::Visuals::dark());
 
         let ctx = ctx.clone();
-        let state = self.inner_state.clone();
         self.tx_ui
             .send(Box::new(move || {
-                let mut state = state.lock().unwrap();
-                ui(&mut state, &ctx);
+                STATE.with_borrow_mut(|state| {
+                    ui(state, &ctx);
+                })
             }))
             .unwrap();
         self.rx_ui.recv().unwrap();
