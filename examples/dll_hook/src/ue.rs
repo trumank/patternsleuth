@@ -384,6 +384,37 @@ pub struct UObjectBase {
     pub outer_private: *const UObject,
 }
 
+impl UObjectBase {
+    pub fn path(&self) -> String {
+        let mut path = String::new();
+
+        let class = unsafe { self.class_private.as_ref().unwrap() };
+
+        path.push_str(
+            &class
+                .ustruct
+                .ufield
+                .uobject
+                .uobject_base_utility
+                .uobject_base
+                .name_private
+                .to_string(),
+        );
+
+        path.push_str(" ");
+
+        self.append_path(&mut path);
+        path
+    }
+    fn append_path(&self, path: &mut String) {
+        if let Some(outer) = unsafe { self.outer_private.as_ref() } {
+            outer.uobject_base_utility.uobject_base.append_path(path);
+            path.push_str(".");
+        }
+        path.push_str(&self.name_private.to_string())
+    }
+}
+
 #[derive(Debug)]
 #[repr(C)]
 pub struct UObjectBaseUtility {

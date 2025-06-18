@@ -1,12 +1,14 @@
 #![feature(backtrace_frames)]
 
 mod app;
+mod events;
 mod gui;
 mod hooks;
 mod object_cache;
 mod ue;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use patternsleuth::resolvers::impl_try_collector;
@@ -155,10 +157,17 @@ unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
         main_thread_id: std::thread::current().id(),
     });
 
-    let (tx_main, rx_ui) = std::sync::mpsc::sync_channel::<crate::gui::GuiRet>(0);
-    let (tx_ui, rx_main) = std::sync::mpsc::sync_channel::<crate::gui::GuiFn>(0);
+    let (tx_main, rx_ui) = crossbeam_channel::bounded::<crate::gui::GuiRet>(0);
+    let (tx_ui, rx_main) = crossbeam_channel::bounded::<crate::gui::GuiFn>(0);
 
-    hooks::initialize((tx_main, rx_main))?;
+    hooks::initialize()?;
+
+    events::register(move |hooks::GameTick| {
+        if let Ok(f) = rx_main.try_recv() {
+            #[allow(clippy::unit_arg)]
+            tx_main.send(f()).unwrap();
+        }
+    });
 
     std::thread::spawn(move || {
         gui::run((tx_ui, rx_ui)).unwrap();

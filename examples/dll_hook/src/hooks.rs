@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Result;
 
-use crate::{assert_main_thread, globals, object_cache, ue};
+use crate::{assert_main_thread, globals, ue};
 
 retour::static_detour! {
     static HookUGameEngineTick: unsafe extern "system" fn(*mut c_void, f32, u8);
@@ -17,48 +17,14 @@ retour::static_detour! {
     static HookUFunctionBind: unsafe extern "system" fn(*mut ue::UFunction);
 }
 
-macro_rules! event {
-    ($name:ident ( $($($arg_name:ident: $arg_ty:ty)+$(,)?)* ) ) => {
-        pub mod $name {
-            use super::*;
-
-            pub type Listener = dyn Fn( $($($arg_ty,)*)* ) + Send + Sync;
-            fn get() -> &'static Mutex<Vec<Weak<Listener>>> {
-                static OBJECTS: LazyLock<Mutex<Vec<Weak<Listener>>>> = LazyLock::new(|| Default::default());
-                &*OBJECTS
-            }
-            pub fn register(listener: Arc<Listener>) -> Arc<Listener> {
-                get().lock().unwrap().push(Arc::downgrade(&listener));
-                listener
-            }
-            pub fn call( $($($arg_name: $arg_ty,)*)* ) {
-                get().lock().unwrap().retain(|f| {
-                    if let Some(f) = f.upgrade() {
-                        f( $($($arg_name,)*)* );
-                        true
-                    } else {
-                        false
-                    }
-                });
-            }
-        }
-    };
-}
-
-event!(create_uobject(/*uobject_array: &UObjectLock,*/ object: &ue::UObjectBase));
-event!(delete_uobject(/*uobject_array: &UObjectLock,*/ object: &ue::UObjectBase));
-event!(kismet_execution_message(message: &widestring::U16CStr, verbosity: u8, warning_id: ue::FName));
-event!(kismet_print_message(message: &str));
-
 pub type UObjectLock = parking_lot::FairMutexGuard<'static, &'static ue::FUObjectArray>;
 static mut GUOBJECT_LOCK: Option<UObjectLock> = None;
 
-pub unsafe fn initialize(
-    (tx_main, rx_main): (
-        std::sync::mpsc::SyncSender<crate::gui::GuiRet>,
-        std::sync::mpsc::Receiver<crate::gui::GuiFn>,
-    ),
-) -> Result<()> {
+pub struct GameTick;
+pub struct CreateUObject<'a>(pub &'a ue::UObjectBase);
+pub struct DeleteUObject<'a>(pub &'a ue::UObjectBase);
+
+pub unsafe fn initialize() -> Result<()> {
     assert_main_thread!();
 
     GUOBJECT_LOCK = Some(globals().guobject_array());
@@ -81,15 +47,8 @@ pub unsafe fn initialize(
 
             // info!("tick time={:0.5}", delta_seconds);
 
-            if let Ok(f) = rx_main.try_recv() {
-                let ret = f();
-                tx_main.send(ret).unwrap();
-            }
-
-            #[allow(static_mut_refs)]
-            GUOBJECT_LOCK.take();
             HookUGameEngineTick.call(game_engine, delta_seconds, idle_mode);
-            GUOBJECT_LOCK = Some(globals().guobject_array());
+            crate::events::fire(GameTick);
         },
     )?;
     HookUGameEngineTick.enable()?;
@@ -97,14 +56,8 @@ pub unsafe fn initialize(
     HookAllocateUObject.initialize(
         std::mem::transmute(globals().resolution.allocate_uobject.0),
         |this, object, merging_threads| {
-            //assert_main_thread!();
-
-            //info!("allocate uobject {:?}", object);
-
             HookAllocateUObject.call(this, object, merging_threads);
-
-            object_cache::object_created(&*object);
-            create_uobject::call(/*GUOBJECT_LOCK.as_ref().unwrap(),*/ &*object);
+            crate::events::fire(CreateUObject(&*object));
         },
     )?;
     HookAllocateUObject.enable()?;
@@ -112,13 +65,7 @@ pub unsafe fn initialize(
     HookFreeUObject.initialize(
         std::mem::transmute(globals().resolution.free_uobject.0),
         |this, object| {
-            //assert_main_thread!();
-
-            //info!("delete uobject {:?}", object);
-
-            object_cache::object_deleted(&*this);
-            delete_uobject::call(/*GUOBJECT_LOCK.as_ref().unwrap(),*/ &*this);
-
+            crate::events::fire(DeleteUObject(&*this));
             HookFreeUObject.call(this, object);
         },
     )?;
