@@ -78,25 +78,9 @@ fn run(channels: (Sender<GuiFn>, Receiver<GuiRet>)) -> Result<(), eframe::Error>
     )
 }
 
-type ObjectIndex = i32;
 #[derive(Debug, Clone)]
 struct ObjectCache {
     name: String,
-    //weak_ptr: FWeakObjectPtr,
-}
-
-#[derive(Debug)]
-enum Event {
-    CreateUObject(ObjectIndex, ObjectCache),
-    DeleteUObject(ObjectIndex),
-    KismetMessage {
-        message: String,
-        verbosity: u8,
-        warning_id: ue::FName,
-    },
-    KismetPrintMessage {
-        message: String,
-    },
 }
 
 #[derive(Default)]

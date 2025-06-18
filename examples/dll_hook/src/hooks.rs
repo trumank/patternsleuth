@@ -1,13 +1,10 @@
-use std::{
-    ffi::c_void,
-    sync::{Arc, LazyLock, Mutex, Weak},
-};
+use std::ffi::c_void;
 
 use anyhow::Result;
 
 use crate::{
     assert_main_thread, globals,
-    object_cache::{ObjectEvent, ObjectRegistry, UObjectPtr},
+    object_cache::{ObjectEvent, ObjectRegistry},
     ue,
 };
 
@@ -147,11 +144,6 @@ pub unsafe fn initialize() -> Result<()> {
             HookUFunctionBind.call(function);
             if let Some(function) = function.as_mut() {
                 // let path = function
-                //     .ustruct
-                //     .ufield
-                //     .uobject
-                //     .uobject_base_utility
-                //     .uobject_base
                 //     .get_path_name(None);
                 // if let Some(hook) = hooks.get(path.as_str()) {
                 //     simple_log::info!(

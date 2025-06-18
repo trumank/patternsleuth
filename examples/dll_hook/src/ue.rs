@@ -11,6 +11,22 @@ use windows::Win32::System::Threading::{
 
 use crate::globals;
 
+macro_rules! impl_deref {
+    ($class:ty, $member:ident: $parent:ty) => {
+        impl std::ops::Deref for $class {
+            type Target = $parent;
+            fn deref(&self) -> &Self::Target {
+                &self.$member
+            }
+        }
+        impl std::ops::DerefMut for $class {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.$member
+            }
+        }
+    };
+}
+
 pub type FnFFrameStep =
     unsafe extern "system" fn(stack: &mut kismet::FFrame, *mut UObject, result: *mut c_void);
 pub type FnFFrameStepExplicitProperty = unsafe extern "system" fn(
@@ -492,37 +508,28 @@ impl UObjectBase {
 
         let class = unsafe { self.class_private.as_ref().unwrap() };
 
-        path.push_str(
-            &class
-                .ustruct
-                .ufield
-                .uobject
-                .uobject_base_utility
-                .uobject_base
-                .name_private
-                .to_string(),
-        );
-
-        path.push_str(" ");
-
+        path.push_str(&class.name_private.to_string());
+        path.push(' ');
         self.append_path(&mut path);
         path
     }
     fn append_path(&self, path: &mut String) {
         if let Some(outer) = unsafe { self.outer_private.as_ref() } {
-            outer.uobject_base_utility.uobject_base.append_path(path);
-            path.push_str(".");
+            outer.append_path(path);
+            path.push('.');
         }
         path.push_str(&self.name_private.to_string())
     }
 }
 
+impl_deref!(UObjectBaseUtility, uobject_base: UObjectBase);
 #[derive(Debug)]
 #[repr(C)]
 pub struct UObjectBaseUtility {
     pub uobject_base: UObjectBase,
 }
 
+impl_deref!(UObject, uobject_base_utility: UObjectBaseUtility);
 #[derive(Debug)]
 #[repr(C)]
 pub struct UObject {
@@ -537,6 +544,7 @@ struct FOutputDevice {
     b_auto_emit_line_terminator: bool,
 }
 
+impl_deref!(UField, uobject: UObject);
 #[derive(Debug)]
 #[repr(C)]
 pub struct UField {
@@ -579,6 +587,7 @@ pub struct FProperty {
     // TODO
 }
 
+impl_deref!(UStruct, ufield: UField);
 #[derive(Debug)]
 #[repr(C)]
 pub struct UStruct {
@@ -599,6 +608,7 @@ pub struct UStruct {
     pub unversioned_schema: *const (),           //TODO const FUnversionedStructSchema*
 }
 
+impl_deref!(UFunction, ustruct: UStruct);
 #[derive(Debug)]
 #[repr(C)]
 pub struct UFunction {
@@ -615,6 +625,7 @@ pub struct UFunction {
     pub func: unsafe extern "system" fn(*mut UObject, *mut kismet::FFrame, *mut c_void),
 }
 
+impl_deref!(UClass, ustruct: UStruct);
 #[derive(Debug)]
 #[repr(C)]
 pub struct UClass {

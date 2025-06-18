@@ -34,14 +34,7 @@ unsafe fn testing() {
             if let Some(obj) = obj {
                 let name = obj.name_private.to_string();
 
-                let class = &(*obj.class_private)
-                    .ustruct
-                    .ufield
-                    .uobject
-                    .uobject_base_utility
-                    .uobject_base
-                    .name_private
-                    .to_string();
+                let class = (&*obj.class_private).name_private.to_string();
 
                 if class == "Function" {
                     // TODO safe casting

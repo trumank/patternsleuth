@@ -8,7 +8,6 @@ mod object_cache;
 mod ue;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use patternsleuth::resolvers::impl_try_collector;
