@@ -1,5 +1,5 @@
 use crossbeam_channel::{Receiver, Sender};
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashSet};
 
 use eframe::egui;
 
@@ -9,11 +9,14 @@ use egui_winit::winit::platform::windows::EventLoopBuilderExtWindows;
 use egui_winit::winit::platform::x11::EventLoopBuilderExtX11;
 use indexmap::IndexMap;
 
-use crate::object_cache::{ObjectEvent, ObjectId};
+use crate::{
+    object_cache::{ObjectEvent, ObjectId, TickContext},
+    ue::EClassCastFlags,
+};
 
 use super::*;
 
-pub type GuiFn = Box<dyn FnOnce() -> GuiRet + Send + Sync>;
+pub type GuiFn = Box<dyn FnOnce(&TickContext) -> GuiRet + Send + Sync>;
 pub type GuiRet = ();
 
 thread_local! {
@@ -25,14 +28,15 @@ pub fn init() {
     let (tx_ui, rx_main) = crossbeam_channel::bounded::<crate::gui::GuiFn>(0);
 
     events::register(move |hooks::GameTick(events)| {
+        let ctx = unsafe { TickContext::new() };
+
         STATE.with_borrow_mut(|s| {
             for e in events {
                 match e {
                     ObjectEvent::Created { id } => {
-                        let Some(ptr) = id.get_ptr() else {
+                        let Some(object) = ctx.get_ref(*id) else {
                             continue;
                         };
-                        let object = unsafe { &*ptr.0 };
                         let name = object.path();
                         let cache = ObjectCache { name };
                         if s.filter.matches(&cache) {
@@ -50,14 +54,14 @@ pub fn init() {
 
         if let Ok(f) = rx_main.try_recv() {
             #[allow(clippy::unit_arg)]
-            tx_main.send(f()).unwrap();
+            tx_main.send(f(&ctx)).unwrap();
         }
     });
 
     std::thread::spawn(move || run((tx_ui, rx_ui)).unwrap());
 }
 
-pub fn run(channels: (Sender<GuiFn>, Receiver<GuiRet>)) -> Result<(), eframe::Error> {
+fn run(channels: (Sender<GuiFn>, Receiver<GuiRet>)) -> Result<(), eframe::Error> {
     let event_loop_builder: Option<eframe::EventLoopBuilderHook> =
         Some(Box::new(|event_loop_builder| {
             event_loop_builder.with_any_thread(true);
@@ -123,6 +127,8 @@ struct InnerState {
     kismet_log: String,
     objects: IndexMap<ObjectId, ObjectCache>,
     filtered: IndexMap<ObjectId, ObjectCache>,
+
+    open_objects: HashSet<ObjectId>,
 }
 impl InnerState {
     fn new() -> Self {
@@ -132,19 +138,10 @@ impl InnerState {
             filtered: Default::default(),
             objects: Default::default(),
             kismet_log: "".to_string(),
+
+            open_objects: Default::default(),
         }
     }
-}
-
-macro_rules! move_clone {
-    ( ( $($($arg:ident)+$(,)?)* ), $expr:expr) => {
-        {
-            $( $(
-                    let $arg = $arg.clone();
-            )*)*
-            $expr
-        }
-    };
 }
 
 impl MyApp {
@@ -152,35 +149,8 @@ impl MyApp {
         Self { tx_ui, rx_ui }
     }
 }
-fn ui(state: &mut InnerState, ctx: &egui::Context) {
+fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
     assert_main_thread!();
-
-    // for event in state.events.try_iter() {
-    //     match event {
-    //         Event::CreateUObject(index, object) => {
-    //             if state.filter.matches(&object) {
-    //                 state.filtered.insert(index, object.clone());
-    //             }
-    //         }
-    //         Event::DeleteUObject(index) => {
-    //             state.filtered.remove(&index);
-    //         }
-    //         Event::KismetMessage {
-    //             message,
-    //             verbosity: _,
-    //             warning_id: _,
-    //         } => {
-    //             state
-    //                 .kismet_log
-    //                 .push_str(&format!("Kismet VM: {message}\n"));
-    //         }
-    //         Event::KismetPrintMessage { message } => {
-    //             state
-    //                 .kismet_log
-    //                 .push_str(&format!("PrintString: {message}\n"));
-    //         }
-    //     };
-    // }
 
     ctx.set_visuals(egui::Visuals::dark());
 
@@ -221,89 +191,44 @@ fn ui(state: &mut InnerState, ctx: &egui::Context) {
                     .skip(row_range.start)
                     .take(row_range.len())
                 {
-                    ui.label(format!("{i:10?} {}", obj.name));
+                    ui.horizontal(|ui| {
+                        if ui.button(&format!("{i:10?}")).clicked() {
+                            state.open_objects.insert(*i);
+                        }
+                        ui.label(&obj.name);
+                    });
                 }
                 ui.allocate_space(ui.available_size());
             },
         );
 
-        // egui::Window::new("object search 2")
-        //     .default_height(500.)
-        //     .show(ctx, |ui| {
-        //         let name_label = ui.label("Search: ");
-        //         let _res = ui
-        //             .text_edit_singleline(&mut state.filter2)
-        //             .labelled_by(name_label.id);
+        for obj in &state.open_objects {
+            let object = tick_ctx.get_ref(*obj);
+            let name = object
+                .as_ref()
+                .map(|o| o.path())
+                .unwrap_or_else(|| format!("invalid {obj:?}"));
 
-        //         let text_style = egui::TextStyle::Body;
-        //         let row_height = ui.text_style_height(&text_style);
-
-        //         //info!("before names lock");
-        //         let objects = unsafe { globals().guobject_array_unchecked() }.objects();
-        //         let mut names = state.objects.write().unwrap();
-
-        //         //info!("before filter");
-        //         let filtered = objects
-        //             .iter()
-        //             //.take(100)
-        //             .flatten()
-        //             .filter(|obj| {
-        //                 let cached = &names.get_or_init(obj);
-        //                 cached.name.contains(&state.filter2)
-        //             })
-        //             .collect::<Vec<_>>();
-        //         //let filtered = vec!["h"];
-
-        //         //info!("before print");
-        //         egui::ScrollArea::vertical().show_rows(
-        //             ui,
-        //             row_height,
-        //             filtered.len(),
-        //             |ui, row_range| {
-        //                 for (i, obj) in filtered
-        //                     .iter()
-        //                     .enumerate()
-        //                     .skip(row_range.start)
-        //                     .take(row_range.len())
-        //                 {
-        //                     ui.label(format!(
-        //                         "{i:10} {}",
-        //                         names.get(obj.internal_index).unwrap().name
-        //                     ));
-        //                 }
-        //                 ui.allocate_space(ui.available_size());
-        //             },
-        //         );
-        //     });
-
-        let log_window = |name: &str, mut log: &str| {
-            egui::Window::new(name)
+            egui::Window::new(&name)
                 .default_height(500.)
                 .show(ctx, |ui| {
-                    egui::ScrollArea::vertical()
-                        .stick_to_bottom(true)
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::TextEdit::multiline(&mut log)
-                                    .desired_width(f32::INFINITY)
-                                    .desired_rows(10)
-                                    .font(egui::TextStyle::Monospace),
-                            );
-                        });
+                    if let Some(object) = object {
+                        let class = unsafe { object.class_private.as_ref().unwrap() };
+                        let cast_flags = class.class_cast_flags;
+                        ui.label(format!("cast flags {cast_flags:?}"));
+                        if cast_flags.contains(EClassCastFlags::CASTCLASS_UFunction) {
+                            ui.label("function");
+
+                            let func = unsafe {
+                                &*((&*object) as *const ue::UObjectBase as *const ue::UFunction)
+                            };
+                            let script = &func.ustruct.script;
+                            ui.label(&format!("script {script:?}"));
+                        }
+                    }
                 });
-        };
-
-        log_window("Kismet Messages", &state.kismet_log);
+        }
     });
-
-    // egui::CentralPanel::default().show(&ctx, |ui| {
-    //     ui.heading("running in main thread");
-
-    //     if ui.button("buhton").clicked() {
-    //         state.buh += 1;
-    //     }
-    //     ui.label(format!("counter: {}", state.buh));
-    // });
 }
 
 impl eframe::App for MyApp {
@@ -312,9 +237,9 @@ impl eframe::App for MyApp {
 
         let ctx = ctx.clone();
         self.tx_ui
-            .send(Box::new(move || {
+            .send(Box::new(move |tick_ctx| {
                 STATE.with_borrow_mut(|state| {
-                    ui(state, &ctx);
+                    ui(state, &ctx, tick_ctx);
                 })
             }))
             .unwrap();

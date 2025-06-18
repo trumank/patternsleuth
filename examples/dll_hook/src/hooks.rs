@@ -62,7 +62,7 @@ pub unsafe fn initialize() -> Result<()> {
         std::mem::transmute(globals().resolution.allocate_uobject.0),
         |this, object, merging_threads| {
             HookAllocateUObject.call(this, object, merging_threads);
-            ObjectRegistry::on_object_created(UObjectPtr(object as *mut _));
+            ObjectRegistry::on_object_created(object as *mut _);
         },
     )?;
     HookAllocateUObject.enable()?;
@@ -70,7 +70,7 @@ pub unsafe fn initialize() -> Result<()> {
     HookFreeUObject.initialize(
         std::mem::transmute(globals().resolution.free_uobject.0),
         |this, object| {
-            ObjectRegistry::on_object_deleted(UObjectPtr(this as *mut _));
+            ObjectRegistry::on_object_deleted(this as *mut _);
             HookFreeUObject.call(this, object);
         },
     )?;
