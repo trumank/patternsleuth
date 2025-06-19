@@ -44,30 +44,20 @@ pub fn init() {
                         }
                         s.objects.insert(*id, cache);
 
-                        if let Some(obj) = ctx.get_ref(*id) {
-                            // if let Some(func) = obj.cast::<ue::UFunction>() {
-                            //     let script = &func.script;
-                            //     if script.len() > 100 {
-                            // println!("created giga {}", obj.path());
-
-                            for (i, field) in obj.iter_props_bound().enumerate() {
-                                if let Some(str_prop) = field.cast::<ue::FStrProperty>() {
-                                    let value = str_prop.value();
-                                    dbg!(value.to_string());
-                                    // str_prop.
-                                }
-                            }
-                            // for (i, field) in func.iter_props().enumerate() {
-                            //     if let Some(prop) = field.cast::<ue::FProperty>() {
-                            //         println!(
-                            //             "  {} {}",
-                            //             prop.offset_internal, prop.name_private
-                            //         );
-                            //     }
-                            // }
-                            //     }
-                            // }
-                        }
+                        // if let Some(obj) = ctx.get_ref(*id) {
+                        //     for (i, field) in obj.props().enumerate() {
+                        //         if let Some(value) = field.get::<ue::FNameProperty>() {
+                        //             let value = value.to_string();
+                        //             if !value.is_empty() {
+                        //                 println!(
+                        //                     "{} = {}",
+                        //                     field.field.name().to_string(),
+                        //                     value.to_string()
+                        //                 );
+                        //             }
+                        //         }
+                        //     }
+                        // }
                     }
                     ObjectEvent::Deleted { id } => {
                         s.objects.remove(id);
@@ -83,7 +73,7 @@ pub fn init() {
         }
     });
 
-    // std::thread::spawn(move || run((tx_ui, rx_ui)).unwrap());
+    std::thread::spawn(move || run((tx_ui, rx_ui)).unwrap());
 }
 
 fn run(channels: (Sender<GuiFn>, Receiver<GuiRet>)) -> Result<(), eframe::Error> {
@@ -211,17 +201,19 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
             },
         );
 
-        for obj in &state.open_objects {
-            let object = tick_ctx.get_ref(*obj);
+        state.open_objects.retain(|obj| {
+            let mut object = tick_ctx.get_mut(*obj);
             let name = object
                 .as_ref()
                 .map(|o| o.path())
                 .unwrap_or_else(|| format!("invalid {obj:?}"));
 
+            let mut open = true;
             egui::Window::new(&name)
+                .open(&mut open)
                 .default_height(500.)
                 .show(ctx, |ui| {
-                    if let Some(object) = object {
+                    if let Some(object) = &mut object {
                         let class = object.class();
                         let cast_flags = class.class_cast_flags;
                         ui.label(format!("cast flags {cast_flags:?}"));
@@ -231,9 +223,58 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                             let script = &func.script;
                             ui.label(&format!("script {script:?}"));
                         }
+
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            for (i, mut field) in object.props_mut().enumerate() {
+                                if let Some(prop) = field.field.cast::<ue::FProperty>() {
+                                    ui.horizontal(|ui| {
+                                        ui.label(&format!(
+                                            "{i}: 0x{:02x} {}",
+                                            prop.offset(),
+                                            prop.name().to_string()
+                                        ));
+                                        if let Some(p) = field.get::<ue::FNameProperty>() {
+                                            let mut text = p.to_string();
+                                            if ui.text_edit_singleline(&mut text).changed() {
+                                                // TODO create FName
+                                                // *p = text.as_str().into();
+                                            }
+                                        } else if let Some(p) = field.get::<ue::FStrProperty>() {
+                                            let mut text = p.to_string();
+                                            if ui.text_edit_singleline(&mut text).changed() {
+                                                *p = text.as_str().into();
+                                            }
+                                        } else if let Some(p) = field.get::<ue::FIntProperty>() {
+                                            let mut text = p.to_string();
+                                            if ui.text_edit_singleline(&mut text).changed() {
+                                                if let Ok(value) = text.parse() {
+                                                    *p = value;
+                                                }
+                                            }
+                                        } else if let Some(p) = field.get::<ue::FFloatProperty>() {
+                                            let mut text = p.to_string();
+                                            if ui.text_edit_singleline(&mut text).changed() {
+                                                if let Ok(value) = text.parse() {
+                                                    *p = value;
+                                                }
+                                            }
+                                        } else if let Some(p) = field.get::<ue::FDoubleProperty>() {
+                                            let mut text = p.to_string();
+                                            if ui.text_edit_singleline(&mut text).changed() {
+                                                if let Ok(value) = text.parse() {
+                                                    *p = value;
+                                                }
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                            ui.allocate_space(ui.available_size());
+                        });
                     }
                 });
-        }
+            open
+        });
     });
 }
 

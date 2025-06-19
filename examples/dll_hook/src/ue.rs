@@ -3,7 +3,6 @@ use std::{
     convert::Infallible,
     ffi::c_void,
     fmt::Display,
-    marker::PhantomData,
     ops::{Deref, DerefMut},
 };
 
@@ -583,6 +582,9 @@ trait PropTrait: FieldTrait + Deref<Target = FProperty> {
             .byte_offset(self.offset_internal as isize)
             .cast()
     }
+    unsafe fn value_mut_ptr<'o>(&self, object: *mut UObjectBase) -> &'o mut Self::PropValue {
+        &mut *object.byte_offset(self.offset_internal as isize).cast()
+    }
 }
 impl<T> PropTrait for T where T: FieldTrait + Deref<Target = FProperty> {}
 
@@ -630,21 +632,28 @@ impl UObjectBase {
         }
         path.push_str(&self.name_private.to_string())
     }
-    pub fn iter_props_bound<'o>(&'o self) -> IterFieldsBound<'o, &'o Self> {
+    pub fn props<'o>(&'o self) -> IterFieldsBound<'o> {
         let inner = self.class().iter_props();
         IterFieldsBound {
             object: self,
             inner,
         }
     }
+    pub fn props_mut<'o>(&'o mut self) -> IterFieldsBoundMut<'o> {
+        let inner = unsafe { &*std::ptr::from_ref(self.class()) }.iter_props();
+        IterFieldsBoundMut {
+            object: self,
+            inner,
+        }
+    }
 }
 
-pub struct IterFieldsBound<'c, O: Copy> {
-    object: O,
-    inner: IterProps<'c>,
+pub struct IterFieldsBound<'o> {
+    object: &'o UObjectBase,
+    inner: IterProps<'o>,
 }
-impl<'c, O: Copy> Iterator for IterFieldsBound<'c, O> {
-    type Item = BoundField<'c, O>;
+impl<'o> Iterator for IterFieldsBound<'o> {
+    type Item = BoundField<'o>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next().map(|f| BoundField {
@@ -653,33 +662,37 @@ impl<'c, O: Copy> Iterator for IterFieldsBound<'c, O> {
         })
     }
 }
-pub struct BoundField<'o, O, F: FieldTrait = FField> {
-    object: O,
-    field: &'o F,
+pub struct BoundField<'o> {
+    object: &'o UObjectBase,
+    pub field: &'o FField,
 }
-// impl<'o, O> BoundField<'o, O> {
-//     fn cast(self) -> BoundField<'o, O> {
-//         todo!()
-//     }
-// }
-impl<'o, O, F: FieldTrait> BoundField<'o, O, F>
-where
-    F: FieldTrait + Deref<Target = FFieldBase>,
-{
-    pub fn cast<P: FieldTrait>(self) -> Option<BoundField<'o, O, P>> {
-        FieldTrait::cast(self.field).map(|field| BoundField {
-            object: self.object,
-            field,
+impl<'o> BoundField<'o> {
+    pub fn get<P: PropTrait>(&self) -> Option<&'o <P as FieldTrait>::PropValue> {
+        FieldTrait::cast::<P>(self.field).map(|f| unsafe { f.value(self.object) })
+    }
+}
+
+pub struct IterFieldsBoundMut<'o> {
+    object: &'o mut UObjectBase,
+    inner: IterProps<'o>,
+}
+impl<'o> Iterator for IterFieldsBoundMut<'o> {
+    type Item = BoundFieldMut<'o>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|f| BoundFieldMut {
+            object: std::ptr::from_mut(self.object),
+            field: f,
         })
     }
 }
-impl<'o, O, F: FieldTrait> BoundField<'o, O, F>
-where
-    F: PropTrait,
-    O: Deref<Target = UObjectBase>,
-{
-    pub fn value(&'o self) -> &'o <F as FieldTrait>::PropValue {
-        unsafe { self.field.value(self.object.deref()) }
+pub struct BoundFieldMut<'o> {
+    object: *mut UObjectBase,
+    pub field: &'o FField,
+}
+impl<'o> BoundFieldMut<'o> {
+    pub fn get<P: PropTrait>(&mut self) -> Option<&'o mut <P as FieldTrait>::PropValue> {
+        FieldTrait::cast::<P>(self.field).map(|f| unsafe { f.value_mut_ptr(self.object) })
     }
 }
 
@@ -759,7 +772,7 @@ pub struct FFieldBase {
     class_private: *const FFieldClass,
     owner: FFieldVariant,
     next: *const FField,
-    pub name_private: FName,
+    name_private: FName,
     flags_private: EObjectFlags,
 }
 impl FFieldBase {
@@ -772,6 +785,9 @@ impl FFieldBase {
     pub fn cast<T: FieldTrait>(&self) -> Option<&T> {
         self.is::<T>()
             .then(|| unsafe { std::mem::transmute::<&Self, &T>(self) })
+    }
+    pub fn name(&self) -> FName {
+        self.name_private
     }
 }
 impl_deref!(FField, base: FFieldBase);
@@ -807,16 +823,38 @@ pub struct FProperty {
     post_construct_link_next: *const FProperty,
 }
 
-impl_deref!(FStrProperty, fproperty: FProperty);
-unsafe impl FieldTrait for FStrProperty {
-    const CAST_FLAGS: EClassCastFlags = EClassCastFlags::CASTCLASS_FStrProperty;
-    type PropValue = FString;
+impl FProperty {
+    pub fn offset(&self) -> i32 {
+        self.offset_internal
+    }
 }
-#[derive(Debug)]
-#[repr(C)]
-pub struct FStrProperty {
-    fproperty: FProperty,
+
+macro_rules! impl_basic_prop {
+    ($name:ident, $value:ty, $cast_flag:ident) => {
+        impl_deref!($name, fproperty: FProperty);
+        unsafe impl FieldTrait for $name {
+            const CAST_FLAGS: EClassCastFlags = EClassCastFlags::$cast_flag;
+            type PropValue = $value;
+        }
+        #[derive(Debug)]
+        #[repr(C)]
+        pub struct $name {
+            fproperty: FProperty,
+        }
+    };
 }
+impl_basic_prop!(FStrProperty, FString, CASTCLASS_FStrProperty);
+impl_basic_prop!(FNameProperty, FName, CASTCLASS_FNameProperty);
+impl_basic_prop!(FInt8Property, i8, CASTCLASS_FInt8Property);
+impl_basic_prop!(FInt16Property, i16, CASTCLASS_FInt16Property);
+impl_basic_prop!(FIntProperty, i32, CASTCLASS_FIntProperty);
+impl_basic_prop!(FInt64Property, i64, CASTCLASS_FInt64Property);
+impl_basic_prop!(FByteProperty, u8, CASTCLASS_FByteProperty); // TODO enum
+impl_basic_prop!(FUInt16Property, u16, CASTCLASS_FUInt16Property);
+impl_basic_prop!(FUInt32Property, u32, CASTCLASS_FUInt32Property);
+impl_basic_prop!(FUInt64Property, u64, CASTCLASS_FUInt64Property);
+impl_basic_prop!(FFloatProperty, f32, CASTCLASS_FFloatProperty);
+impl_basic_prop!(FDoubleProperty, f64, CASTCLASS_FDoubleProperty);
 
 impl_deref!(UStruct, ufield: UField);
 unsafe impl ObjTrait for UStruct {
@@ -847,7 +885,7 @@ impl UStruct {
         IterProps {
             r#struct: self,
             next_super: self,
-            next_field: self.child_properties,
+            next_field: std::ptr::null(),
         }
     }
 }
@@ -857,39 +895,7 @@ pub struct IterProps<'o> {
     next_super: *const UStruct,
     next_field: *const FField,
 }
-// pub struct BoundField<'o, T, F = FField> {
-//     object: T,
-//     field: &'o F,
-// }
-// impl<'o, T, F> BoundField<'o, T, F>
-// where
-//     F: FieldTrait + Deref<Target = FField>,
-// {
-//     pub fn cast<P: FieldTrait>(self) -> Option<BoundField<'o, T, P>> {
-//         self.field.cast().map(|field| BoundField {
-//             object: self.object,
-//             field,
-//         })
-//     }
-// }
-// impl<'o, T, F> BoundField<'o, T, F>
-// where
-//     T: std::ops::Deref<Target = UObjectBase>,
-// {
-//     pub fn value(&self) {
-//         let obj = self.deref();
-//     }
-// }
-// impl<'o, T, F> BoundField<'o, T, F>
-// where
-//     T: std::ops::DerefMut<Target = UObjectBase>,
-// {
-//     pub fn value_mut(&mut self) {
-//         let obj = self.object.deref_mut();
-//     }
-// }
 impl<'o> Iterator for IterProps<'o> {
-    // type Item = BoundField<'o, T>;
     type Item = &'o FField;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -897,10 +903,6 @@ impl<'o> Iterator for IterProps<'o> {
             if let Some(f) = unsafe { self.next_field.as_ref() } {
                 self.next_field = f.next;
                 return Some(f);
-                // BoundField {
-                //     object: self.object.clone(),
-                //     field: f,
-                // });
             } else if let Some(s) = unsafe { self.next_super.as_ref() } {
                 self.next_field = s.child_properties;
                 self.next_super = s.super_struct;
@@ -978,6 +980,15 @@ pub struct FReferenceControllerBase {
 }
 
 pub type FString = TArray<u16>;
+impl From<&str> for FString {
+    fn from(value: &str) -> Self {
+        Self::from(
+            widestring::U16CString::from_str(value)
+                .unwrap()
+                .as_slice_with_nul(),
+        )
+    }
+}
 
 #[derive(Debug)]
 #[repr(C)]
