@@ -45,12 +45,28 @@ pub fn init() {
                         s.objects.insert(*id, cache);
 
                         if let Some(obj) = ctx.get_ref(*id) {
-                            if let Some(func) = obj.cast::<ue::UFunction>() {
-                                let script = &func.script;
-                                if script.len() > 100 {
-                                    println!("created giga {}", func.path());
+                            // if let Some(func) = obj.cast::<ue::UFunction>() {
+                            //     let script = &func.script;
+                            //     if script.len() > 100 {
+                            // println!("created giga {}", obj.path());
+
+                            for (i, field) in obj.iter_props_bound().enumerate() {
+                                if let Some(str_prop) = field.cast::<ue::FStrProperty>() {
+                                    let value = str_prop.value();
+                                    dbg!(value.to_string());
+                                    // str_prop.
                                 }
                             }
+                            // for (i, field) in func.iter_props().enumerate() {
+                            //     if let Some(prop) = field.cast::<ue::FProperty>() {
+                            //         println!(
+                            //             "  {} {}",
+                            //             prop.offset_internal, prop.name_private
+                            //         );
+                            //     }
+                            // }
+                            //     }
+                            // }
                         }
                     }
                     ObjectEvent::Deleted { id } => {
