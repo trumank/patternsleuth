@@ -41,20 +41,20 @@ pub fn init() {
                         }
                         s.objects.insert(*id, cache);
 
-                        // if let Some(obj) = ctx.get_ref(*id) {
-                        //     for (i, field) in obj.props().enumerate() {
-                        //         if let Some(value) = field.get::<ue::FNameProperty>() {
-                        //             let value = value.to_string();
-                        //             if !value.is_empty() {
-                        //                 println!(
-                        //                     "{} = {}",
-                        //                     field.field.name().to_string(),
-                        //                     value.to_string()
-                        //                 );
-                        //             }
-                        //         }
-                        //     }
-                        // }
+                        if let Some(obj) = ctx.get_ref(*id) {
+                            for (i, field) in obj.props().enumerate() {
+                                if let Some(value) = field.get::<ue::FNameProperty>() {
+                                    let value = value.to_string();
+                                    if !value.is_empty() {
+                                        tracing::debug!(
+                                            "{} = {}",
+                                            field.field.name().to_string(),
+                                            value.to_string()
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                     ObjectEvent::Deleted { id } => {
                         s.objects.remove(id);
@@ -70,7 +70,7 @@ pub fn init() {
         }
     });
 
-    std::thread::spawn(move || run((tx_ui, rx_ui)).unwrap());
+    // std::thread::spawn(move || run((tx_ui, rx_ui)).unwrap());
 }
 
 fn run(channels: (Sender<GuiFn>, Receiver<GuiRet>)) -> Result<(), eframe::Error> {

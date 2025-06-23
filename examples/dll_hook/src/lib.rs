@@ -1,12 +1,13 @@
 mod events;
 mod gui;
 mod hooks;
+mod logging;
 mod object_cache;
 mod ue;
 
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use patternsleuth::resolvers::impl_try_collector;
 use patternsleuth::resolvers::unreal::blueprint_library::UFunctionBind;
 use patternsleuth::resolvers::unreal::{
@@ -18,7 +19,6 @@ use patternsleuth::resolvers::unreal::{
     },
     kismet::{FFrameStep, FFrameStepExplicitProperty, FFrameStepViaExec},
 };
-use simple_log::{error, info, LogConfigBuilder};
 use windows::Win32::{
     Foundation::HMODULE,
     System::{
@@ -45,10 +45,10 @@ extern "system" fn DllMain(dll_module: HMODULE, call_reason: u32, _: *mut ()) ->
 
 unsafe extern "system" fn init(_: usize) {
     if let Ok(bin_dir) = setup() {
-        info!("dll_hook loaded",);
+        tracing::info!("dll_hook loaded",);
 
         if let Err(e) = patch(bin_dir) {
-            error!("{e:#}");
+            tracing::error!("{e:#}");
         }
     }
 }
@@ -56,14 +56,11 @@ unsafe extern "system" fn init(_: usize) {
 fn setup() -> Result<PathBuf> {
     let exe_path = std::env::current_exe()?;
     let bin_dir = exe_path.parent().context("could not find exe parent dir")?;
-    let config = LogConfigBuilder::builder()
-        .path(bin_dir.join("dll_hook.txt").to_str().unwrap()) // TODO why does this not take a path??
-        .time_format("%Y-%m-%d %H:%M:%S.%f")
-        .level("debug")
-        .output_file()
-        .size(u64::MAX)
-        .build();
-    simple_log::new(config).map_err(|e| anyhow!("{e}"))?;
+
+    let log_guard = logging::setup_logging(bin_dir)?;
+
+    std::mem::forget(log_guard); // TODO hold onto this and drop on exit?
+
     Ok(bin_dir.to_path_buf())
 }
 
@@ -125,24 +122,24 @@ macro_rules! assert_main_thread {
 }
 
 fn dump_backtrace() {
-    info!(
+    tracing::info!(
         "Dumping backtrace on thread {:?}:",
         std::thread::current().id()
     );
     let backtrace = backtrace::Backtrace::new();
     for (index, frame) in backtrace.frames().iter().enumerate() {
-        info!("  {index}: {:?} {:?}", frame.ip(), frame.symbols());
+        tracing::info!("  {index}: {:?} {:?}", frame.ip(), frame.symbols());
     }
 }
 
 unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
     let exe = patternsleuth::process::internal::read_image()?;
 
-    info!("starting scan");
+    tracing::info!("starting scan");
     let resolution = exe.resolve(DllHookResolution::resolver())?;
-    info!("finished scan");
+    tracing::info!("finished scan");
 
-    info!("results: {:?}", resolution);
+    tracing::info!("results: {:?}", resolution);
 
     let guobject_array: &'static ue::FUObjectArray =
         &*(resolution.guobject_array.0 as *const ue::FUObjectArray);

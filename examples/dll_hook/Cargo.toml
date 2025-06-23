@@ -23,8 +23,10 @@ parking_lot = "0.12.1"
 patternsleuth = { path = "../../patternsleuth", features = ["process-internal", "image-pe"] }
 regex.workspace = true
 retour = { git = "https://github.com/Hpmason/retour-rs", features = ["static-detour"] }
-simple-log = "1.6.0"
 thread_local = "1.1.7"
+tracing = "0.1.41"
+tracing-appender = "0.2.3"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 widestring = "1.0.2"
 windows = { workspace = true, features = [
   "Win32_Foundation",

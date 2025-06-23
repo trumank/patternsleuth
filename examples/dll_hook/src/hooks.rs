@@ -36,7 +36,7 @@ pub unsafe fn initialize() -> Result<()> {
             assert_main_thread!();
 
             HookFEngineLoopInit.call(engine_loop);
-            simple_log::info!("ENGINE LOOP INIT");
+            tracing::info!("ENGINE LOOP INIT");
         },
     )?;
     HookFEngineLoopInit.enable()?;
@@ -146,7 +146,7 @@ pub unsafe fn initialize() -> Result<()> {
                 // let path = function
                 //     .get_path_name(None);
                 // if let Some(hook) = hooks.get(path.as_str()) {
-                //     simple_log::info!(
+                //     tracing::info!(
                 //         "UFunction::Bind({path}) func = {:?} flags = {:?}",
                 //         function.func,
                 //         function.function_flags
@@ -173,7 +173,7 @@ unsafe extern "system" fn do_stuff(
     let mut ctx: Option<&ue::UObject> = None;
     ue::kismet::arg(stack, &mut ctx);
 
-    simple_log::info!("doing stuff!!");
+    tracing::info!("doing stuff!!");
 
     stack.code = stack.code.add(1);
 }

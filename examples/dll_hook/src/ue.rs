@@ -122,11 +122,11 @@ impl FWindowsCriticalSection {
         &self.0 as *const _ as *mut _
     }
     unsafe fn lock(&self) {
-        simple_log::info!("LOCKING objects");
+        tracing::info!("LOCKING objects");
         EnterCriticalSection(self.crit_ptr_mut());
     }
     unsafe fn unlock(&self) {
-        simple_log::info!("UNLOCKING objects");
+        tracing::info!("UNLOCKING objects");
         LeaveCriticalSection(self.crit_ptr_mut());
     }
 }
