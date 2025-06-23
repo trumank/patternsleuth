@@ -1,5 +1,3 @@
-#![feature(backtrace_frames)]
-
 mod events;
 mod gui;
 mod hooks;
