@@ -29,10 +29,13 @@ pub fn setup_logging(bin_dir: impl AsRef<Path>) -> Result<LogGuards> {
         .compact()
         .with_filter(LevelFilter::INFO);
 
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(format!("{}=debug", env!("CARGO_PKG_NAME"))));
+
     tracing_subscriber::registry()
         .with(file_layer)
         .with(console_layer)
-        .with(EnvFilter::from_default_env())
+        .with(filter)
         .init();
 
     tracing::info!("Logging initialized");
