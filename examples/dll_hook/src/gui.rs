@@ -9,10 +9,7 @@ use egui_winit::winit::platform::windows::EventLoopBuilderExtWindows;
 use egui_winit::winit::platform::x11::EventLoopBuilderExtX11;
 use indexmap::IndexMap;
 
-use crate::{
-    object_cache::{ObjectEvent, ObjectId, TickContext},
-    ue::EClassCastFlags,
-};
+use crate::object_cache::{ObjectEvent, ObjectId, TickContext};
 
 use super::*;
 

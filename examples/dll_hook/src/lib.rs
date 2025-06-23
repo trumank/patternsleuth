@@ -1,6 +1,5 @@
 #![feature(backtrace_frames)]
 
-mod app;
 mod events;
 mod gui;
 mod hooks;
