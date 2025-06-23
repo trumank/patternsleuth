@@ -2,12 +2,22 @@
 
 # TODO
 - [ ] dynamic struct members
-- [ ] checked class casting
-- [ ] inheritance/downcasting
-- [ ] property access
+- [x] checked class casting
+- [x] inheritance/downcasting
+  - [ ] need to figure out how accept base class or anything that inherits from it
+- [x] property access
+  - [ ] impl more prop types
+    - [ ] FArrayProperty
+    - [ ] FMapProperty
+    - [ ] FSetProperty
+    - [ ] object properties...
+    - [ ] struct properties...
+  - [ ] need to figure out props share address space (FBoolProperty)
 - [ ] ObjectRef from *const UObject
 - [ ] object creation
 - [ ] UFunction calling
+- [ ] kismet disassembly
+- [ ] kismet hooking
 
 ## random ideas:
 
