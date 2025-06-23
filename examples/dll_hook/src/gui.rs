@@ -224,50 +224,55 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                             ui.label(&format!("script {script:?}"));
                         }
 
+                        let mut props = object
+                            .props_mut()
+                            .filter_map(|f| {
+                                f.field
+                                    .cast::<ue::FProperty>()
+                                    .map(|p| (p.offset(), p.name(), f))
+                            })
+                            .collect::<Vec<_>>();
+
+                        props.sort_by_key(|p| p.0);
+
                         egui::ScrollArea::vertical().show(ui, |ui| {
-                            for (i, mut field) in object.props_mut().enumerate() {
-                                if let Some(prop) = field.field.cast::<ue::FProperty>() {
-                                    ui.horizontal(|ui| {
-                                        ui.label(&format!(
-                                            "{i}: 0x{:02x} {}",
-                                            prop.offset(),
-                                            prop.name().to_string()
-                                        ));
-                                        if let Some(p) = field.get::<ue::FNameProperty>() {
-                                            let mut text = p.to_string();
-                                            if ui.text_edit_singleline(&mut text).changed() {
-                                                // TODO create FName
-                                                // *p = text.as_str().into();
-                                            }
-                                        } else if let Some(p) = field.get::<ue::FStrProperty>() {
-                                            let mut text = p.to_string();
-                                            if ui.text_edit_singleline(&mut text).changed() {
-                                                *p = text.as_str().into();
-                                            }
-                                        } else if let Some(p) = field.get::<ue::FIntProperty>() {
-                                            let mut text = p.to_string();
-                                            if ui.text_edit_singleline(&mut text).changed() {
-                                                if let Ok(value) = text.parse() {
-                                                    *p = value;
-                                                }
-                                            }
-                                        } else if let Some(p) = field.get::<ue::FFloatProperty>() {
-                                            let mut text = p.to_string();
-                                            if ui.text_edit_singleline(&mut text).changed() {
-                                                if let Ok(value) = text.parse() {
-                                                    *p = value;
-                                                }
-                                            }
-                                        } else if let Some(p) = field.get::<ue::FDoubleProperty>() {
-                                            let mut text = p.to_string();
-                                            if ui.text_edit_singleline(&mut text).changed() {
-                                                if let Ok(value) = text.parse() {
-                                                    *p = value;
-                                                }
+                            for (offset, name, mut field) in props {
+                                ui.horizontal(|ui| {
+                                    ui.label(&format!("0x{:02x} {}", offset, name.to_string()));
+                                    if let Some(p) = field.get::<ue::FNameProperty>() {
+                                        let mut text = p.to_string();
+                                        if ui.text_edit_singleline(&mut text).changed() {
+                                            // TODO create FName
+                                            // *p = text.as_str().into();
+                                        }
+                                    } else if let Some(p) = field.get::<ue::FStrProperty>() {
+                                        let mut text = p.to_string();
+                                        if ui.text_edit_singleline(&mut text).changed() {
+                                            *p = text.as_str().into();
+                                        }
+                                    } else if let Some(p) = field.get::<ue::FIntProperty>() {
+                                        let mut text = p.to_string();
+                                        if ui.text_edit_singleline(&mut text).changed() {
+                                            if let Ok(value) = text.parse() {
+                                                *p = value;
                                             }
                                         }
-                                    });
-                                }
+                                    } else if let Some(p) = field.get::<ue::FFloatProperty>() {
+                                        let mut text = p.to_string();
+                                        if ui.text_edit_singleline(&mut text).changed() {
+                                            if let Ok(value) = text.parse() {
+                                                *p = value;
+                                            }
+                                        }
+                                    } else if let Some(p) = field.get::<ue::FDoubleProperty>() {
+                                        let mut text = p.to_string();
+                                        if ui.text_edit_singleline(&mut text).changed() {
+                                            if let Ok(value) = text.parse() {
+                                                *p = value;
+                                            }
+                                        }
+                                    }
+                                });
                             }
                             ui.allocate_space(ui.available_size());
                         });
