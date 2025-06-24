@@ -396,7 +396,7 @@ pub fn read<S: Read>(s: &mut S) -> Result<literal::Expr> {
 }
 
 pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Expr> {
-    use literal::{Expr as Ex, ExprOp as Op, *};
+    use literal::{ExprOp as Op, *};
 
     let ex = match op {
         Op::ExLocalVariable => ExLocalVariable {

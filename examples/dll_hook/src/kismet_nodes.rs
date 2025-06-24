@@ -1,0 +1,377 @@
+use eframe::egui::{self, Color32, Ui};
+use egui_snarl::{
+    ui::{
+        AnyPins, NodeLayout, PinInfo, PinPlacement, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle,
+    },
+    InPin, NodeId, OutPin, Snarl,
+};
+
+const fn float_color(r: f32, g: f32, b: f32) -> Color32 {
+    Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+}
+
+const EXEC_COLOR: Color32 = float_color(1.0, 1.0, 1.0);
+const BOOL_COLOR: Color32 = float_color(0.300000, 0.0, 0.0);
+const STRING_COLOR: Color32 = float_color(1.0, 0.0, 0.660537);
+const NUMBER_COLOR: Color32 = float_color(0.013575, 0.770000, 0.429609);
+const FLOAT_COLOR: Color32 = float_color(0.357667, 1.0, 0.060000);
+
+struct GenericPin {
+    name: String,
+    pin_type: PinType,
+}
+
+enum PinType {
+    Exec,
+    Bool(bool),
+    String(String),
+    Int(i32),
+    Float(f32),
+}
+
+impl PinType {
+    fn pin_info(&self) -> PinInfo {
+        match self {
+            Self::Exec => {
+                PinInfo::triangle()
+                    .with_fill(EXEC_COLOR)
+                    .with_wire_style(WireStyle::AxisAligned {
+                        corner_radius: 10.0,
+                    })
+            }
+            Self::Bool(_) => PinInfo::triangle()
+                .with_fill(BOOL_COLOR)
+                .with_wire_style(WireStyle::Bezier5),
+            Self::String(_) => PinInfo::circle()
+                .with_fill(STRING_COLOR)
+                .with_wire_style(WireStyle::Bezier5),
+            Self::Int(_) => PinInfo::circle()
+                .with_fill(NUMBER_COLOR)
+                .with_wire_style(WireStyle::Bezier5),
+            Self::Float(_) => PinInfo::circle()
+                .with_fill(NUMBER_COLOR)
+                .with_wire_style(WireStyle::Bezier5),
+        }
+    }
+}
+
+struct GenericNode {
+    name: String,
+    inputs: Vec<GenericPin>,
+    outputs: Vec<GenericPin>,
+}
+
+impl GenericNode {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+struct KismetViewer;
+
+impl SnarlViewer<GenericNode> for KismetViewer {
+    #[inline]
+    fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<GenericNode>) {
+        let from_node = &snarl[from.id.node];
+        let from_pin = &from_node.outputs[from.id.output];
+
+        let to_node = &snarl[to.id.node];
+        let to_pin = &to_node.inputs[to.id.input];
+
+        if std::mem::discriminant(&from_pin.pin_type) != std::mem::discriminant(&to_pin.pin_type) {
+            return;
+        }
+
+        match from_pin.pin_type {
+            PinType::Exec => {
+                for &remote in &from.remotes {
+                    snarl.disconnect(from.id, remote);
+                }
+            }
+            _ => {
+                for &remote in &to.remotes {
+                    snarl.disconnect(remote, to.id);
+                }
+            }
+        }
+
+        snarl.connect(from.id, to.id);
+    }
+
+    fn title(&mut self, node: &GenericNode) -> String {
+        node.name().to_string()
+    }
+
+    fn inputs(&mut self, node: &GenericNode) -> usize {
+        node.inputs.len()
+    }
+
+    fn outputs(&mut self, node: &GenericNode) -> usize {
+        node.outputs.len()
+    }
+
+    #[allow(refining_impl_trait)]
+    fn show_input(&mut self, pin: &InPin, ui: &mut Ui, snarl: &mut Snarl<GenericNode>) -> PinInfo {
+        let node = &mut snarl[pin.id.node];
+        let remotes = &pin.remotes;
+        let pin = &mut node.inputs[pin.id.input];
+
+        ui.label(&pin.name);
+
+        match &mut pin.pin_type {
+            PinType::Exec => {}
+            PinType::Bool(value) => {
+                if remotes.is_empty() {
+                    ui.checkbox(value, "");
+                }
+            }
+            PinType::String(value) => {
+                if remotes.is_empty() {
+                    egui::TextEdit::singleline(value)
+                        .clip_text(false)
+                        .desired_width(0.0)
+                        .margin(ui.spacing().item_spacing)
+                        .show(ui);
+                }
+            }
+            PinType::Int(value) => {
+                if remotes.is_empty() {
+                    ui.add(egui::DragValue::new(value));
+                }
+            }
+            PinType::Float(value) => {
+                if remotes.is_empty() {
+                    ui.add(egui::DragValue::new(value));
+                }
+            }
+        }
+        pin.pin_type.pin_info()
+    }
+
+    #[allow(refining_impl_trait)]
+    fn show_output(
+        &mut self,
+        pin: &OutPin,
+        ui: &mut Ui,
+        snarl: &mut Snarl<GenericNode>,
+    ) -> PinInfo {
+        let node = &mut snarl[pin.id.node];
+        let remotes = &pin.remotes;
+        let pin = &mut node.outputs[pin.id.output];
+
+        ui.label(&pin.name);
+
+        pin.pin_type.pin_info()
+    }
+
+    fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<GenericNode>) -> bool {
+        true
+    }
+
+    fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut Ui, snarl: &mut Snarl<GenericNode>) {
+        ui.label("Add node");
+        if ui.button("Number").clicked() {
+            snarl.insert_node(
+                pos,
+                GenericNode {
+                    name: "Number node".into(),
+                    inputs: vec![
+                        GenericPin {
+                            name: "exec".into(),
+                            pin_type: PinType::Exec,
+                        },
+                        GenericPin {
+                            name: "input".into(),
+                            pin_type: PinType::Int(1337),
+                        },
+                    ],
+                    outputs: vec![
+                        GenericPin {
+                            name: "then".into(),
+                            pin_type: PinType::Exec,
+                        },
+                        GenericPin {
+                            name: "output".into(),
+                            pin_type: PinType::Int(0),
+                        },
+                    ],
+                },
+            );
+            ui.close_menu();
+        }
+        if ui.button("String").clicked() {
+            snarl.insert_node(
+                pos,
+                GenericNode {
+                    name: "String node".into(),
+                    inputs: vec![
+                        GenericPin {
+                            name: "exec".into(),
+                            pin_type: PinType::Exec,
+                        },
+                        GenericPin {
+                            name: "input".into(),
+                            pin_type: PinType::String("asdf".into()),
+                        },
+                    ],
+                    outputs: vec![
+                        GenericPin {
+                            name: "then".into(),
+                            pin_type: PinType::Exec,
+                        },
+                        GenericPin {
+                            name: "output".into(),
+                            pin_type: PinType::String("asdf".into()),
+                        },
+                    ],
+                },
+            );
+            ui.close_menu();
+        }
+        if ui.button("If").clicked() {
+            snarl.insert_node(
+                pos,
+                GenericNode {
+                    name: "If".into(),
+                    inputs: vec![
+                        GenericPin {
+                            name: "exec".into(),
+                            pin_type: PinType::Exec,
+                        },
+                        GenericPin {
+                            name: "condition".into(),
+                            pin_type: PinType::Bool(false),
+                        },
+                    ],
+                    outputs: vec![
+                        GenericPin {
+                            name: "then".into(),
+                            pin_type: PinType::Exec,
+                        },
+                        GenericPin {
+                            name: "else".into(),
+                            pin_type: PinType::Exec,
+                        },
+                    ],
+                },
+            );
+            ui.close_menu();
+        }
+        if ui.button("For").clicked() {
+            snarl.insert_node(
+                pos,
+                GenericNode {
+                    name: "For".into(),
+                    inputs: vec![
+                        GenericPin {
+                            name: "exec".into(),
+                            pin_type: PinType::Exec,
+                        },
+                        GenericPin {
+                            name: "start".into(),
+                            pin_type: PinType::Int(0),
+                        },
+                        GenericPin {
+                            name: "end".into(),
+                            pin_type: PinType::Int(10),
+                        },
+                    ],
+                    outputs: vec![
+                        GenericPin {
+                            name: "then".into(),
+                            pin_type: PinType::Exec,
+                        },
+                        GenericPin {
+                            name: "value".into(),
+                            pin_type: PinType::Int(0),
+                        },
+                        GenericPin {
+                            name: "finish".into(),
+                            pin_type: PinType::Exec,
+                        },
+                    ],
+                },
+            );
+            ui.close_menu();
+        }
+    }
+
+    fn has_dropped_wire_menu(
+        &mut self,
+        _src_pins: AnyPins,
+        _snarl: &mut Snarl<GenericNode>,
+    ) -> bool {
+        true
+    }
+
+    fn show_dropped_wire_menu(
+        &mut self,
+        pos: egui::Pos2,
+        ui: &mut Ui,
+        src_pins: AnyPins,
+        snarl: &mut Snarl<GenericNode>,
+    ) {
+    }
+
+    fn has_node_menu(&mut self, _node: &GenericNode) -> bool {
+        true
+    }
+
+    fn show_node_menu(
+        &mut self,
+        node: NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        ui: &mut Ui,
+        snarl: &mut Snarl<GenericNode>,
+    ) {
+        ui.label("Node menu");
+        if ui.button("Remove").clicked() {
+            snarl.remove_node(node);
+            ui.close_menu();
+        }
+    }
+
+    fn has_on_hover_popup(&mut self, _: &GenericNode) -> bool {
+        true
+    }
+
+    fn show_on_hover_popup(
+        &mut self,
+        node: NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        ui: &mut Ui,
+        snarl: &mut Snarl<GenericNode>,
+    ) {
+    }
+
+    fn header_frame(
+        &mut self,
+        frame: egui::Frame,
+        node: NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        snarl: &Snarl<GenericNode>,
+    ) -> egui::Frame {
+        frame.fill(egui::Color32::from_rgb(70, 66, 40))
+    }
+}
+
+pub struct KismetGraph {
+    snarl: Snarl<GenericNode>,
+}
+
+impl KismetGraph {
+    pub fn new() -> Self {
+        KismetGraph {
+            snarl: Default::default(),
+        }
+    }
+
+    pub fn ui(&mut self, ui: &mut egui::Ui, id: egui::Id) {
+        SnarlWidget::new()
+            .id(id)
+            .show(&mut self.snarl, &mut KismetViewer, ui);
+    }
+}

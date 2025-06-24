@@ -1,6 +1,6 @@
 use crossbeam_channel::{Receiver, Sender};
 use regex::Regex;
-use std::{cell::RefCell, collections::HashSet};
+use std::{cell::RefCell, collections::HashMap};
 
 use eframe::egui;
 
@@ -72,8 +72,8 @@ pub fn init() {
                         }
                     }
                     ObjectEvent::Deleted { id } => {
-                        s.objects.remove(id);
-                        s.filtered.remove(id);
+                        s.objects.shift_remove(id);
+                        s.filtered.shift_remove(id);
                     }
                 }
             }
@@ -131,12 +131,26 @@ impl ObjectCache {
     }
 }
 
-#[derive(Default)]
 struct ObjectFilter {
     name_search: String,
     re: Option<Regex>,
 }
 impl ObjectFilter {
+    fn new(search: String) -> Self {
+        let mut new = Self {
+            name_search: String::new(),
+            re: None,
+        };
+        new.set_search(search);
+        new
+    }
+    fn get_search(&self) -> &str {
+        &self.name_search
+    }
+    fn set_search(&mut self, value: String) {
+        self.name_search = value;
+        self.re = Regex::new(&self.name_search).ok()
+    }
     fn matches(&self, object: &ObjectCache) -> bool {
         if let Some(re) = &self.re {
             re.is_match(&object.name)
@@ -158,13 +172,13 @@ struct InnerState {
     objects: IndexMap<ObjectId, ObjectCache>,
     filtered: IndexMap<ObjectId, ObjectCache>,
 
-    open_objects: HashSet<ObjectId>,
+    open_objects: HashMap<ObjectId, crate::kismet_nodes::KismetGraph>,
 }
 impl InnerState {
     fn new() -> Self {
         Self {
             buh: 0,
-            filter: ObjectFilter::default(),
+            filter: ObjectFilter::new("Function /Game/".to_string()),
             filtered: Default::default(),
             objects: Default::default(),
             kismet_log: "".to_string(),
@@ -189,11 +203,10 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
 
         ui.horizontal(|ui| {
             let name_label = ui.label("Search: ");
-            let res = ui
-                .text_edit_singleline(&mut state.filter.name_search)
-                .labelled_by(name_label.id);
+            let mut tmp = std::borrow::Cow::from(state.filter.get_search());
+            let res = ui.text_edit_singleline(&mut tmp).labelled_by(name_label.id);
             if res.changed() {
-                state.filter.re = Regex::new(&state.filter.name_search).ok();
+                state.filter.set_search(tmp.to_string());
 
                 state.filtered = state
                     .objects
@@ -225,7 +238,9 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                 {
                     ui.horizontal(|ui| {
                         if ui.button(&format!("{i:10?}")).clicked() {
-                            state.open_objects.insert(*i);
+                            state
+                                .open_objects
+                                .insert(*i, crate::kismet_nodes::KismetGraph::new());
                         }
                         match &obj.script_status {
                             Some((len, res)) => {
@@ -248,7 +263,7 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
             },
         );
 
-        state.open_objects.retain(|obj| {
+        state.open_objects.retain(|obj, graph| {
             let mut object = tick_ctx.get_mut(*obj);
             let name = object
                 .as_ref()
@@ -277,11 +292,13 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                             //     _ => {}
                             // }
 
-                            struct Immutable(String);
+                            // struct Immutable(String);
 
-                            egui::ScrollArea::vertical().show(ui, |ui| {
-                                ui.text_edit_multiline(&mut format!("{ex:#?}").as_str())
-                            });
+                            // egui::ScrollArea::vertical().show(ui, |ui| {
+                            //     ui.text_edit_multiline(&mut format!("{ex:#?}").as_str())
+                            // });
+                            graph.ui(ui, egui::Id::new(name));
+                            return;
                         }
 
                         let mut props = object

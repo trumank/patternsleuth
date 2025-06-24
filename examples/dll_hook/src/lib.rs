@@ -2,6 +2,7 @@ mod events;
 mod gui;
 mod hooks;
 mod kismet;
+mod kismet_nodes;
 mod logging;
 mod object_cache;
 mod ue;

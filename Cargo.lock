@@ -1173,6 +1173,7 @@ dependencies = [
  "byteorder",
  "crossbeam-channel",
  "eframe",
+ "egui-snarl",
  "egui-winit",
  "indexmap",
  "itertools 0.12.0",
@@ -1270,6 +1271,26 @@ dependencies = [
  "log",
  "nohash-hasher",
  "profiling",
+]
+
+[[package]]
+name = "egui-scale"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a686863c9e0f9be16fe03c50dd4f25273050e066a756729690928e674ea9f05"
+dependencies = [
+ "egui",
+]
+
+[[package]]
+name = "egui-snarl"
+version = "0.8.0"
+source = "git+https://github.com/zakarumych/egui-snarl#0cb1a6b2483fbd38e16c29932f898c3ab92486d0"
+dependencies = [
+ "egui",
+ "egui-scale",
+ "slab",
+ "smallvec",
 ]
 
 [[package]]

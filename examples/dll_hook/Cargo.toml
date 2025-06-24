@@ -17,6 +17,7 @@ bitflags = "2.4.1"
 byteorder = "1.5.0"
 crossbeam-channel = "0.5.15"
 eframe = "0.31.0"
+egui-snarl = { git = "https://github.com/zakarumych/egui-snarl", version = "0.8.0" }
 egui-winit = { version = "0.31.0", default-features = false }
 indexmap = "2.1.0"
 itertools.workspace = true
