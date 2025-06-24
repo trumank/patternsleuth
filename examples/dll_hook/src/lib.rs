@@ -1,6 +1,7 @@
 mod events;
 mod gui;
 mod hooks;
+mod kismet;
 mod logging;
 mod object_cache;
 mod ue;

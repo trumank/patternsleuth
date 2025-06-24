@@ -14,6 +14,8 @@
     - [ ] struct properties...
   - [ ] need to figure out props share address space (FBoolProperty)
 - [ ] ObjectRef from *const UObject
+  - [ ] actually can't be *const UObject, should make NewType(*const UObject)
+  - [ ] generic NewType(*const T) where T: Deref(Target=UObject)?
 - [ ] object creation
 - [ ] UFunction calling
 - [ ] kismet disassembly

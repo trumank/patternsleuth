@@ -1,4 +1,5 @@
 use crossbeam_channel::{Receiver, Sender};
+use regex::Regex;
 use std::{cell::RefCell, collections::HashSet};
 
 use eframe::egui;
@@ -34,26 +35,40 @@ pub fn init() {
                         let Some(object) = ctx.get_ref(*id) else {
                             continue;
                         };
-                        let name = object.path();
-                        let cache = ObjectCache { name };
+
+                        let cache = ObjectCache::new(&object);
                         if s.filter.matches(&cache) {
                             s.filtered.insert(*id, cache.clone());
                         }
                         s.objects.insert(*id, cache);
 
-                        if let Some(obj) = ctx.get_ref(*id) {
-                            for (i, field) in obj.props().enumerate() {
-                                if let Some(value) = field.get::<ue::FNameProperty>() {
-                                    let value = value.to_string();
-                                    if !value.is_empty() {
-                                        tracing::debug!(
-                                            "{} = {}",
-                                            field.field.name().to_string(),
-                                            value.to_string()
-                                        );
-                                    }
-                                }
-                            }
+                        let Some(obj) = object.cast::<ue::UFunction>() else {
+                            continue;
+                        };
+                        if obj.script.is_empty() {
+                            continue;
+                        }
+                        // tracing::info!("len={}: {}", obj.script.len(), obj.path());
+                        let mut stream = std::io::Cursor::new(obj.script.as_slice());
+
+                        let ex = crate::kismet::read_all(&mut stream);
+                        // match ex {
+                        //     Ok(ex) => tracing::info!("ex: {ex:#?}"),
+                        //     // Err(err) => tracing::error!("ex: {err}"),
+                        //     _ => {}
+                        // }
+
+                        for (i, field) in obj.props().enumerate() {
+                            // if let Some(value) = field.get::<ue::FNameProperty>() {
+                            //     let value = value.to_string();
+                            //     if !value.is_empty() {
+                            //         tracing::info!(
+                            //             "  {} = {}",
+                            //             field.field.name().to_string(),
+                            //             value.to_string()
+                            //         );
+                            //     }
+                            // }
                         }
                     }
                     ObjectEvent::Deleted { id } => {
@@ -70,7 +85,7 @@ pub fn init() {
         }
     });
 
-    // std::thread::spawn(move || run((tx_ui, rx_ui)).unwrap());
+    std::thread::spawn(move || run((tx_ui, rx_ui)).unwrap());
 }
 
 fn run(channels: (Sender<GuiFn>, Receiver<GuiRet>)) -> Result<(), eframe::Error> {
@@ -93,21 +108,40 @@ fn run(channels: (Sender<GuiFn>, Receiver<GuiRet>)) -> Result<(), eframe::Error>
 #[derive(Debug, Clone)]
 struct ObjectCache {
     name: String,
+    script_status: Option<(usize, Result<String, String>)>,
+}
+impl ObjectCache {
+    fn new(object: &ue::UObjectBase) -> Self {
+        let script_status = if let Some(func) = object.cast::<ue::UFunction>() {
+            let mut stream = std::io::Cursor::new(func.script.as_slice());
+            let ex = crate::kismet::read_all(&mut stream);
+            Some((
+                func.script.len(),
+                ex.map(|ex| format!("{}", ex.len()))
+                    .map_err(|e| e.to_string()),
+            ))
+        } else {
+            None
+        };
+
+        Self {
+            name: object.path(),
+            script_status,
+        }
+    }
 }
 
 #[derive(Default)]
 struct ObjectFilter {
     name_search: String,
+    re: Option<Regex>,
 }
 impl ObjectFilter {
     fn matches(&self, object: &ObjectCache) -> bool {
-        if self.name_search.is_empty() {
-            true
+        if let Some(re) = &self.re {
+            re.is_match(&object.name)
         } else {
-            object
-                .name
-                .to_ascii_lowercase()
-                .contains(&self.name_search.to_ascii_lowercase())
+            true
         }
     }
 }
@@ -159,6 +193,8 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                 .text_edit_singleline(&mut state.filter.name_search)
                 .labelled_by(name_label.id);
             if res.changed() {
+                state.filter.re = Regex::new(&state.filter.name_search).ok();
+
                 state.filtered = state
                     .objects
                     .iter()
@@ -191,6 +227,20 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                         if ui.button(&format!("{i:10?}")).clicked() {
                             state.open_objects.insert(*i);
                         }
+                        match &obj.script_status {
+                            Some((len, res)) => {
+                                ui.colored_label(egui::Color32::GREEN, format!("{len}"));
+                                match res {
+                                    Ok(t) => {
+                                        ui.colored_label(egui::Color32::GREEN, t);
+                                    }
+                                    Err(t) => {
+                                        ui.colored_label(egui::Color32::RED, t);
+                                    }
+                                }
+                            }
+                            None => {}
+                        };
                         ui.label(&obj.name);
                     });
                 }
@@ -217,8 +267,21 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                         if let Some(func) = object.cast::<ue::UFunction>() {
                             ui.label("function");
 
-                            let script = &func.script;
-                            ui.label(&format!("script {script:?}"));
+                            // let script = &func.script;
+                            // ui.label(&format!("script {script:?}"));
+                            let mut stream = std::io::Cursor::new(func.script.as_slice());
+                            let ex = crate::kismet::read_all(&mut stream);
+                            // match ex {
+                            //     Ok(ex) => tracing::info!("ex: {ex:#?}"),
+                            //     // Err(err) => tracing::error!("ex: {err}"),
+                            //     _ => {}
+                            // }
+
+                            struct Immutable(String);
+
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                ui.text_edit_multiline(&mut format!("{ex:#?}").as_str())
+                            });
                         }
 
                         let mut props = object
