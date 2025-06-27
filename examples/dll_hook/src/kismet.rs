@@ -1,7 +1,8 @@
 use crate::ue::{self, FName};
 use anyhow::{anyhow, bail, Result};
 use byteorder::{ReadBytesExt, LE};
-use std::io::Read;
+use std::collections::HashMap;
+use std::io::{Cursor, Read};
 
 macro_rules! build_walk {
     ($ex:ident, $member_name:ident : Box<Expr>) => {
@@ -82,7 +83,7 @@ macro_rules! build_from {
 
 macro_rules! expression {
     ($name:ident, $( $member_name:ident: [ $($member_type:tt)* ] ),* ) => {
-        #[derive(Debug)]
+        #[derive(Debug, Clone)]
         pub struct $name {
             $( pub $member_name: $($member_type)*, )*
         }
@@ -100,12 +101,20 @@ macro_rules! for_each {
         pub mod literal {
             use super::*;
 
-            #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, strum::FromRepr)]
+            pub type ExprGraph = HashMap<ExprIndex, ExprNode>;
+            #[derive(Debug, Clone)]
+            pub struct ExprNode {
+                pub expr: Expr,
+                pub top_level: bool,
+                pub next: Option<ExprIndex>,
+            }
+
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, strum::FromRepr, strum::AsRefStr)]
             #[repr(u8)]
             pub enum ExprOp {
                 $( $name = $op, )*
             }
-            #[derive(Debug)]
+            #[derive(Debug, Clone)]
             pub enum Expr {
                 $( $name($name), )*
             }
@@ -128,7 +137,7 @@ macro_rules! for_each {
         pub mod pattern {
             use super::*;
 
-            #[derive(Debug)]
+            #[derive(Debug, Clone)]
             pub enum Expr {
                 Any,
                 $( $name($name), )*
@@ -148,8 +157,11 @@ macro_rules! for_each {
     };
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExprIndex(pub usize);
+
 //use unreal_asset::types::PackageIndex;
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct KismetPropertyPointer(pub u64);
 // {
 // owner: PackageIndex,
@@ -157,19 +169,23 @@ struct KismetPropertyPointer(pub u64);
 // }
 #[derive(Debug, Clone, Copy)]
 struct PackageIndex(pub u64);
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct FScriptText;
-#[derive(Debug)]
-struct KismetSwitchCase;
+#[derive(Debug, Clone)]
+struct KismetSwitchCase {
+    case_index_value_term: ExprIndex,
+    code_skip_size_type: u32,
+    case_term: ExprIndex,
+}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Vector<T: Clone> {
     x: T,
     y: T,
     z: T,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Vector4<T: Clone> {
     x: T,
     y: T,
@@ -177,23 +193,24 @@ struct Vector4<T: Clone> {
     w: T,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Transform<T: Clone> {
     rotation: Vector4<T>,
     translation: Vector<T>,
     scale: Vector<T>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, strum::FromRepr)]
 #[repr(u8)]
 enum ECastToken {
-    ObjectToInterface,
-    ObjectToBool,
-    InterfaceToBool,
-    Max,
+    ObjectToInterface = 0x00,
+    ObjectToBool = 0x01,
+    InterfaceToBool = 0x02,
+    DoubleToFloat = 0x03,
+    FloatToDouble = 0x04,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(u8)]
 enum EScriptInstrumentationType {
     Class,
@@ -220,31 +237,31 @@ for_each!(
     0x01: ExInstanceVariable { variable: [ KismetPropertyPointer ] },
     0x02: ExDefaultVariable { variable: [ KismetPropertyPointer ] },
     // 0x03
-    0x04: ExReturn { return_expression: [ Box<Expr> ] },
+    0x04: ExReturn { return_expression: [ ExprIndex ] },
     // 0x05
     0x06: ExJump { code_offset: [ u32 ] },
-    0x07: ExJumpIfNot { code_offset: [ u32 ] boolean_expression: [ Box<Expr> ] },
+    0x07: ExJumpIfNot { code_offset: [ u32 ] boolean_expression: [ ExprIndex ] },
     // 0x08
-    0x09: ExAssert { line_number: [ u16 ] debug_mode: [ bool ] assert_expression: [ Box<Expr> ] },
+    0x09: ExAssert { line_number: [ u16 ] debug_mode: [ bool ] assert_expression: [ ExprIndex ] },
     // 0x0A
     0x0B: ExNothing {  },
     0x0C: ExNothingInt32 {  },
     // 0x0D
     // 0x0E
-    0x0F: ExLet { value: [ KismetPropertyPointer ] variable: [ Box<Expr> ] expression: [ Box<Expr> ] },
+    0x0F: ExLet { value: [ KismetPropertyPointer ] variable: [ ExprIndex ] expression: [ ExprIndex ] },
     // 0x10
     0x11: ExBitFieldConst { /* TODO */ },
-    0x12: ExClassContext { object_expression: [ Box<Expr> ] offset: [ u32 ] r_value_pointer: [ KismetPropertyPointer ] context_expression: [ Box<Expr> ] },
-    0x13: ExMetaCast { class_ptr: [ PackageIndex ] target_expression: [ Box<Expr> ] },
-    0x14: ExLetBool { variable_expression: [ Box<Expr> ] assignment_expression: [ Box<Expr> ] },
+    0x12: ExClassContext { object_expression: [ ExprIndex ] offset: [ u32 ] r_value_pointer: [ KismetPropertyPointer ] context_expression: [ ExprIndex ] },
+    0x13: ExMetaCast { class_ptr: [ PackageIndex ] target_expression: [ ExprIndex ] },
+    0x14: ExLetBool { variable_expression: [ ExprIndex ] assignment_expression: [ ExprIndex ] },
     0x15: ExEndParmValue {  },
     0x16: ExEndFunctionParms {  },
     0x17: ExSelf {  },
-    0x18: ExSkip { code_offset: [ u32 ] skip_expression: [ Box<Expr> ] },
-    0x19: ExContext { object_expression: [ Box<Expr> ] offset: [ u32 ] r_value_pointer: [ KismetPropertyPointer ] context_expression: [ Box<Expr> ] },
-    0x1A: ExContextFailSilent { object_expression: [ Box<Expr> ] offset: [ u32 ] r_value_pointer: [ KismetPropertyPointer ] context_expression: [ Box<Expr> ] },
-    0x1B: ExVirtualFunction { virtual_function_name: [ FName ] parameters: [ Vec<Expr> ] },
-    0x1C: ExFinalFunction { stack_node: [ PackageIndex ] parameters: [ Vec<Expr> ] },
+    0x18: ExSkip { code_offset: [ u32 ] skip_expression: [ ExprIndex ] },
+    0x19: ExContext { object_expression: [ ExprIndex ] offset: [ u32 ] r_value_pointer: [ KismetPropertyPointer ] context_expression: [ ExprIndex ] },
+    0x1A: ExContextFailSilent { object_expression: [ ExprIndex ] offset: [ u32 ] r_value_pointer: [ KismetPropertyPointer ] context_expression: [ ExprIndex ] },
+    0x1B: ExVirtualFunction { virtual_function_name: [ FName ] parameters: [ Vec<ExprIndex> ] },
+    0x1C: ExFinalFunction { stack_node: [ PackageIndex ] parameters: [ Vec<ExprIndex> ] },
     0x1D: ExIntConst { value: [ i32 ] },
     0x1E: ExFloatConst { value: [ f32 ] },
     0x1F: ExStringConst { value: [ String ] },
@@ -257,36 +274,37 @@ for_each!(
     0x26: ExIntOne {  },
     0x27: ExTrue {  },
     0x28: ExFalse {  },
-    0x29: ExTextConst { value: [ Box<FScriptText> ] },
+    0x29: ExTextConst { value: [ ExprIndex ] },
     0x2A: ExNoObject {  },
     0x2B: ExTransformConst { value: [ Transform<f64> ] },
     0x2C: ExIntConstByte {  },
     0x2D: ExNoInterface {  },
-    0x2E: ExDynamicCast { class_ptr: [ PackageIndex ] target_expression: [ Box<Expr> ] },
-    0x2F: ExStructConst { struct_value: [ PackageIndex ] struct_size: [ i32 ] value: [ Vec<Expr> ] },
+    0x2E: ExDynamicCast { class_ptr: [ PackageIndex ] target_expression: [ ExprIndex ] },
+    0x2F: ExStructConst { struct_value: [ PackageIndex ] struct_size: [ i32 ] value: [ Vec<ExprIndex> ] },
     0x30: ExEndStructConst {  },
-    0x31: ExSetArray { assigning_property: [ Option<Box<Expr>> ] array_inner_prop: [ Option<PackageIndex> ] elements: [ Vec<Expr> ] },
+    0x31: ExSetArray { assigning_property: [ Option<ExprIndex> ] array_inner_prop: [ Option<PackageIndex> ] elements: [ Vec<ExprIndex> ] },
     0x32: ExEndArray {  },
     0x33: ExPropertyConst { property: [ KismetPropertyPointer ] },
     0x34: ExUnicodeStringConst { value: [ String ] },
     0x35: ExInt64Const { value: [ i64 ] },
     0x36: ExUInt64Const {  },
-    0x37: ExPrimitiveCast { conversion_type: [ ECastToken ] target: [ Box<Expr> ] },
-    0x38: ExCast { /* TODO */ },
-    0x39: ExSetSet { set_property: [ Box<Expr> ] elements: [ Vec<Expr> ] },
+    // 0x37: ExPrimitiveCast { conversion_type: [ ECastToken ] target: [ ExprIndex ] },
+    0x37: ExDoubleConst { value: [ f64 ] },
+    0x38: ExCast { conversion_type: [ ECastToken ] target: [ ExprIndex ] },
+    0x39: ExSetSet { set_property: [ ExprIndex ] elements: [ Vec<ExprIndex> ] },
     0x3A: ExEndSet {  },
-    0x3B: ExSetMap { map_property: [ Box<Expr> ] elements: [ Vec<Expr> ] },
+    0x3B: ExSetMap { map_property: [ ExprIndex ] elements: [ Vec<ExprIndex> ] },
     0x3C: ExEndMap {  },
-    0x3D: ExSetConst { inner_property: [ KismetPropertyPointer ] elements: [ Vec<Expr> ] },
+    0x3D: ExSetConst { inner_property: [ KismetPropertyPointer ] elements: [ Vec<ExprIndex> ] },
     0x3E: ExEndSetConst {  },
-    0x3F: ExMapConst { key_property: [ KismetPropertyPointer ] value_property: [ KismetPropertyPointer ] elements: [ Vec<Expr> ] },
+    0x3F: ExMapConst { key_property: [ KismetPropertyPointer ] value_property: [ KismetPropertyPointer ] elements: [ Vec<ExprIndex> ] },
     0x40: ExEndMapConst {  },
     0x41: ExVector3fConst { /* TODO */ },
-    0x42: ExStructMemberContext { struct_member_expression: [ KismetPropertyPointer ] struct_expression: [ Box<Expr> ] },
-    0x43: ExLetMulticastDelegate { variable_expression: [ Box<Expr> ] assignment_expression: [ Box<Expr> ] },
-    0x44: ExLetDelegate { variable_expression: [ Box<Expr> ] assignment_expression: [ Box<Expr> ] },
-    0x45: ExLocalVirtualFunction { virtual_function_name: [ FName ] parameters: [ Vec<Expr> ] },
-    0x46: ExLocalFinalFunction { stack_node: [ PackageIndex ] parameters: [ Vec<Expr> ] },
+    0x42: ExStructMemberContext { struct_member_expression: [ KismetPropertyPointer ] struct_expression: [ ExprIndex ] },
+    0x43: ExLetMulticastDelegate { variable_expression: [ ExprIndex ] assignment_expression: [ ExprIndex ] },
+    0x44: ExLetDelegate { variable_expression: [ ExprIndex ] assignment_expression: [ ExprIndex ] },
+    0x45: ExLocalVirtualFunction { virtual_function_name: [ FName ] parameters: [ Vec<ExprIndex> ] },
+    0x46: ExLocalFinalFunction { stack_node: [ PackageIndex ] parameters: [ Vec<ExprIndex> ] },
     // 0x47
     0x48: ExLocalOutVariable { variable: [ KismetPropertyPointer ] },
     // 0x49
@@ -294,38 +312,38 @@ for_each!(
     0x4B: ExInstanceDelegate { function_name: [ FName ] },
     0x4C: ExPushExecutionFlow { pushing_address: [ u32 ] },
     0x4D: ExPopExecutionFlow {  },
-    0x4E: ExComputedJump { code_offset_expression: [ Box<Expr> ] },
-    0x4F: ExPopExecutionFlowIfNot { boolean_expression: [ Box<Expr> ] },
+    0x4E: ExComputedJump { code_offset_expression: [ ExprIndex ] },
+    0x4F: ExPopExecutionFlowIfNot { boolean_expression: [ ExprIndex ] },
     0x50: ExBreakpoint {  },
-    0x51: ExInterfaceContext { interface_value: [ Box<Expr> ] },
-    0x52: ExObjToInterfaceCast { class_ptr: [ PackageIndex ] target: [ Box<Expr> ] },
+    0x51: ExInterfaceContext { interface_value: [ ExprIndex ] },
+    0x52: ExObjToInterfaceCast { class_ptr: [ PackageIndex ] target: [ ExprIndex ] },
     0x53: ExEndOfScript {  },
-    0x54: ExCrossInterfaceCast { class_ptr: [ PackageIndex ] target: [ Box<Expr> ] },
-    0x55: ExInterfaceToObjCast { class_ptr: [ PackageIndex ] target: [ Box<Expr> ] },
+    0x54: ExCrossInterfaceCast { class_ptr: [ PackageIndex ] target: [ ExprIndex ] },
+    0x55: ExInterfaceToObjCast { class_ptr: [ PackageIndex ] target: [ ExprIndex ] },
     // 0x56
     // 0x57
     // 0x58
     // 0x59
     0x5A: ExWireTracepoint {  },
-    0x5B: ExSkipOffsetConst {  },
-    0x5C: ExAddMulticastDelegate { delegate: [ Box<Expr> ] delegate_to_add: [ Box<Expr> ] },
-    0x5D: ExClearMulticastDelegate { delegate_to_clear: [ Box<Expr> ] },
+    0x5B: ExSkipOffsetConst { skip: [ u32 ] },
+    0x5C: ExAddMulticastDelegate { delegate: [ ExprIndex ] delegate_to_add: [ ExprIndex ] },
+    0x5D: ExClearMulticastDelegate { delegate_to_clear: [ ExprIndex ] },
     0x5E: ExTracepoint {  },
-    0x5F: ExLetObj { variable_expression: [ Box<Expr> ] assignment_expression: [ Box<Expr> ] },
-    0x60: ExLetWeakObjPtr { variable_expression: [ Box<Expr> ] assignment_expression: [ Box<Expr> ] },
-    0x61: ExBindDelegate { function_name: [ FName ] delegate: [ Box<Expr> ] object_term: [ Box<Expr> ] },
-    0x62: ExRemoveMulticastDelegate { delegate: [ Box<Expr> ] delegate_to_add: [ Box<Expr> ] },
-    0x63: ExCallMulticastDelegate { stack_node: [ PackageIndex ] parameters: [ Vec<Expr> ] delegate: [ Box<Expr> ] },
-    0x64: ExLetValueOnPersistentFrame { destination_property: [ KismetPropertyPointer ] assignment_expression: [ Box<Expr> ] },
+    0x5F: ExLetObj { variable_expression: [ ExprIndex ] assignment_expression: [ ExprIndex ] },
+    0x60: ExLetWeakObjPtr { variable_expression: [ ExprIndex ] assignment_expression: [ ExprIndex ] },
+    0x61: ExBindDelegate { function_name: [ FName ] delegate: [ ExprIndex ] object_term: [ ExprIndex ] },
+    0x62: ExRemoveMulticastDelegate { delegate: [ ExprIndex ] delegate_to_add: [ ExprIndex ] },
+    0x63: ExCallMulticastDelegate { stack_node: [ PackageIndex ] parameters: [ Vec<ExprIndex> ] delegate: [ ExprIndex ] },
+    0x64: ExLetValueOnPersistentFrame { destination_property: [ KismetPropertyPointer ] assignment_expression: [ ExprIndex ] },
     0x65: ExArrayConst { inner_property: [ KismetPropertyPointer ] elements: [ Vec<Expr> ] },
     0x66: ExEndArrayConst {  },
-    0x67: ExSoftObjectConst { value: [ Box<Expr> ] },
-    0x68: ExCallMath { stack_node: [ PackageIndex ] parameters: [ Vec<Expr> ] },
-    0x69: ExSwitchValue { end_goto_offset: [ u32 ] index_term: [ Box<Expr> ] default_term: [ Box<Expr> ] cases: [ Vec<KismetSwitchCase> ] },
+    0x67: ExSoftObjectConst { value: [ ExprIndex ] },
+    0x68: ExCallMath { stack_node: [ PackageIndex ] parameters: [ Vec<ExprIndex> ] },
+    0x69: ExSwitchValue { end_goto_offset: [ u32 ] index_term: [ ExprIndex ] default_term: [ ExprIndex ] cases: [ Vec<KismetSwitchCase> ] },
     0x6A: ExInstrumentationEvent { event_type: [ EScriptInstrumentationType ] event_name: [ Option<FName> ] },
-    0x6B: ExArrayGetByRef { array_variable: [ Box<Expr> ] array_index: [ Box<Expr> ] },
+    0x6B: ExArrayGetByRef { array_variable: [ ExprIndex ] array_index: [ ExprIndex ] },
     0x6C: ExClassSparseDataVariable { variable: [ KismetPropertyPointer ] },
-    0x6D: ExFieldPathConst { value: [ Box<Expr> ] },
+    0x6D: ExFieldPathConst { value: [ ExprIndex ] },
     // 0x6E
     // 0x6F
     0x70: ExAutoRtfmTransact { /* TODO */ },
@@ -333,11 +351,15 @@ for_each!(
     0x72: ExAutoRtfmAbortIfNot { /* TODO */ },
 );
 
-pub fn read_until<S: Read>(s: &mut S, until: literal::ExprOp) -> Result<Vec<literal::Expr>> {
+pub fn read_until(
+    s: &mut Cursor<&[u8]>,
+    graph: &mut literal::ExprGraph,
+    until: literal::ExprOp,
+) -> Result<Vec<ExprIndex>> {
     let mut exs = vec![];
     loop {
-        let next = read(s)?;
-        if next.op() == until {
+        let next = read(s, graph)?;
+        if graph[&next].expr.op() == until {
             break;
         } else {
             exs.push(next);
@@ -346,22 +368,145 @@ pub fn read_until<S: Read>(s: &mut S, until: literal::ExprOp) -> Result<Vec<lite
     Ok(exs)
 }
 
-pub fn read_all<S: Read>(s: &mut S) -> Result<Vec<literal::Expr>> {
-    let mut exs = vec![];
+pub fn read_all(s: &mut Cursor<&[u8]>) -> Result<literal::ExprGraph> {
+    let mut graph = literal::ExprGraph::default();
+    let mut last = None;
     loop {
+        let index = ExprIndex(s.position() as usize);
         let op = match s.read_u8() {
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             r => r,
         }?;
-        exs.push(read_body(s, try_from_opcode(op)?)?);
+        let ex = read_body(s, &mut graph, try_from_opcode(op)?)?;
+        graph.insert(
+            index,
+            literal::ExprNode {
+                expr: ex,
+                top_level: true,
+                next: None,
+            },
+        );
+
+        if let Some(last) = last {
+            let last_node = graph.get_mut(&last).unwrap();
+            use literal::Expr as Ex;
+            let has_next = match &last_node.expr {
+                // Ex::ExLocalVariable(ex_local_variable) => todo!(),
+                // Ex::ExInstanceVariable(ex_instance_variable) => todo!(),
+                // Ex::ExDefaultVariable(ex_default_variable) => todo!(),
+                Ex::ExReturn(_) => false,
+                Ex::ExJump(_) => false,
+                // Ex::ExJumpIfNot(_) => false,
+                // Ex::ExAssert(ex_assert) => todo!(),
+                // Ex::ExNothing(ex_nothing) => todo!(),
+                // Ex::ExNothingInt32(ex_nothing_int32) => todo!(),
+                // Ex::ExLet(ex_let) => todo!(),
+                // Ex::ExBitFieldConst(ex_bit_field_const) => todo!(),
+                // Ex::ExClassContext(ex_class_context) => todo!(),
+                // Ex::ExMetaCast(ex_meta_cast) => todo!(),
+                // Ex::ExLetBool(ex_let_bool) => todo!(),
+                // Ex::ExEndParmValue(ex_end_parm_value) => todo!(),
+                // Ex::ExEndFunctionParms(ex_end_function_parms) => todo!(),
+                // Ex::ExSelf(ex_self) => todo!(),
+                // Ex::ExSkip(ex_skip) => todo!(),
+                // Ex::ExContext(ex_context) => todo!(),
+                // Ex::ExContextFailSilent(ex_context_fail_silent) => todo!(),
+                // Ex::ExVirtualFunction(ex_virtual_function) => todo!(),
+                // Ex::ExFinalFunction(ex_final_function) => todo!(),
+                // Ex::ExIntConst(ex_int_const) => todo!(),
+                // Ex::ExFloatConst(ex_float_const) => todo!(),
+                // Ex::ExStringConst(ex_string_const) => todo!(),
+                // Ex::ExObjectConst(ex_object_const) => todo!(),
+                // Ex::ExNameConst(ex_name_const) => todo!(),
+                // Ex::ExRotationConst(ex_rotation_const) => todo!(),
+                // Ex::ExVectorConst(ex_vector_const) => todo!(),
+                // Ex::ExByteConst(ex_byte_const) => todo!(),
+                // Ex::ExIntZero(ex_int_zero) => todo!(),
+                // Ex::ExIntOne(ex_int_one) => todo!(),
+                // Ex::ExTrue(ex_true) => todo!(),
+                // Ex::ExFalse(ex_false) => todo!(),
+                // Ex::ExTextConst(ex_text_const) => todo!(),
+                // Ex::ExNoObject(ex_no_object) => todo!(),
+                // Ex::ExTransformConst(ex_transform_const) => todo!(),
+                // Ex::ExIntConstByte(ex_int_const_byte) => todo!(),
+                // Ex::ExNoInterface(ex_no_interface) => todo!(),
+                // Ex::ExDynamicCast(ex_dynamic_cast) => todo!(),
+                // Ex::ExStructConst(ex_struct_const) => todo!(),
+                // Ex::ExEndStructConst(ex_end_struct_const) => todo!(),
+                // Ex::ExSetArray(ex_set_array) => todo!(),
+                // Ex::ExEndArray(ex_end_array) => todo!(),
+                // Ex::ExPropertyConst(ex_property_const) => todo!(),
+                // Ex::ExUnicodeStringConst(ex_unicode_string_const) => todo!(),
+                // Ex::ExInt64Const(ex_int64_const) => todo!(),
+                // Ex::ExUInt64Const(ex_uint64_const) => todo!(),
+                // Ex::ExDoubleConst(ex_double_const) => todo!(),
+                // Ex::ExCast(ex_cast) => todo!(),
+                // Ex::ExSetSet(ex_set_set) => todo!(),
+                // Ex::ExEndSet(ex_end_set) => todo!(),
+                // Ex::ExSetMap(ex_set_map) => todo!(),
+                // Ex::ExEndMap(ex_end_map) => todo!(),
+                // Ex::ExSetConst(ex_set_const) => todo!(),
+                // Ex::ExEndSetConst(ex_end_set_const) => todo!(),
+                // Ex::ExMapConst(ex_map_const) => todo!(),
+                // Ex::ExEndMapConst(ex_end_map_const) => todo!(),
+                // Ex::ExVector3fConst(ex_vector3f_const) => todo!(),
+                // Ex::ExStructMemberContext(ex_struct_member_context) => todo!(),
+                // Ex::ExLetMulticastDelegate(ex_let_multicast_delegate) => todo!(),
+                // Ex::ExLetDelegate(ex_let_delegate) => todo!(),
+                // Ex::ExLocalVirtualFunction(ex_local_virtual_function) => todo!(),
+                // Ex::ExLocalFinalFunction(ex_local_final_function) => todo!(),
+                // Ex::ExLocalOutVariable(ex_local_out_variable) => todo!(),
+                // Ex::ExDeprecatedOp4A(ex_deprecated_op4_a) => todo!(),
+                // Ex::ExInstanceDelegate(ex_instance_delegate) => todo!(),
+                // Ex::ExPushExecutionFlow(ex_push_execution_flow) => todo!(),
+                Ex::ExPopExecutionFlow(_) => false,
+                Ex::ExComputedJump(_) => false,
+                // Ex::ExPopExecutionFlowIfNot(ex_pop_execution_flow_if_not) => todo!(),
+                // Ex::ExBreakpoint(ex_breakpoint) => todo!(),
+                // Ex::ExInterfaceContext(ex_interface_context) => todo!(),
+                // Ex::ExObjToInterfaceCast(ex_obj_to_interface_cast) => todo!(),
+                Ex::ExEndOfScript(_) => false,
+                // Ex::ExCrossInterfaceCast(ex_cross_interface_cast) => todo!(),
+                // Ex::ExInterfaceToObjCast(ex_interface_to_obj_cast) => todo!(),
+                // Ex::ExWireTracepoint(ex_wire_tracepoint) => todo!(),
+                // Ex::ExSkipOffsetConst(ex_skip_offset_const) => todo!(),
+                // Ex::ExAddMulticastDelegate(ex_add_multicast_delegate) => todo!(),
+                // Ex::ExClearMulticastDelegate(ex_clear_multicast_delegate) => todo!(),
+                // Ex::ExTracepoint(ex_tracepoint) => todo!(),
+                // Ex::ExLetObj(ex_let_obj) => todo!(),
+                // Ex::ExLetWeakObjPtr(ex_let_weak_obj_ptr) => todo!(),
+                // Ex::ExBindDelegate(ex_bind_delegate) => todo!(),
+                // Ex::ExRemoveMulticastDelegate(ex_remove_multicast_delegate) => todo!(),
+                // Ex::ExCallMulticastDelegate(ex_call_multicast_delegate) => todo!(),
+                // Ex::ExLetValueOnPersistentFrame(ex_let_value_on_persistent_frame) => todo!(),
+                // Ex::ExArrayConst(ex_array_const) => todo!(),
+                // Ex::ExEndArrayConst(ex_end_array_const) => todo!(),
+                // Ex::ExSoftObjectConst(ex_soft_object_const) => todo!(),
+                // Ex::ExCallMath(ex_call_math) => todo!(),
+                // Ex::ExSwitchValue(ex_switch_value) => todo!(),
+                // Ex::ExInstrumentationEvent(ex_instrumentation_event) => todo!(),
+                // Ex::ExArrayGetByRef(ex_array_get_by_ref) => todo!(),
+                // Ex::ExClassSparseDataVariable(ex_class_sparse_data_variable) => todo!(),
+                // Ex::ExFieldPathConst(ex_field_path_const) => todo!(),
+                // Ex::ExAutoRtfmTransact(ex_auto_rtfm_transact) => todo!(),
+                // Ex::ExAutoRtfmStopTransact(ex_auto_rtfm_stop_transact) => todo!(),
+                // Ex::ExAutoRtfmAbortIfNot(ex_auto_rtfm_abort_if_not) => todo!(),
+                _ => true,
+            };
+            if has_next {
+                last_node.next = Some(index);
+            }
+        }
+
+        last = Some(index);
     }
-    Ok(exs)
+    Ok(graph)
 }
 
 fn try_from_opcode(op: u8) -> Result<literal::ExprOp> {
     literal::ExprOp::from_repr(op).ok_or_else(|| anyhow!("invalid opcode {op}"))
 }
-fn read_fname<S: Read>(s: &mut S) -> Result<ue::FName> {
+fn read_fname(s: &mut Cursor<&[u8]>) -> Result<ue::FName> {
     let comparison_index = s.read_u32::<LE>()?;
     let _display_index = s.read_u32::<LE>()?;
     let number = s.read_u32::<LE>()?;
@@ -382,20 +527,55 @@ fn read_string<S: Read>(s: &mut S) -> Result<String> {
     }
     Ok(String::from_utf8(bytes)?)
 }
+fn read_vector(s: &mut Cursor<&[u8]>) -> Result<Vector<f64>> {
+    Ok(Vector {
+        x: s.read_f64::<LE>()?,
+        y: s.read_f64::<LE>()?,
+        z: s.read_f64::<LE>()?,
+    })
+}
+fn read_vector4(s: &mut Cursor<&[u8]>) -> Result<Vector4<f64>> {
+    Ok(Vector4 {
+        x: s.read_f64::<LE>()?,
+        y: s.read_f64::<LE>()?,
+        z: s.read_f64::<LE>()?,
+        w: s.read_f64::<LE>()?,
+    })
+}
+fn read_transform(s: &mut Cursor<&[u8]>) -> Result<Transform<f64>> {
+    Ok(Transform {
+        rotation: read_vector4(s)?,
+        translation: read_vector(s)?,
+        scale: read_vector(s)?,
+    })
+}
 
-pub fn read<S: Read>(s: &mut S) -> Result<literal::Expr> {
+pub fn read(s: &mut Cursor<&[u8]>, graph: &mut literal::ExprGraph) -> Result<ExprIndex> {
+    let index = ExprIndex(s.position() as usize);
     let op = s.read_u8()?;
 
     let op = try_from_opcode(op)?;
 
     // let span = tracing::error_span!("erm", op = format!("{op:?}")).entered();
-    let ex = read_body(s, op);
+    let ex = read_body(s, graph, op)?;
     // tracing::error!("ex {ex:#?}");
     // drop(span);
-    ex
+    graph.insert(
+        index,
+        literal::ExprNode {
+            expr: ex,
+            top_level: false,
+            next: None,
+        },
+    );
+    Ok(index)
 }
 
-pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Expr> {
+pub fn read_body(
+    s: &mut Cursor<&[u8]>,
+    graph: &mut literal::ExprGraph,
+    op: literal::ExprOp,
+) -> Result<literal::Expr> {
     use literal::{ExprOp as Op, *};
 
     let ex = match op {
@@ -412,7 +592,7 @@ pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Exp
         }
         .into(),
         Op::ExReturn => ExReturn {
-            return_expression: read(s)?.into(),
+            return_expression: read(s, graph)?.into(),
         }
         .into(),
         Op::ExJump => ExJump {
@@ -421,7 +601,7 @@ pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Exp
         .into(),
         Op::ExJumpIfNot => ExJumpIfNot {
             code_offset: s.read_u32::<LE>()?,
-            boolean_expression: read(s)?.into(),
+            boolean_expression: read(s, graph)?.into(),
         }
         .into(),
         Op::ExAssert => bail!("todo ExAssert"),
@@ -429,16 +609,16 @@ pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Exp
         Op::ExNothingInt32 => bail!("todo ExNothingInt32"),
         Op::ExLet => ExLet {
             value: KismetPropertyPointer(s.read_u64::<LE>()?),
-            variable: read(s)?.into(),
-            expression: read(s)?.into(),
+            variable: read(s, graph)?.into(),
+            expression: read(s, graph)?.into(),
         }
         .into(),
         Op::ExBitFieldConst => bail!("todo ExBitFieldConst"),
         Op::ExClassContext => bail!("todo ExClassContext"),
         Op::ExMetaCast => bail!("todo ExMetaCast"),
         Op::ExLetBool => ExLetBool {
-            variable_expression: read(s)?.into(),
-            assignment_expression: read(s)?.into(),
+            variable_expression: read(s, graph)?.into(),
+            assignment_expression: read(s, graph)?.into(),
         }
         .into(),
         Op::ExEndParmValue => ExEndParmValue {}.into(),
@@ -446,31 +626,31 @@ pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Exp
         Op::ExSelf => ExSelf {}.into(),
         Op::ExSkip => ExSkip {
             code_offset: s.read_u32::<LE>()?,
-            skip_expression: read(s)?.into(),
+            skip_expression: read(s, graph)?.into(),
         }
         .into(),
         Op::ExContext => ExContext {
-            object_expression: read(s)?.into(),
+            object_expression: read(s, graph)?.into(),
             offset: s.read_u32::<LE>()?,
             r_value_pointer: KismetPropertyPointer(s.read_u64::<LE>()?),
-            context_expression: read(s)?.into(),
+            context_expression: read(s, graph)?.into(),
         }
         .into(),
         Op::ExContextFailSilent => ExContextFailSilent {
-            object_expression: read(s)?.into(),
+            object_expression: read(s, graph)?.into(),
             offset: s.read_u32::<LE>()?,
             r_value_pointer: KismetPropertyPointer(s.read_u64::<LE>()?),
-            context_expression: read(s)?.into(),
+            context_expression: read(s, graph)?.into(),
         }
         .into(),
         Op::ExVirtualFunction => ExVirtualFunction {
             virtual_function_name: read_fname(s)?,
-            parameters: read_until(s, ExprOp::ExEndFunctionParms)?,
+            parameters: read_until(s, graph, ExprOp::ExEndFunctionParms)?,
         }
         .into(),
         Op::ExFinalFunction => ExFinalFunction {
             stack_node: PackageIndex(s.read_u64::<LE>()?),
-            parameters: read_until(s, ExprOp::ExEndFunctionParms)?,
+            parameters: read_until(s, graph, ExprOp::ExEndFunctionParms)?,
         }
         .into(),
         Op::ExIntConst => ExIntConst {
@@ -493,8 +673,14 @@ pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Exp
             value: read_fname(s)?,
         }
         .into(),
-        Op::ExRotationConst => bail!("todo ExRotationConst"),
-        Op::ExVectorConst => bail!("todo ExVectorConst"),
+        Op::ExRotationConst => ExRotationConst {
+            rotator: read_vector(s)?,
+        }
+        .into(),
+        Op::ExVectorConst => ExVectorConst {
+            value: read_vector(s)?,
+        }
+        .into(),
         Op::ExByteConst => ExByteConst {
             value: s.read_u8()?,
         }
@@ -505,25 +691,28 @@ pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Exp
         Op::ExFalse => ExFalse {}.into(),
         Op::ExTextConst => bail!("todo ExTextConst"),
         Op::ExNoObject => ExNoObject {}.into(),
-        Op::ExTransformConst => bail!("todo ExTransformConst"),
+        Op::ExTransformConst => ExTransformConst {
+            value: read_transform(s)?,
+        }
+        .into(),
         Op::ExIntConstByte => bail!("todo ExIntConstByte"),
         Op::ExNoInterface => bail!("todo ExNoInterface"),
         Op::ExDynamicCast => ExDynamicCast {
             class_ptr: PackageIndex(s.read_u64::<LE>()?),
-            target_expression: read(s)?.into(),
+            target_expression: read(s, graph)?.into(),
         }
         .into(),
         Op::ExStructConst => ExStructConst {
             struct_value: PackageIndex(s.read_u64::<LE>()?),
             struct_size: s.read_i32::<LE>()?,
-            value: read_until(s, ExprOp::ExEndStructConst)?,
+            value: read_until(s, graph, ExprOp::ExEndStructConst)?,
         }
         .into(),
         Op::ExEndStructConst => ExEndStructConst {}.into(),
         Op::ExSetArray => ExSetArray {
-            assigning_property: Some(read(s)?.into()),
+            assigning_property: Some(read(s, graph)?.into()),
             array_inner_prop: None, // TODO UE4 change KismetPropertyPointer(s.read_u64::<LE>()?),
-            elements: read_until(s, ExprOp::ExEndArray)?,
+            elements: read_until(s, graph, ExprOp::ExEndArray)?,
         }
         .into(),
         Op::ExEndArray => ExEndArray {}.into(),
@@ -531,8 +720,22 @@ pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Exp
         Op::ExUnicodeStringConst => bail!("todo ExUnicodeStringConst"),
         Op::ExInt64Const => bail!("todo ExInt64Const"),
         Op::ExUInt64Const => bail!("todo ExUInt64Const"),
-        Op::ExPrimitiveCast => bail!("todo ExPrimitiveCast"),
-        Op::ExCast => bail!("todo ExCast"),
+        // Op::ExPrimitiveCast => ExPrimitiveCast {
+        //     conversion_type: ECastToken::from_repr(s.read_u8()?)
+        //         .ok_or_else(|| anyhow!("invalid ECastToken"))?,
+        //     target: read(s, graph)?,
+        // }
+        // .into(),
+        Op::ExDoubleConst => ExDoubleConst {
+            value: s.read_f64::<LE>()?,
+        }
+        .into(),
+        Op::ExCast => ExCast {
+            conversion_type: ECastToken::from_repr(s.read_u8()?)
+                .ok_or_else(|| anyhow!("invalid ECastToken"))?,
+            target: read(s, graph)?,
+        }
+        .into(),
         Op::ExSetSet => bail!("todo ExSetSet"),
         Op::ExEndSet => ExEndSet {}.into(),
         Op::ExSetMap => bail!("todo ExSetMap"),
@@ -542,17 +745,21 @@ pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Exp
         Op::ExMapConst => bail!("todo ExMapConst"),
         Op::ExEndMapConst => ExEndMapConst {}.into(),
         Op::ExVector3fConst => bail!("todo ExVector3fConst"),
-        Op::ExStructMemberContext => bail!("todo ExStructMemberContext"),
+        Op::ExStructMemberContext => ExStructMemberContext {
+            struct_member_expression: KismetPropertyPointer(s.read_u64::<LE>()?),
+            struct_expression: read(s, graph)?,
+        }
+        .into(),
         Op::ExLetMulticastDelegate => bail!("todo ExLetMulticastDelegate"),
         Op::ExLetDelegate => bail!("todo ExLetDelegate"),
         Op::ExLocalVirtualFunction => ExLocalVirtualFunction {
             virtual_function_name: read_fname(s)?,
-            parameters: read_until(s, ExprOp::ExEndFunctionParms)?,
+            parameters: read_until(s, graph, ExprOp::ExEndFunctionParms)?,
         }
         .into(),
         Op::ExLocalFinalFunction => ExLocalFinalFunction {
             stack_node: PackageIndex(s.read_u64::<LE>()?),
-            parameters: read_until(s, ExprOp::ExEndFunctionParms)?,
+            parameters: read_until(s, graph, ExprOp::ExEndFunctionParms)?,
         }
         .into(),
         Op::ExLocalOutVariable => ExLocalOutVariable {
@@ -567,36 +774,67 @@ pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Exp
         .into(),
         Op::ExPopExecutionFlow => ExPopExecutionFlow {}.into(),
         Op::ExComputedJump => ExComputedJump {
-            code_offset_expression: read(s)?.into(),
+            code_offset_expression: read(s, graph)?.into(),
         }
         .into(),
         Op::ExPopExecutionFlowIfNot => ExPopExecutionFlowIfNot {
-            boolean_expression: read(s)?.into(),
+            boolean_expression: read(s, graph)?.into(),
         }
         .into(),
         Op::ExBreakpoint => bail!("todo ExBreakpoint"),
-        Op::ExInterfaceContext => bail!("todo ExInterfaceContext"),
-        Op::ExObjToInterfaceCast => bail!("todo ExObjToInterfaceCast"),
+        Op::ExInterfaceContext => ExInterfaceContext {
+            interface_value: read(s, graph)?,
+        }
+        .into(),
+        Op::ExObjToInterfaceCast => ExObjToInterfaceCast {
+            class_ptr: PackageIndex(s.read_u64::<LE>()?),
+            target: read(s, graph)?,
+        }
+        .into(),
         Op::ExEndOfScript => ExEndOfScript {}.into(),
         Op::ExCrossInterfaceCast => bail!("todo ExCrossInterfaceCast"),
         Op::ExInterfaceToObjCast => bail!("todo ExInterfaceToObjCast"),
         Op::ExWireTracepoint => bail!("todo ExWireTracepoint"),
-        Op::ExSkipOffsetConst => bail!("todo ExSkipOffsetConst"),
-        Op::ExAddMulticastDelegate => bail!("todo ExAddMulticastDelegate"),
-        Op::ExClearMulticastDelegate => bail!("todo ExClearMulticastDelegate"),
+        Op::ExSkipOffsetConst => ExSkipOffsetConst {
+            skip: s.read_u32::<LE>()?,
+        }
+        .into(),
+        Op::ExAddMulticastDelegate => ExAddMulticastDelegate {
+            delegate: read(s, graph)?,
+            delegate_to_add: read(s, graph)?,
+        }
+        .into(),
+        Op::ExClearMulticastDelegate => ExClearMulticastDelegate {
+            delegate_to_clear: read(s, graph)?,
+        }
+        .into(),
         Op::ExTracepoint => bail!("todo ExTracepoint"),
         Op::ExLetObj => ExLetObj {
-            variable_expression: read(s)?.into(),
-            assignment_expression: read(s)?.into(),
+            variable_expression: read(s, graph)?.into(),
+            assignment_expression: read(s, graph)?.into(),
         }
         .into(),
         Op::ExLetWeakObjPtr => bail!("todo ExLetWeakObjPtr"),
-        Op::ExBindDelegate => bail!("todo ExBindDelegate"),
-        Op::ExRemoveMulticastDelegate => bail!("todo ExRemoveMulticastDelegate"),
-        Op::ExCallMulticastDelegate => bail!("todo ExCallMulticastDelegate"),
+        Op::ExBindDelegate => ExBindDelegate {
+            function_name: read_fname(s)?,
+            delegate: read(s, graph)?,
+            object_term: read(s, graph)?,
+        }
+        .into(),
+        Op::ExRemoveMulticastDelegate => ExRemoveMulticastDelegate {
+            delegate: read(s, graph)?,
+            delegate_to_add: read(s, graph)?,
+        }
+        .into(),
+        Op::ExCallMulticastDelegate => ExCallMulticastDelegate {
+            stack_node: PackageIndex(s.read_u64::<LE>()?),
+            parameters: read_until(s, graph, ExprOp::ExEndFunctionParms)?,
+            delegate: ExprIndex(0), // TODO fake news?
+        }
+        .into(),
         Op::ExLetValueOnPersistentFrame => ExLetValueOnPersistentFrame {
             destination_property: KismetPropertyPointer(s.read_u64::<LE>()?),
-            assignment_expression: read(s)?.into(),
+            assignment_expression: read(s, graph)?.into(),
         }
         .into(),
         Op::ExArrayConst => bail!("todo ExArrayConst"),
@@ -604,10 +842,30 @@ pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Exp
         Op::ExSoftObjectConst => bail!("todo ExSoftObjectConst"),
         Op::ExCallMath => ExCallMath {
             stack_node: PackageIndex(s.read_u64::<LE>()?),
-            parameters: read_until(s, ExprOp::ExEndFunctionParms)?,
+            parameters: read_until(s, graph, ExprOp::ExEndFunctionParms)?,
         }
         .into(),
-        Op::ExSwitchValue => bail!("todo ExSwitchValue"),
+        Op::ExSwitchValue => {
+            let case_count = s.read_u16::<LE>()?;
+            let end_goto_offset = s.read_u32::<LE>()?;
+            let index_term = read(s, graph)?;
+            let mut cases = vec![];
+            for _ in 0..case_count {
+                cases.push(KismetSwitchCase {
+                    case_index_value_term: read(s, graph)?,
+                    code_skip_size_type: s.read_u32::<LE>()?,
+                    case_term: read(s, graph)?,
+                });
+            }
+            let default_term = read(s, graph)?;
+            ExSwitchValue {
+                end_goto_offset,
+                index_term,
+                default_term,
+                cases,
+            }
+            .into()
+        }
         Op::ExInstrumentationEvent => bail!("todo ExInstrumentationEvent"),
         Op::ExArrayGetByRef => bail!("todo ExArrayGetByRef"),
         Op::ExClassSparseDataVariable => bail!("todo ExClassSparseDataVariable"),
@@ -617,6 +875,20 @@ pub fn read_body<S: Read>(s: &mut S, op: literal::ExprOp) -> Result<literal::Exp
         Op::ExAutoRtfmAbortIfNot => bail!("todo ExAutoRtfmAbortIfNot"),
     };
     Ok(ex)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_parse() {
+        let script = include_bytes!(
+            "../scripts/Function _RoomGenerator_RoomBuilderSquare.RoomBuilderSquare_C.Create Room.bin"
+        );
+        let graph = read_all(&mut std::io::Cursor::new(script)).unwrap();
+        dbg!(graph);
+    }
 }
 
 // #ifndef XFER

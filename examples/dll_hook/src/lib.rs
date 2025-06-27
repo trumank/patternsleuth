@@ -3,6 +3,7 @@ mod gui;
 mod hooks;
 mod kismet;
 mod kismet_nodes;
+mod kismet_transform;
 mod logging;
 mod object_cache;
 mod ue;

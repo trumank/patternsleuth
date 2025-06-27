@@ -17,7 +17,7 @@ bitflags = "2.4.1"
 byteorder = "1.5.0"
 crossbeam-channel = "0.5.15"
 eframe = "0.31.0"
-egui-snarl = { git = "https://github.com/zakarumych/egui-snarl", version = "0.8.0" }
+egui-snarl = { path = "../../../../../src/third/egui-snarl", features = ["serde"] }
 egui-winit = { version = "0.31.0", default-features = false }
 indexmap = "2.1.0"
 itertools.workspace = true
@@ -25,6 +25,8 @@ parking_lot = "0.12.1"
 patternsleuth = { path = "../../patternsleuth", features = ["process-internal", "image-pe"] }
 regex.workspace = true
 retour = { git = "https://github.com/Hpmason/retour-rs", features = ["static-detour"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = "1.0.140"
 strum.workspace = true
 thread_local = "1.1.7"
 tracing = "0.1.41"

@@ -11,18 +11,20 @@ const fn float_color(r: f32, g: f32, b: f32) -> Color32 {
 }
 
 const EXEC_COLOR: Color32 = float_color(1.0, 1.0, 1.0);
+const DATA_COLOR: Color32 = float_color(0.7, 1.0, 1.0);
 const BOOL_COLOR: Color32 = float_color(0.300000, 0.0, 0.0);
 const STRING_COLOR: Color32 = float_color(1.0, 0.0, 0.660537);
 const NUMBER_COLOR: Color32 = float_color(0.013575, 0.770000, 0.429609);
 const FLOAT_COLOR: Color32 = float_color(0.357667, 1.0, 0.060000);
 
-struct GenericPin {
-    name: String,
-    pin_type: PinType,
+pub struct GenericPin {
+    pub name: String,
+    pub pin_type: PinType,
 }
 
-enum PinType {
+pub enum PinType {
     Exec,
+    Data,
     Bool(bool),
     String(String),
     Int(i32),
@@ -39,6 +41,9 @@ impl PinType {
                         corner_radius: 10.0,
                     })
             }
+            Self::Data => PinInfo::circle()
+                .with_fill(DATA_COLOR)
+                .with_wire_style(WireStyle::Bezier5),
             Self::Bool(_) => PinInfo::triangle()
                 .with_fill(BOOL_COLOR)
                 .with_wire_style(WireStyle::Bezier5),
@@ -55,15 +60,29 @@ impl PinType {
     }
 }
 
-struct GenericNode {
-    name: String,
-    inputs: Vec<GenericPin>,
-    outputs: Vec<GenericPin>,
+pub struct GenericNode {
+    pub node_type: NodeType,
+    pub inputs: Vec<GenericPin>,
+    pub outputs: Vec<GenericPin>,
 }
 
-impl GenericNode {
-    fn name(&self) -> &str {
-        &self.name
+pub enum NodeType {
+    Generic(String),
+    Expr(crate::kismet::literal::ExprOp),
+    FunctionDef(String),
+}
+impl NodeType {
+    pub fn name(&self) -> String {
+        match self {
+            NodeType::Generic(name) => name.clone(),
+            NodeType::Expr(expr_op) => format!("{expr_op:?}"),
+            NodeType::FunctionDef(name) => name.clone(),
+        }
+    }
+}
+impl From<&str> for NodeType {
+    fn from(value: &str) -> Self {
+        Self::Generic(value.to_string())
     }
 }
 
@@ -99,7 +118,7 @@ impl SnarlViewer<GenericNode> for KismetViewer {
     }
 
     fn title(&mut self, node: &GenericNode) -> String {
-        node.name().to_string()
+        node.node_type.name()
     }
 
     fn inputs(&mut self, node: &GenericNode) -> usize {
@@ -120,6 +139,7 @@ impl SnarlViewer<GenericNode> for KismetViewer {
 
         match &mut pin.pin_type {
             PinType::Exec => {}
+            PinType::Data => {}
             PinType::Bool(value) => {
                 if remotes.is_empty() {
                     ui.checkbox(value, "");
@@ -174,7 +194,7 @@ impl SnarlViewer<GenericNode> for KismetViewer {
             snarl.insert_node(
                 pos,
                 GenericNode {
-                    name: "Number node".into(),
+                    node_type: "Number node".into(),
                     inputs: vec![
                         GenericPin {
                             name: "exec".into(),
@@ -203,7 +223,7 @@ impl SnarlViewer<GenericNode> for KismetViewer {
             snarl.insert_node(
                 pos,
                 GenericNode {
-                    name: "String node".into(),
+                    node_type: "String node".into(),
                     inputs: vec![
                         GenericPin {
                             name: "exec".into(),
@@ -232,7 +252,7 @@ impl SnarlViewer<GenericNode> for KismetViewer {
             snarl.insert_node(
                 pos,
                 GenericNode {
-                    name: "If".into(),
+                    node_type: "If".into(),
                     inputs: vec![
                         GenericPin {
                             name: "exec".into(),
@@ -261,7 +281,7 @@ impl SnarlViewer<GenericNode> for KismetViewer {
             snarl.insert_node(
                 pos,
                 GenericNode {
-                    name: "For".into(),
+                    node_type: "For".into(),
                     inputs: vec![
                         GenericPin {
                             name: "exec".into(),
@@ -359,7 +379,7 @@ impl SnarlViewer<GenericNode> for KismetViewer {
 }
 
 pub struct KismetGraph {
-    snarl: Snarl<GenericNode>,
+    pub snarl: Snarl<GenericNode>,
 }
 
 impl KismetGraph {

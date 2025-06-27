@@ -2,7 +2,7 @@ use crossbeam_channel::{Receiver, Sender};
 use regex::Regex;
 use std::{cell::RefCell, collections::HashMap};
 
-use eframe::egui;
+use eframe::egui::{self, Color32};
 
 #[cfg(windows)]
 use egui_winit::winit::platform::windows::EventLoopBuilderExtWindows;
@@ -172,7 +172,7 @@ struct InnerState {
     objects: IndexMap<ObjectId, ObjectCache>,
     filtered: IndexMap<ObjectId, ObjectCache>,
 
-    open_objects: HashMap<ObjectId, crate::kismet_nodes::KismetGraph>,
+    open_objects: HashMap<ObjectId, Result<crate::kismet_nodes::KismetGraph>>,
 }
 impl InnerState {
     fn new() -> Self {
@@ -238,9 +238,13 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                 {
                     ui.horizontal(|ui| {
                         if ui.button(&format!("{i:10?}")).clicked() {
-                            state
-                                .open_objects
-                                .insert(*i, crate::kismet_nodes::KismetGraph::new());
+                            let graph = tick_ctx
+                                .get_ref(*i)
+                                .unwrap()
+                                .cast::<ue::UFunction>()
+                                .ok_or_else(|| anyhow::anyhow!("not a function"))
+                                .and_then(kismet_transform::transform);
+                            state.open_objects.insert(*i, graph);
                         }
                         match &obj.script_status {
                             Some((len, res)) => {
@@ -282,22 +286,14 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                         if let Some(func) = object.cast::<ue::UFunction>() {
                             ui.label("function");
 
-                            // let script = &func.script;
-                            // ui.label(&format!("script {script:?}"));
-                            let mut stream = std::io::Cursor::new(func.script.as_slice());
-                            let ex = crate::kismet::read_all(&mut stream);
-                            // match ex {
-                            //     Ok(ex) => tracing::info!("ex: {ex:#?}"),
-                            //     // Err(err) => tracing::error!("ex: {err}"),
-                            //     _ => {}
-                            // }
-
-                            // struct Immutable(String);
-
-                            // egui::ScrollArea::vertical().show(ui, |ui| {
-                            //     ui.text_edit_multiline(&mut format!("{ex:#?}").as_str())
-                            // });
-                            graph.ui(ui, egui::Id::new(name));
+                            match graph {
+                                Ok(graph) => {
+                                    graph.ui(ui, egui::Id::new(name));
+                                }
+                                Err(msg) => {
+                                    ui.colored_label(Color32::RED, msg.to_string());
+                                }
+                            }
                             return;
                         }
 
