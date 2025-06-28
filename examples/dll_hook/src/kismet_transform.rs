@@ -21,6 +21,7 @@ pub fn transform(function: &ue::UFunction) -> Result<KismetGraph> {
     let mut stream = std::io::Cursor::new(function.script.as_slice());
 
     let exs = crate::kismet::read_all(&mut stream)?;
+    dbg!(&exs);
     let to_add = exs.keys().cloned().collect::<Vec<_>>();
 
     let mut ctx = Ctx {
@@ -130,6 +131,11 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
                 name: "else".into(),
                 pin_type: PinType::Exec,
             });
+            in_conns.push((
+                inc(&mut input_index),
+                build_node(ctx, ex.boolean_expression),
+            ));
+            more_inputs.push(pin("condition", PinType::Data));
         }
         //     Ex::ExAssert(ex_assert) => bail!("todo map ExAssert"),
         Ex::ExNothing(_) => {}
@@ -141,7 +147,15 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
             more_inputs.push(pin("expression", PinType::Data));
         }
         //     Ex::ExBitFieldConst(ex_bit_field_const) => bail!("todo map ExBitFieldConst"),
-        //     Ex::ExClassContext(ex_class_context) => bail!("todo map ExClassContext"),
+        Ex::ExClassContext(ex) => {
+            in_conns.push((inc(&mut input_index), build_node(ctx, ex.object_expression)));
+            more_inputs.push(pin("object", PinType::Data));
+            in_conns.push((
+                inc(&mut input_index),
+                build_node(ctx, ex.context_expression),
+            ));
+            more_inputs.push(pin("context", PinType::Data));
+        }
         //     Ex::ExMetaCast(ex_meta_cast) => bail!("todo map ExMetaCast"),
         Ex::ExLetBool(ex) => {
             in_conns.push((
@@ -201,7 +215,10 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         Ex::ExIntOne(_) => {}
         Ex::ExTrue(_) => {}
         Ex::ExFalse(_) => {}
-        Ex::ExTextConst(_) => {}
+        Ex::ExTextConst(ex) => {
+            in_conns.push((inc(&mut input_index), build_node(ctx, ex.value)));
+            more_inputs.push(pin("value", PinType::Data));
+        }
         Ex::ExNoObject(_) => {}
         Ex::ExTransformConst(_) => {}
         Ex::ExIntConstByte(_) => {}
@@ -210,7 +227,12 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
             in_conns.push((inc(&mut input_index), build_node(ctx, ex.target_expression)));
             more_inputs.push(pin("input", PinType::Data));
         }
-        Ex::ExStructConst(_) => {}
+        Ex::ExStructConst(ex) => {
+            for (i, p) in ex.value.iter().enumerate() {
+                in_conns.push((inc(&mut input_index), build_node(ctx, *p)));
+                more_inputs.push(pin(format!("member {i}"), PinType::Data));
+            }
+        }
         Ex::ExEndStructConst(_) => {}
         Ex::ExSetArray(ex) => {
             in_conns.push((
@@ -326,9 +348,14 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         //     Ex::ExRemoveMulticastDelegate(ex_remove_multicast_delegate) => {
         //         bail!("todo map ExRemoveMulticastDelegate")
         //     }
-        //     Ex::ExCallMulticastDelegate(ex_call_multicast_delegate) => {
-        //         bail!("todo map ExCallMulticastDelegate")
-        //     }
+        Ex::ExCallMulticastDelegate(ex) => {
+            in_conns.push((inc(&mut input_index), build_node(ctx, ex.delegate)));
+            more_inputs.push(pin(format!("delegate"), PinType::Data));
+            for (i, p) in ex.parameters.iter().enumerate() {
+                in_conns.push((inc(&mut input_index), build_node(ctx, *p)));
+                more_inputs.push(pin(format!("param {i}"), PinType::Data));
+            }
+        }
         //     Ex::ExLetValueOnPersistentFrame(ex_let_value_on_persistent_frame) => {
         //         bail!("todo map ExLetValueOnPersistentFrame")
         //     }
@@ -597,24 +624,24 @@ mod layout {
                     }
                     if self.grid.contains_key(&current_cell) {
                         // cell is occopied by another node, need to make space
-                        match dir {
-                            Dir::Right => {
-                                self.shift_columns_right(current_cell.col);
-                                for (_id, c, _dir) in queue.iter_mut() {
-                                    if c.col >= current_cell.col {
-                                        c.col += 1;
-                                    }
+                        let shift_fn: Box<dyn Fn(&mut GridCell)> = match dir {
+                            Dir::Right => Box::new(|c: &mut GridCell| {
+                                if c.row >= current_cell.row && c.col >= current_cell.col {
+                                    c.col += 1;
                                 }
-                            }
+                            }),
                             Dir::Left => {
-                                self.shift_rows_down(current_cell.row);
-                                for (_id, c, _dir) in queue.iter_mut() {
-                                    if c.row >= current_cell.row {
+                                next_row += 1;
+                                Box::new(|c: &mut GridCell| {
+                                    if c.row >= current_cell.row && c.col >= current_cell.col {
                                         c.row += 1;
                                     }
-                                }
-                                next_row += 1;
+                                })
                             }
+                        };
+                        self.shift(&shift_fn);
+                        for (_id, c, _dir) in queue.iter_mut() {
+                            shift_fn(c);
                         }
                     }
 
@@ -705,6 +732,26 @@ mod layout {
             }
             for (old_cell, node_id) in to_move {
                 self.place_node(node_id, cell(old_cell.row + 1, old_cell.col));
+            }
+        }
+        fn shift<F>(&mut self, shift_fn: F)
+        where
+            F: Fn(&mut GridCell),
+        {
+            let mut to_move: Vec<(GridCell, GridCell, NodeId)> = Vec::new();
+            for (&cell, &node_id) in &self.grid {
+                let mut shifted = cell;
+                shift_fn(&mut shifted);
+                if cell != shifted {
+                    to_move.push((cell, shifted, node_id));
+                }
+            }
+            for (old_cell, _new_cell, old_id) in &to_move {
+                self.grid.remove(old_cell);
+                self.grid_inv.remove(old_id);
+            }
+            for (_old_cell, new_cell, node_id) in to_move {
+                self.place_node(node_id, new_cell);
             }
         }
     }
