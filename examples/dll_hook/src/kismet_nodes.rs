@@ -6,6 +6,8 @@ use egui_snarl::{
     InPin, NodeId, OutPin, Snarl,
 };
 
+use crate::ue;
+
 const fn float_color(r: f32, g: f32, b: f32) -> Color32 {
     Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
@@ -17,14 +19,20 @@ const STRING_COLOR: Color32 = float_color(1.0, 0.0, 0.660537);
 const NUMBER_COLOR: Color32 = float_color(0.013575, 0.770000, 0.429609);
 const FLOAT_COLOR: Color32 = float_color(0.357667, 1.0, 0.060000);
 
+#[derive(Debug)]
 pub struct GenericPin {
     pub name: String,
     pub pin_type: PinType,
 }
 
+#[derive(Debug)]
 pub enum PinType {
     Exec,
     Data,
+    Property(u64),
+    Function(u64),
+    Object(u64),
+
     Bool(bool),
     String(String),
     Int(i32),
@@ -44,6 +52,9 @@ impl PinType {
             Self::Data => PinInfo::circle()
                 .with_fill(DATA_COLOR)
                 .with_wire_style(WireStyle::Bezier5),
+            Self::Property(_) => PinInfo::circle(),
+            Self::Function(_) => PinInfo::circle(),
+            Self::Object(_) => PinInfo::circle(),
             Self::Bool(_) => PinInfo::triangle()
                 .with_fill(BOOL_COLOR)
                 .with_wire_style(WireStyle::Bezier5),
@@ -60,12 +71,14 @@ impl PinType {
     }
 }
 
+#[derive(Debug)]
 pub struct GenericNode {
     pub node_type: NodeType,
     pub inputs: Vec<GenericPin>,
     pub outputs: Vec<GenericPin>,
 }
 
+#[derive(Debug)]
 pub enum NodeType {
     Generic(String),
     Expr(crate::kismet::literal::ExprOp),
@@ -140,6 +153,22 @@ impl SnarlViewer<GenericNode> for KismetViewer {
         match &mut pin.pin_type {
             PinType::Exec => {}
             PinType::Data => {}
+            PinType::Property(ptr) => {
+                let ptr = *ptr as *const ue::FProperty;
+                let prop = unsafe { ptr.as_ref() };
+                ui.label(format!("{:?}", prop.map(|p| p.name().to_string())));
+            }
+            PinType::Function(ptr) => {
+                let ptr = *ptr as *const ue::UFunction;
+                let prop = unsafe { ptr.as_ref().unwrap() };
+                ui.label(format!("{}", prop.path()));
+            }
+            PinType::Object(ptr) => {
+                let ptr = *ptr as *const ue::UObject;
+                let prop = unsafe { ptr.as_ref().unwrap() };
+                ui.label(format!("{}", prop.path()));
+            }
+
             PinType::Bool(value) => {
                 if remotes.is_empty() {
                     ui.checkbox(value, "");
@@ -374,7 +403,12 @@ impl SnarlViewer<GenericNode> for KismetViewer {
         _outputs: &[OutPin],
         snarl: &Snarl<GenericNode>,
     ) -> egui::Frame {
-        frame.fill(egui::Color32::from_rgb(70, 66, 40))
+        let color = match snarl[node].node_type {
+            NodeType::Generic(_) => Color32::from_rgb(70, 66, 40),
+            NodeType::Expr(_) => Color32::from_rgb(70, 66, 40),
+            NodeType::FunctionDef(_) => Color32::DARK_RED,
+        };
+        frame.fill(color)
     }
 }
 

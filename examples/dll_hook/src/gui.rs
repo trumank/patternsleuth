@@ -10,7 +10,10 @@ use egui_winit::winit::platform::windows::EventLoopBuilderExtWindows;
 use egui_winit::winit::platform::x11::EventLoopBuilderExtX11;
 use indexmap::IndexMap;
 
-use crate::object_cache::{ObjectEvent, ObjectId, TickContext};
+use crate::{
+    kismet::normalize_and_serialize,
+    object_cache::{ObjectEvent, ObjectId, TickContext},
+};
 
 use super::*;
 
@@ -178,7 +181,8 @@ impl InnerState {
     fn new() -> Self {
         Self {
             buh: 0,
-            filter: ObjectFilter::new("Function /Game/".to_string()),
+            // filter: ObjectFilter::new("Function /Game/".to_string()),
+            filter: ObjectFilter::new("GetMaxBots".to_string()),
             filtered: Default::default(),
             objects: Default::default(),
             kismet_log: "".to_string(),
@@ -283,11 +287,40 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                         let class = object.class();
                         let cast_flags = class.class_cast_flags;
                         ui.label(format!("cast flags {cast_flags:?}"));
-                        if let Some(func) = object.cast::<ue::UFunction>() {
+                        if let Some(func) = object.cast_mut::<ue::UFunction>() {
                             ui.label("function");
 
                             match graph {
                                 Ok(graph) => {
+                                    let mut out = kismet_transform::compile(func, graph);
+                                    match &mut out {
+                                        Ok(r) => {
+                                            ui.colored_label(Color32::GREEN, &format!("{r:?}"));
+                                            let ser = normalize_and_serialize(r);
+
+                                            match ser {
+                                                Ok(r) => {
+                                                    let hex = r
+                                                        .iter()
+                                                        .map(|b| format!("{b:02x}"))
+                                                        .collect::<Vec<_>>()
+                                                        .join(" ");
+                                                    ui.colored_label(
+                                                        Color32::GREEN,
+                                                        &format!("{}", hex),
+                                                    );
+                                                    func.script.clear();
+                                                    func.script.extend(&r);
+                                                }
+                                                Err(r) => {
+                                                    ui.colored_label(Color32::RED, &format!("{r}"));
+                                                }
+                                            }
+                                        }
+                                        Err(r) => {
+                                            ui.colored_label(Color32::RED, &format!("{r}"));
+                                        }
+                                    }
                                     graph.ui(ui, egui::Id::new(name));
                                 }
                                 Err(msg) => {

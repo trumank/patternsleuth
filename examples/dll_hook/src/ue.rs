@@ -1083,6 +1083,14 @@ impl<T> TArray<T> {
         }
         self.num += 1;
     }
+    pub fn extend(&mut self, other: &[T])
+    where
+        T: Copy,
+    {
+        for o in other {
+            self.push(*o);
+        }
+    }
 }
 
 impl<T> From<&[T]> for TArray<T>
