@@ -82,9 +82,9 @@ impl_try_collector! {
         free_uobject: FUObjectArrayFreeUObjectIndex,
         game_tick: FEngineLoopTick,
         engine_loop_init: FEngineLoopInit,
-        fframe_step_via_exec: FFrameStepViaExec,
-        fframe_step: FFrameStep,
-        fframe_step_explicit_property: FFrameStepExplicitProperty,
+        // fframe_step_via_exec: FFrameStepViaExec,
+        // fframe_step: FFrameStep,
+        // fframe_step_explicit_property: FFrameStepExplicitProperty,
         ufunction_bind: UFunctionBind,
     }
 }
@@ -101,12 +101,12 @@ impl Globals {
     pub fn gmalloc(&self) -> &ue::FMalloc {
         unsafe { &**(self.resolution.gmalloc.0 as *const *const ue::FMalloc) }
     }
-    pub fn fframe_step(&self) -> ue::FnFFrameStep {
-        unsafe { std::mem::transmute(self.resolution.fframe_step.0) }
-    }
-    pub fn fframe_step_explicit_property(&self) -> ue::FnFFrameStepExplicitProperty {
-        unsafe { std::mem::transmute(self.resolution.fframe_step_explicit_property.0) }
-    }
+    // pub fn fframe_step(&self) -> ue::FnFFrameStep {
+    //     unsafe { std::mem::transmute(self.resolution.fframe_step.0) }
+    // }
+    // pub fn fframe_step_explicit_property(&self) -> ue::FnFFrameStepExplicitProperty {
+    //     unsafe { std::mem::transmute(self.resolution.fframe_step_explicit_property.0) }
+    // }
     pub fn fname_to_string(&self) -> ue::FnFNameToString {
         unsafe { std::mem::transmute(self.resolution.fnametostring.0) }
     }

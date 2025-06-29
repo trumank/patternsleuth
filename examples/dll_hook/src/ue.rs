@@ -1165,15 +1165,16 @@ pub mod kismet {
     }
 
     pub fn arg<T: Sized>(stack: &mut FFrame, output: &mut T) {
-        let output = output as *const _ as *mut _;
-        unsafe {
-            if stack.code.is_null() {
-                let cur = stack.property_chain_for_compiled_in;
-                stack.property_chain_for_compiled_in = (&*cur).next;
-                (globals().fframe_step_explicit_property())(stack, output, cur as *const FProperty);
-            } else {
-                (globals().fframe_step())(stack, stack.object, output);
-            }
-        }
+        todo!()
+        // let output = output as *const _ as *mut _;
+        // unsafe {
+        //     if stack.code.is_null() {
+        //         let cur = stack.property_chain_for_compiled_in;
+        //         stack.property_chain_for_compiled_in = (&*cur).next;
+        //         (globals().fframe_step_explicit_property())(stack, output, cur as *const FProperty);
+        //     } else {
+        //         (globals().fframe_step())(stack, stack.object, output);
+        //     }
+        // }
     }
 }
