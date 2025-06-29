@@ -1,3 +1,4 @@
+mod crash_handler;
 mod events;
 mod gui;
 mod hooks;
@@ -63,6 +64,10 @@ fn setup() -> Result<PathBuf> {
     let log_guard = logging::setup_logging(bin_dir)?;
 
     std::mem::forget(log_guard); // TODO hold onto this and drop on exit?
+
+    unsafe {
+        crash_handler::setup_windows_exception_handler();
+    }
 
     Ok(bin_dir.to_path_buf())
 }
