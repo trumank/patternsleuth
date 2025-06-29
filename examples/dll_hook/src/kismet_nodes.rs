@@ -15,9 +15,11 @@ const fn float_color(r: f32, g: f32, b: f32) -> Color32 {
 const EXEC_COLOR: Color32 = float_color(1.0, 1.0, 1.0);
 const DATA_COLOR: Color32 = float_color(0.7, 1.0, 1.0);
 const BOOL_COLOR: Color32 = float_color(0.300000, 0.0, 0.0);
+const BYTE_COLOR: Color32 = float_color(0.0, 0.160000, 0.131270);
+const FLOAT_COLOR: Color32 = float_color(0.357667, 1.0, 0.060000);
+const NAME_COLOR: Color32 = float_color(0.607717, 0.224984, 1.0);
 const STRING_COLOR: Color32 = float_color(1.0, 0.0, 0.660537);
 const NUMBER_COLOR: Color32 = float_color(0.013575, 0.770000, 0.429609);
-const FLOAT_COLOR: Color32 = float_color(0.357667, 1.0, 0.060000);
 
 #[derive(Debug)]
 pub struct GenericPin {
@@ -35,6 +37,8 @@ pub enum PinType {
 
     Bool(bool),
     String(String),
+    FName(ue::FName),
+    Byte(u8),
     Int(i32),
     Float(f32),
 }
@@ -60,6 +64,12 @@ impl PinType {
                 .with_wire_style(WireStyle::Bezier5),
             Self::String(_) => PinInfo::circle()
                 .with_fill(STRING_COLOR)
+                .with_wire_style(WireStyle::Bezier5),
+            Self::FName(_) => PinInfo::circle()
+                .with_fill(NAME_COLOR)
+                .with_wire_style(WireStyle::Bezier5),
+            Self::Byte(_) => PinInfo::circle()
+                .with_fill(BYTE_COLOR)
                 .with_wire_style(WireStyle::Bezier5),
             Self::Int(_) => PinInfo::circle()
                 .with_fill(NUMBER_COLOR)
@@ -181,6 +191,16 @@ impl SnarlViewer<GenericNode> for KismetViewer {
                         .desired_width(0.0)
                         .margin(ui.spacing().item_spacing)
                         .show(ui);
+                }
+            }
+            PinType::FName(value) => {
+                if remotes.is_empty() {
+                    ui.label(value.to_string());
+                }
+            }
+            PinType::Byte(value) => {
+                if remotes.is_empty() {
+                    ui.add(egui::DragValue::new(value));
                 }
             }
             PinType::Int(value) => {

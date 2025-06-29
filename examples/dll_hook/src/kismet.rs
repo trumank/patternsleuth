@@ -2,7 +2,7 @@ use crate::ue::{self, FName};
 use anyhow::{anyhow, bail, Result};
 use byteorder::{ReadBytesExt, WriteBytesExt as _, LE};
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 
 macro_rules! build_walk {
     ($ex:ident, $member_name:ident : Box<Expr>) => {
@@ -134,26 +134,6 @@ macro_rules! for_each {
                 }
             }
         }
-        pub mod pattern {
-            use super::*;
-
-            #[derive(Debug, Clone)]
-            pub enum Expr {
-                Any,
-                $( $name($name), )*
-            }
-            $( expression!($name, $($member_name : [Option<$($member_type)*>]),* );)*
-                /*
-            fn walk_expression(ex: &Expr) {
-                match ex {
-                    Expr::Any => {},
-                    $( Expr::$name(ex) => {
-                        $(build_walk!(ex, $member_name : $($member_type)*);)*
-                    }, )*
-                }
-            }
-            */
-        }
     };
 }
 
@@ -170,12 +150,44 @@ pub struct KismetPropertyPointer(pub u64);
 #[derive(Debug, Clone, Copy)]
 pub struct PackageIndex(pub u64);
 #[derive(Debug, Clone)]
-pub struct FScriptText;
+pub enum FScriptText {
+    Empty,
+    LocalizedText {
+        localized_source: ExprIndex,
+        localized_key: ExprIndex,
+        localized_namespace: ExprIndex,
+    },
+    InvariantText {
+        invariant_literal_string: ExprIndex,
+    },
+    LiteralString {
+        literal_string: ExprIndex,
+    },
+    StringTableEntry {
+        string_table_asset: PackageIndex,
+        string_table_id: ExprIndex,
+        string_table_key: ExprIndex,
+    },
+}
+#[derive(Debug, Clone, strum::FromRepr)]
+#[repr(u8)]
+pub enum EBlueprintTextLiteralType {
+    Empty,
+    LocalizedText,
+    InvariantText,
+    LiteralString,
+    StringTableEntry,
+}
+impl EBlueprintTextLiteralType {
+    fn try_from_repr(repr: u8) -> Result<Self> {
+        Self::from_repr(repr).ok_or_else(|| anyhow!("invalid EBlueprintTextLiteralType: {repr}"))
+    }
+}
 #[derive(Debug, Clone)]
 pub struct KismetSwitchCase {
-    case_index_value_term: ExprIndex,
-    code_skip_size_type: u32,
-    case_term: ExprIndex,
+    pub case_index_value_term: ExprIndex,
+    pub code_skip_size_type: u32,
+    pub case_term: ExprIndex,
 }
 
 #[derive(Debug, Clone)]
@@ -208,6 +220,11 @@ pub enum ECastToken {
     InterfaceToBool = 0x02,
     DoubleToFloat = 0x03,
     FloatToDouble = 0x04,
+}
+impl ECastToken {
+    fn try_from_repr(repr: u8) -> Result<Self> {
+        Self::from_repr(repr).ok_or_else(|| anyhow!("invalid ECastToken: {repr}"))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -274,7 +291,7 @@ for_each!(
     0x26: ExIntOne {  },
     0x27: ExTrue {  },
     0x28: ExFalse {  },
-    0x29: ExTextConst { value: [ ExprIndex ] },
+    0x29: ExTextConst { value: [ FScriptText ] },
     0x2A: ExNoObject {  },
     0x2B: ExTransformConst { value: [ Transform<f64> ] },
     0x2C: ExIntConstByte {  },
@@ -287,7 +304,7 @@ for_each!(
     0x33: ExPropertyConst { property: [ KismetPropertyPointer ] },
     0x34: ExUnicodeStringConst { value: [ String ] },
     0x35: ExInt64Const { value: [ i64 ] },
-    0x36: ExUInt64Const {  },
+    0x36: ExUInt64Const { value: [ u64 ] },
     // 0x37: ExPrimitiveCast { conversion_type: [ ECastToken ] target: [ ExprIndex ] },
     0x37: ExDoubleConst { value: [ f64 ] },
     0x38: ExCast { conversion_type: [ ECastToken ] target: [ ExprIndex ] },
@@ -310,7 +327,7 @@ for_each!(
     // 0x49
     0x4A: ExDeprecatedOp4A {  },
     0x4B: ExInstanceDelegate { function_name: [ FName ] },
-    0x4C: ExPushExecutionFlow { pushing_address: [ u32 ] },
+    0x4C: ExPushExecutionFlow { pushing_address: [ ExprIndex ] },
     0x4D: ExPopExecutionFlow {  },
     0x4E: ExComputedJump { code_offset_expression: [ ExprIndex ] },
     0x4F: ExPopExecutionFlowIfNot { boolean_expression: [ ExprIndex ] },
@@ -390,111 +407,15 @@ pub fn read_all(s: &mut Cursor<&[u8]>) -> Result<literal::ExprGraph> {
         if let Some(last) = last {
             let last_node = graph.get_mut(&last).unwrap();
             use literal::Expr as Ex;
-            let has_next = match &last_node.expr {
-                // Ex::ExLocalVariable(ex_local_variable) => todo!(),
-                // Ex::ExInstanceVariable(ex_instance_variable) => todo!(),
-                // Ex::ExDefaultVariable(ex_default_variable) => todo!(),
-                Ex::ExReturn(_) => false,
-                Ex::ExJump(_) => false,
-                // Ex::ExJumpIfNot(_) => false,
-                // Ex::ExAssert(ex_assert) => todo!(),
-                // Ex::ExNothing(ex_nothing) => todo!(),
-                // Ex::ExNothingInt32(ex_nothing_int32) => todo!(),
-                // Ex::ExLet(ex_let) => todo!(),
-                // Ex::ExBitFieldConst(ex_bit_field_const) => todo!(),
-                // Ex::ExClassContext(ex_class_context) => todo!(),
-                // Ex::ExMetaCast(ex_meta_cast) => todo!(),
-                // Ex::ExLetBool(ex_let_bool) => todo!(),
-                // Ex::ExEndParmValue(ex_end_parm_value) => todo!(),
-                // Ex::ExEndFunctionParms(ex_end_function_parms) => todo!(),
-                // Ex::ExSelf(ex_self) => todo!(),
-                // Ex::ExSkip(ex_skip) => todo!(),
-                // Ex::ExContext(ex_context) => todo!(),
-                // Ex::ExContextFailSilent(ex_context_fail_silent) => todo!(),
-                // Ex::ExVirtualFunction(ex_virtual_function) => todo!(),
-                // Ex::ExFinalFunction(ex_final_function) => todo!(),
-                // Ex::ExIntConst(ex_int_const) => todo!(),
-                // Ex::ExFloatConst(ex_float_const) => todo!(),
-                // Ex::ExStringConst(ex_string_const) => todo!(),
-                // Ex::ExObjectConst(ex_object_const) => todo!(),
-                // Ex::ExNameConst(ex_name_const) => todo!(),
-                // Ex::ExRotationConst(ex_rotation_const) => todo!(),
-                // Ex::ExVectorConst(ex_vector_const) => todo!(),
-                // Ex::ExByteConst(ex_byte_const) => todo!(),
-                // Ex::ExIntZero(ex_int_zero) => todo!(),
-                // Ex::ExIntOne(ex_int_one) => todo!(),
-                // Ex::ExTrue(ex_true) => todo!(),
-                // Ex::ExFalse(ex_false) => todo!(),
-                // Ex::ExTextConst(ex_text_const) => todo!(),
-                // Ex::ExNoObject(ex_no_object) => todo!(),
-                // Ex::ExTransformConst(ex_transform_const) => todo!(),
-                // Ex::ExIntConstByte(ex_int_const_byte) => todo!(),
-                // Ex::ExNoInterface(ex_no_interface) => todo!(),
-                // Ex::ExDynamicCast(ex_dynamic_cast) => todo!(),
-                // Ex::ExStructConst(ex_struct_const) => todo!(),
-                // Ex::ExEndStructConst(ex_end_struct_const) => todo!(),
-                // Ex::ExSetArray(ex_set_array) => todo!(),
-                // Ex::ExEndArray(ex_end_array) => todo!(),
-                // Ex::ExPropertyConst(ex_property_const) => todo!(),
-                // Ex::ExUnicodeStringConst(ex_unicode_string_const) => todo!(),
-                // Ex::ExInt64Const(ex_int64_const) => todo!(),
-                // Ex::ExUInt64Const(ex_uint64_const) => todo!(),
-                // Ex::ExDoubleConst(ex_double_const) => todo!(),
-                // Ex::ExCast(ex_cast) => todo!(),
-                // Ex::ExSetSet(ex_set_set) => todo!(),
-                // Ex::ExEndSet(ex_end_set) => todo!(),
-                // Ex::ExSetMap(ex_set_map) => todo!(),
-                // Ex::ExEndMap(ex_end_map) => todo!(),
-                // Ex::ExSetConst(ex_set_const) => todo!(),
-                // Ex::ExEndSetConst(ex_end_set_const) => todo!(),
-                // Ex::ExMapConst(ex_map_const) => todo!(),
-                // Ex::ExEndMapConst(ex_end_map_const) => todo!(),
-                // Ex::ExVector3fConst(ex_vector3f_const) => todo!(),
-                // Ex::ExStructMemberContext(ex_struct_member_context) => todo!(),
-                // Ex::ExLetMulticastDelegate(ex_let_multicast_delegate) => todo!(),
-                // Ex::ExLetDelegate(ex_let_delegate) => todo!(),
-                // Ex::ExLocalVirtualFunction(ex_local_virtual_function) => todo!(),
-                // Ex::ExLocalFinalFunction(ex_local_final_function) => todo!(),
-                // Ex::ExLocalOutVariable(ex_local_out_variable) => todo!(),
-                // Ex::ExDeprecatedOp4A(ex_deprecated_op4_a) => todo!(),
-                // Ex::ExInstanceDelegate(ex_instance_delegate) => todo!(),
-                // Ex::ExPushExecutionFlow(ex_push_execution_flow) => todo!(),
-                Ex::ExPopExecutionFlow(_) => false,
-                Ex::ExComputedJump(_) => false,
-                // Ex::ExPopExecutionFlowIfNot(ex_pop_execution_flow_if_not) => todo!(),
-                // Ex::ExBreakpoint(ex_breakpoint) => todo!(),
-                // Ex::ExInterfaceContext(ex_interface_context) => todo!(),
-                // Ex::ExObjToInterfaceCast(ex_obj_to_interface_cast) => todo!(),
-                Ex::ExEndOfScript(_) => false,
-                // Ex::ExCrossInterfaceCast(ex_cross_interface_cast) => todo!(),
-                // Ex::ExInterfaceToObjCast(ex_interface_to_obj_cast) => todo!(),
-                // Ex::ExWireTracepoint(ex_wire_tracepoint) => todo!(),
-                // Ex::ExSkipOffsetConst(ex_skip_offset_const) => todo!(),
-                // Ex::ExAddMulticastDelegate(ex_add_multicast_delegate) => todo!(),
-                // Ex::ExClearMulticastDelegate(ex_clear_multicast_delegate) => todo!(),
-                // Ex::ExTracepoint(ex_tracepoint) => todo!(),
-                // Ex::ExLetObj(ex_let_obj) => todo!(),
-                // Ex::ExLetWeakObjPtr(ex_let_weak_obj_ptr) => todo!(),
-                // Ex::ExBindDelegate(ex_bind_delegate) => todo!(),
-                // Ex::ExRemoveMulticastDelegate(ex_remove_multicast_delegate) => todo!(),
-                // Ex::ExCallMulticastDelegate(ex_call_multicast_delegate) => todo!(),
-                // Ex::ExLetValueOnPersistentFrame(ex_let_value_on_persistent_frame) => todo!(),
-                // Ex::ExArrayConst(ex_array_const) => todo!(),
-                // Ex::ExEndArrayConst(ex_end_array_const) => todo!(),
-                // Ex::ExSoftObjectConst(ex_soft_object_const) => todo!(),
-                // Ex::ExCallMath(ex_call_math) => todo!(),
-                // Ex::ExSwitchValue(ex_switch_value) => todo!(),
-                // Ex::ExInstrumentationEvent(ex_instrumentation_event) => todo!(),
-                // Ex::ExArrayGetByRef(ex_array_get_by_ref) => todo!(),
-                // Ex::ExClassSparseDataVariable(ex_class_sparse_data_variable) => todo!(),
-                // Ex::ExFieldPathConst(ex_field_path_const) => todo!(),
-                // Ex::ExAutoRtfmTransact(ex_auto_rtfm_transact) => todo!(),
-                // Ex::ExAutoRtfmStopTransact(ex_auto_rtfm_stop_transact) => todo!(),
-                // Ex::ExAutoRtfmAbortIfNot(ex_auto_rtfm_abort_if_not) => todo!(),
-                _ => true,
-            };
-            if has_next {
-                last_node.next = Some(index);
+            match &last_node.expr {
+                Ex::ExReturn(_)
+                | Ex::ExJump(_)
+                | Ex::ExPopExecutionFlow(_)
+                | Ex::ExComputedJump(_)
+                | Ex::ExEndOfScript(_) => {}
+                _ => {
+                    last_node.next = Some(index);
+                }
             }
         }
 
@@ -577,7 +498,14 @@ pub fn normalize_and_serialize(exs: &mut Vec<literal::Expr>) -> Result<Vec<u8>> 
                     self.write_ex(e)?;
                 }
                 Ex::ExContextFailSilent(ex) => bail!("todo write ExContextFailSilent"),
-                Ex::ExVirtualFunction(ex) => bail!("todo write ExVirtualFunction"),
+                Ex::ExVirtualFunction(ex) => {
+                    write_fname(&mut self.s, ex.virtual_function_name)?;
+                    for parm in ex.parameters {
+                        let e = self.advance(parm);
+                        self.write_ex(e)?;
+                    }
+                    self.write_ex(ExEndFunctionParms {}.into())?;
+                }
                 Ex::ExFinalFunction(ex) => {
                     self.s.write_u64::<LE>(ex.stack_node.0)?;
                     for parm in ex.parameters {
@@ -589,7 +517,9 @@ pub fn normalize_and_serialize(exs: &mut Vec<literal::Expr>) -> Result<Vec<u8>> 
                 Ex::ExIntConst(ex) => {
                     self.s.write_i32::<LE>(ex.value)?;
                 }
-                Ex::ExFloatConst(ex) => bail!("todo write ExFloatConst"),
+                Ex::ExFloatConst(ex) => {
+                    self.s.write_f32::<LE>(ex.value)?;
+                }
                 Ex::ExStringConst(ex) => bail!("todo write ExStringConst"),
                 Ex::ExObjectConst(ex) => {
                     self.s.write_u64::<LE>(ex.value.0)?;
@@ -597,7 +527,9 @@ pub fn normalize_and_serialize(exs: &mut Vec<literal::Expr>) -> Result<Vec<u8>> 
                 Ex::ExNameConst(ex) => bail!("todo write ExNameConst"),
                 Ex::ExRotationConst(ex) => bail!("todo write ExRotationConst"),
                 Ex::ExVectorConst(ex) => bail!("todo write ExVectorConst"),
-                Ex::ExByteConst(ex) => bail!("todo write ExByteConst"),
+                Ex::ExByteConst(ex) => {
+                    self.s.write_u8(ex.value)?;
+                }
                 Ex::ExIntZero(_) => {}
                 Ex::ExIntOne(_) => {}
                 Ex::ExTrue(_) => {}
@@ -608,7 +540,15 @@ pub fn normalize_and_serialize(exs: &mut Vec<literal::Expr>) -> Result<Vec<u8>> 
                 Ex::ExIntConstByte(ex) => bail!("todo write ExIntConstByte"),
                 Ex::ExNoInterface(_) => {}
                 Ex::ExDynamicCast(ex) => bail!("todo write ExDynamicCast"),
-                Ex::ExStructConst(ex) => bail!("todo write ExStructConst"),
+                Ex::ExStructConst(ex) => {
+                    self.s.write_u64::<LE>(ex.struct_value.0)?;
+                    self.s.write_i32::<LE>(ex.struct_size)?;
+                    for member in ex.value {
+                        let e = self.advance(member);
+                        self.write_ex(e)?;
+                    }
+                    self.write_ex(ExEndStructConst {}.into())?;
+                }
                 Ex::ExEndStructConst(_) => {}
                 Ex::ExSetArray(ex) => bail!("todo write ExSetArray"),
                 Ex::ExEndArray(_) => {}
@@ -627,10 +567,21 @@ pub fn normalize_and_serialize(exs: &mut Vec<literal::Expr>) -> Result<Vec<u8>> 
                 Ex::ExMapConst(ex) => bail!("todo write ExMapConst"),
                 Ex::ExEndMapConst(ex) => {}
                 Ex::ExVector3fConst(ex) => bail!("todo write ExVector3fConst"),
-                Ex::ExStructMemberContext(ex) => bail!("todo write ExStructMemberContext"),
+                Ex::ExStructMemberContext(ex) => {
+                    self.s.write_u64::<LE>(ex.struct_member_expression.0)?;
+                    let e = self.advance(ex.struct_expression);
+                    self.write_ex(e)?;
+                }
                 Ex::ExLetMulticastDelegate(ex) => bail!("todo write ExLetMulticastDelegate"),
                 Ex::ExLetDelegate(ex) => bail!("todo write ExLetDelegate"),
-                Ex::ExLocalVirtualFunction(ex) => bail!("todo write ExLocalVirtualFunction"),
+                Ex::ExLocalVirtualFunction(ex) => {
+                    write_fname(&mut self.s, ex.virtual_function_name)?;
+                    for parm in ex.parameters {
+                        let e = self.advance(parm);
+                        self.write_ex(e)?;
+                    }
+                    self.write_ex(ExEndFunctionParms {}.into())?;
+                }
                 Ex::ExLocalFinalFunction(ex) => {
                     self.s.write_u64::<LE>(ex.stack_node.0)?;
                     for parm in ex.parameters {
@@ -644,10 +595,16 @@ pub fn normalize_and_serialize(exs: &mut Vec<literal::Expr>) -> Result<Vec<u8>> 
                 }
                 Ex::ExDeprecatedOp4A(ex) => bail!("todo write ExDeprecatedOp4A"),
                 Ex::ExInstanceDelegate(ex) => bail!("todo write ExInstanceDelegate"),
-                Ex::ExPushExecutionFlow(ex) => bail!("todo write ExPushExecutionFlow"),
-                Ex::ExPopExecutionFlow(ex) => bail!("todo write ExPopExecutionFlow"),
+                Ex::ExPushExecutionFlow(ex) => {
+                    self.fixups.push((self.s.position(), ex.pushing_address));
+                    self.s.write_u32::<LE>(0)?;
+                }
+                Ex::ExPopExecutionFlow(_) => {}
                 Ex::ExComputedJump(ex) => bail!("todo write ExComputedJump"),
-                Ex::ExPopExecutionFlowIfNot(ex) => bail!("todo write ExPopExecutionFlowIfNot"),
+                Ex::ExPopExecutionFlowIfNot(ex) => {
+                    let e = self.advance(ex.boolean_expression);
+                    self.write_ex(e)?;
+                }
                 Ex::ExBreakpoint(ex) => bail!("todo write ExBreakpoint"),
                 Ex::ExInterfaceContext(ex) => bail!("todo write ExInterfaceContext"),
                 Ex::ExObjToInterfaceCast(ex) => bail!("todo write ExObjToInterfaceCast"),
@@ -670,8 +627,52 @@ pub fn normalize_and_serialize(exs: &mut Vec<literal::Expr>) -> Result<Vec<u8>> 
                 Ex::ExArrayConst(ex) => bail!("todo write ExArrayConst"),
                 Ex::ExEndArrayConst(_) => {}
                 Ex::ExSoftObjectConst(ex) => bail!("todo write ExSoftObjectConst"),
-                Ex::ExCallMath(ex) => bail!("todo write ExCallMath"),
-                Ex::ExSwitchValue(ex) => bail!("todo write ExSwitchValue"),
+                Ex::ExCallMath(ex) => {
+                    self.s.write_u64::<LE>(ex.stack_node.0)?;
+                    for parm in ex.parameters {
+                        let e = self.advance(parm);
+                        self.write_ex(e)?;
+                    }
+                    self.write_ex(ExEndFunctionParms {}.into())?;
+                }
+                Ex::ExSwitchValue(ex) => {
+                    self.s.write_u16::<LE>(ex.cases.len().try_into().unwrap())?;
+                    let switch_end = self.s.position();
+                    self.s.write_u32::<LE>(0)?;
+
+                    let e = self.advance(ex.index_term);
+                    self.write_ex(e)?;
+
+                    for case in ex.cases {
+                        let e = self.advance(case.case_index_value_term);
+                        self.write_ex(e)?;
+
+                        let case_end = self.s.position();
+                        self.s.write_u32::<LE>(0)?;
+
+                        let e = self.advance(case.case_term);
+                        self.write_ex(e)?;
+
+                        // fixup case end
+                        {
+                            let pos = self.s.position();
+                            self.s.set_position(case_end);
+                            self.s.write_u32::<LE>(pos as u32)?;
+                            self.s.set_position(pos);
+                        }
+                    }
+
+                    let e = self.advance(ex.default_term);
+                    self.write_ex(e)?;
+
+                    // fixup switch end
+                    {
+                        let pos = self.s.position();
+                        self.s.set_position(switch_end);
+                        self.s.write_u32::<LE>(pos as u32)?;
+                        self.s.set_position(pos);
+                    }
+                }
                 Ex::ExInstrumentationEvent(ex) => bail!("todo write ExInstrumentationEvent"),
                 Ex::ExArrayGetByRef(ex) => bail!("todo write ExArrayGetByRef"),
                 Ex::ExClassSparseDataVariable(ex) => bail!("todo write ExClassSparseDataVariable"),
@@ -705,6 +706,11 @@ pub fn normalize_and_serialize(exs: &mut Vec<literal::Expr>) -> Result<Vec<u8>> 
     }
     c.write_ex(ExEndOfScript {}.into())?;
 
+    for (index, expr) in c.fixups {
+        c.s.set_position(index);
+        c.s.write_u32::<LE>(c.ex_map[&expr] as u32)?;
+    }
+
     Ok(c.s.into_inner())
 }
 
@@ -722,6 +728,12 @@ fn read_fname(s: &mut Cursor<&[u8]>) -> Result<ue::FName> {
         number,
     })
 }
+fn write_fname<S: Write>(s: &mut S, fname: ue::FName) -> Result<()> {
+    s.write_u32::<LE>(fname.comparison_index.value)?;
+    s.write_u32::<LE>(fname.comparison_index.value)?; // display index
+    s.write_u32::<LE>(fname.number)?;
+    Ok(())
+}
 fn read_string<S: Read>(s: &mut S) -> Result<String> {
     let mut bytes = vec![];
     loop {
@@ -731,6 +743,39 @@ fn read_string<S: Read>(s: &mut S) -> Result<String> {
         }
     }
     Ok(String::from_utf8(bytes)?)
+}
+fn read_unicode_string<S: Read>(s: &mut S) -> Result<String> {
+    let mut chars = vec![];
+    loop {
+        match s.read_u16::<LE>()? {
+            0 => break,
+            c => chars.push(c),
+        }
+    }
+    Ok(String::from_utf16(&chars)?)
+}
+fn read_fscript_text(s: &mut Cursor<&[u8]>, graph: &mut literal::ExprGraph) -> Result<FScriptText> {
+    Ok(
+        match EBlueprintTextLiteralType::try_from_repr(s.read_u8()?)? {
+            EBlueprintTextLiteralType::Empty => FScriptText::Empty,
+            EBlueprintTextLiteralType::LocalizedText => FScriptText::LocalizedText {
+                localized_source: read(s, graph)?,
+                localized_key: read(s, graph)?,
+                localized_namespace: read(s, graph)?,
+            },
+            EBlueprintTextLiteralType::InvariantText => FScriptText::InvariantText {
+                invariant_literal_string: read(s, graph)?,
+            },
+            EBlueprintTextLiteralType::LiteralString => FScriptText::LiteralString {
+                literal_string: read(s, graph)?,
+            },
+            EBlueprintTextLiteralType::StringTableEntry => FScriptText::StringTableEntry {
+                string_table_asset: PackageIndex(s.read_u64::<LE>()?),
+                string_table_id: read(s, graph)?,
+                string_table_key: read(s, graph)?,
+            },
+        },
+    )
 }
 fn read_vector(s: &mut Cursor<&[u8]>) -> Result<Vector<f64>> {
     Ok(Vector {
@@ -894,7 +939,10 @@ pub fn read_body(
         Op::ExIntOne => ExIntOne {}.into(),
         Op::ExTrue => ExTrue {}.into(),
         Op::ExFalse => ExFalse {}.into(),
-        Op::ExTextConst => bail!("todo ExTextConst"),
+        Op::ExTextConst => ExTextConst {
+            value: read_fscript_text(s, graph)?,
+        }
+        .into(),
         Op::ExNoObject => ExNoObject {}.into(),
         Op::ExTransformConst => ExTransformConst {
             value: read_transform(s)?,
@@ -922,9 +970,18 @@ pub fn read_body(
         .into(),
         Op::ExEndArray => ExEndArray {}.into(),
         Op::ExPropertyConst => bail!("todo ExPropertyConst"),
-        Op::ExUnicodeStringConst => bail!("todo ExUnicodeStringConst"),
-        Op::ExInt64Const => bail!("todo ExInt64Const"),
-        Op::ExUInt64Const => bail!("todo ExUInt64Const"),
+        Op::ExUnicodeStringConst => ExUnicodeStringConst {
+            value: read_unicode_string(s)?,
+        }
+        .into(),
+        Op::ExInt64Const => ExInt64Const {
+            value: s.read_i64::<LE>()?,
+        }
+        .into(),
+        Op::ExUInt64Const => ExUInt64Const {
+            value: s.read_u64::<LE>()?,
+        }
+        .into(),
         // Op::ExPrimitiveCast => ExPrimitiveCast {
         //     conversion_type: ECastToken::from_repr(s.read_u8()?)
         //         .ok_or_else(|| anyhow!("invalid ECastToken"))?,
@@ -936,12 +993,15 @@ pub fn read_body(
         }
         .into(),
         Op::ExCast => ExCast {
-            conversion_type: ECastToken::from_repr(s.read_u8()?)
-                .ok_or_else(|| anyhow!("invalid ECastToken"))?,
+            conversion_type: ECastToken::try_from_repr(s.read_u8()?)?,
             target: read(s, graph)?,
         }
         .into(),
-        Op::ExSetSet => bail!("todo ExSetSet"),
+        Op::ExSetSet => ExSetSet {
+            set_property: read(s, graph)?,
+            elements: read_until(s, graph, ExprOp::ExEndSet)?,
+        }
+        .into(),
         Op::ExEndSet => ExEndSet {}.into(),
         Op::ExSetMap => bail!("todo ExSetMap"),
         Op::ExEndMap => ExEndMap {}.into(),
@@ -974,7 +1034,7 @@ pub fn read_body(
         Op::ExDeprecatedOp4A => bail!("todo ExDeprecatedOp4A"),
         Op::ExInstanceDelegate => bail!("todo ExInstanceDelegate"),
         Op::ExPushExecutionFlow => ExPushExecutionFlow {
-            pushing_address: s.read_u32::<LE>()?,
+            pushing_address: ExprIndex(s.read_u32::<LE>()? as usize),
         }
         .into(),
         Op::ExPopExecutionFlow => ExPopExecutionFlow {}.into(),
@@ -1081,778 +1141,3 @@ pub fn read_body(
     };
     Ok(ex)
 }
-
-pub fn byte_size(ex: literal::Expr) -> Result<usize> {
-    use literal::{Expr as Ex, *};
-    match ex {
-        Ex::ExLocalVariable(ex) => todo!(),
-        Ex::ExInstanceVariable(ex) => todo!(),
-        Ex::ExDefaultVariable(ex) => todo!(),
-        Ex::ExReturn(ex) => todo!(),
-        Ex::ExJump(ex) => todo!(),
-        Ex::ExJumpIfNot(ex) => todo!(),
-        Ex::ExAssert(ex) => todo!(),
-        Ex::ExNothing(ex) => todo!(),
-        Ex::ExNothingInt32(ex) => todo!(),
-        Ex::ExLet(ex) => todo!(),
-        Ex::ExBitFieldConst(ex) => todo!(),
-        Ex::ExClassContext(ex) => todo!(),
-        Ex::ExMetaCast(ex) => todo!(),
-        Ex::ExLetBool(ex) => todo!(),
-        Ex::ExEndParmValue(ex) => todo!(),
-        Ex::ExEndFunctionParms(ex) => todo!(),
-        Ex::ExSelf(ex) => todo!(),
-        Ex::ExSkip(ex) => todo!(),
-        Ex::ExContext(ex) => todo!(),
-        Ex::ExContextFailSilent(ex) => todo!(),
-        Ex::ExVirtualFunction(ex) => todo!(),
-        Ex::ExFinalFunction(ex) => todo!(),
-        Ex::ExIntConst(ex) => todo!(),
-        Ex::ExFloatConst(ex) => todo!(),
-        Ex::ExStringConst(ex) => todo!(),
-        Ex::ExObjectConst(ex) => todo!(),
-        Ex::ExNameConst(ex) => todo!(),
-        Ex::ExRotationConst(ex) => todo!(),
-        Ex::ExVectorConst(ex) => todo!(),
-        Ex::ExByteConst(ex) => todo!(),
-        Ex::ExIntZero(ex) => todo!(),
-        Ex::ExIntOne(ex) => todo!(),
-        Ex::ExTrue(ex) => todo!(),
-        Ex::ExFalse(ex) => todo!(),
-        Ex::ExTextConst(ex) => todo!(),
-        Ex::ExNoObject(ex) => todo!(),
-        Ex::ExTransformConst(ex) => todo!(),
-        Ex::ExIntConstByte(ex) => todo!(),
-        Ex::ExNoInterface(ex) => todo!(),
-        Ex::ExDynamicCast(ex) => todo!(),
-        Ex::ExStructConst(ex) => todo!(),
-        Ex::ExEndStructConst(ex) => todo!(),
-        Ex::ExSetArray(ex) => todo!(),
-        Ex::ExEndArray(ex) => todo!(),
-        Ex::ExPropertyConst(ex) => todo!(),
-        Ex::ExUnicodeStringConst(ex) => todo!(),
-        Ex::ExInt64Const(ex) => todo!(),
-        Ex::ExUInt64Const(ex) => todo!(),
-        Ex::ExDoubleConst(ex) => todo!(),
-        Ex::ExCast(ex) => todo!(),
-        Ex::ExSetSet(ex) => todo!(),
-        Ex::ExEndSet(ex) => todo!(),
-        Ex::ExSetMap(ex) => todo!(),
-        Ex::ExEndMap(ex) => todo!(),
-        Ex::ExSetConst(ex) => todo!(),
-        Ex::ExEndSetConst(ex) => todo!(),
-        Ex::ExMapConst(ex) => todo!(),
-        Ex::ExEndMapConst(ex) => todo!(),
-        Ex::ExVector3fConst(ex) => todo!(),
-        Ex::ExStructMemberContext(ex) => todo!(),
-        Ex::ExLetMulticastDelegate(ex) => todo!(),
-        Ex::ExLetDelegate(ex) => todo!(),
-        Ex::ExLocalVirtualFunction(ex) => todo!(),
-        Ex::ExLocalFinalFunction(ex) => todo!(),
-        Ex::ExLocalOutVariable(ex) => todo!(),
-        Ex::ExDeprecatedOp4A(ex) => todo!(),
-        Ex::ExInstanceDelegate(ex) => todo!(),
-        Ex::ExPushExecutionFlow(ex) => todo!(),
-        Ex::ExPopExecutionFlow(ex) => todo!(),
-        Ex::ExComputedJump(ex) => todo!(),
-        Ex::ExPopExecutionFlowIfNot(ex) => todo!(),
-        Ex::ExBreakpoint(ex) => todo!(),
-        Ex::ExInterfaceContext(ex) => todo!(),
-        Ex::ExObjToInterfaceCast(ex) => todo!(),
-        Ex::ExEndOfScript(ex) => todo!(),
-        Ex::ExCrossInterfaceCast(ex) => todo!(),
-        Ex::ExInterfaceToObjCast(ex) => todo!(),
-        Ex::ExWireTracepoint(ex) => todo!(),
-        Ex::ExSkipOffsetConst(ex) => todo!(),
-        Ex::ExAddMulticastDelegate(ex) => todo!(),
-        Ex::ExClearMulticastDelegate(ex) => todo!(),
-        Ex::ExTracepoint(ex) => todo!(),
-        Ex::ExLetObj(ex) => todo!(),
-        Ex::ExLetWeakObjPtr(ex) => todo!(),
-        Ex::ExBindDelegate(ex) => todo!(),
-        Ex::ExRemoveMulticastDelegate(ex) => todo!(),
-        Ex::ExCallMulticastDelegate(ex) => todo!(),
-        Ex::ExLetValueOnPersistentFrame(ex) => todo!(),
-        Ex::ExArrayConst(ex) => todo!(),
-        Ex::ExEndArrayConst(ex) => todo!(),
-        Ex::ExSoftObjectConst(ex) => todo!(),
-        Ex::ExCallMath(ex) => todo!(),
-        Ex::ExSwitchValue(ex) => todo!(),
-        Ex::ExInstrumentationEvent(ex) => todo!(),
-        Ex::ExArrayGetByRef(ex) => todo!(),
-        Ex::ExClassSparseDataVariable(ex) => todo!(),
-        Ex::ExFieldPathConst(ex) => todo!(),
-        Ex::ExAutoRtfmTransact(ex) => todo!(),
-        Ex::ExAutoRtfmStopTransact(ex) => todo!(),
-        Ex::ExAutoRtfmAbortIfNot(ex) => todo!(),
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_parse() {
-        let script = include_bytes!(
-            "../scripts/Function _RoomGenerator_RoomBuilderSquare.RoomBuilderSquare_C.Create Room.bin"
-        );
-        let graph = read_all(&mut std::io::Cursor::new(script)).unwrap();
-        dbg!(graph);
-    }
-}
-
-// #ifndef XFER
-// #define XFER(T) \
-// 			{ \
-// 				T Temp; \
-// 				if (!Ar.IsLoading()) \
-// 				{ \
-// 					Temp =  FPlatformMemory::ReadUnaligned<T>(&Script[iCode]); \
-// 				} \
-// 				Ar << Temp; \
-// 				if (!Ar.IsSaving()) \
-// 				{ \
-// 					FPlatformMemory::WriteUnaligned<T>(&Script[iCode], Temp); \
-// 				} \
-// 				iCode += sizeof(T); \
-// 			}
-// #endif
-
-// //FScriptName
-// #ifndef XFERNAME
-// 	#define XFERNAME() \
-// 	{ \
-//    	    FName Name; \
-// 		FScriptName ScriptName; \
-//         if (!Ar.IsLoading()) \
-// 		{ \
-// 			FMemory::Memcpy( &ScriptName, &Script[iCode], sizeof(FScriptName) ); \
-// 			Name = ScriptNameToName(ScriptName); \
-// 		} \
-// 		Ar << Name; \
-// 		if (!Ar.IsSaving()) \
-// 		{ \
-// 			ScriptName = NameToScriptName(Name); \
-// 			FMemory::Memcpy( &Script[iCode], &ScriptName, sizeof(FScriptName) ); \
-// 		} \
-// 		iCode += sizeof(FScriptName); \
-// 	}
-// #endif	//XFERNAME
-
-// // ASCII string
-// #ifndef XFERSTRING
-// 	#define XFERSTRING() \
-// 	{ \
-// 		do XFER(uint8) while( Script[iCode-1] ); \
-// 	}
-// #endif	//XFERSTRING
-
-// // UTF-16 string
-// #ifndef XFERUNICODESTRING
-// 	#define XFERUNICODESTRING() \
-// 	{ \
-// 		do XFER(uint16) while( Script[iCode-1] || Script[iCode-2] ); \
-// 	}
-// #endif	//XFERUNICODESTRING
-
-// //FText
-// #ifndef XFERTEXT
-// 	#define XFERTEXT() \
-// 	{ \
-// 		XFER(uint8); \
-// 		const EBlueprintTextLiteralType TextLiteralType = (EBlueprintTextLiteralType)Script[iCode - 1]; \
-// 		switch (TextLiteralType) \
-// 		{ \
-// 		case EBlueprintTextLiteralType::Empty: \
-// 			break; \
-// 		case EBlueprintTextLiteralType::LocalizedText: \
-// 			SerializeExpr( iCode, Ar );	\
-// 			SerializeExpr( iCode, Ar ); \
-// 			SerializeExpr( iCode, Ar ); \
-// 			break; \
-// 		case EBlueprintTextLiteralType::InvariantText: \
-// 			SerializeExpr( iCode, Ar );	\
-// 			break; \
-// 		case EBlueprintTextLiteralType::LiteralString: \
-// 			SerializeExpr( iCode, Ar );	\
-// 			break; \
-// 		case EBlueprintTextLiteralType::StringTableEntry: \
-// 			XFER_OBJECT_POINTER( UObject* ); \
-// 			FIXUP_EXPR_OBJECT_POINTER( UObject* ); \
-// 			SerializeExpr( iCode, Ar );	\
-// 			SerializeExpr( iCode, Ar ); \
-// 			break; \
-// 		default: \
-// 			checkf(false, TEXT("Unknown EBlueprintTextLiteralType! Please update XFERTEXT to handle this type of text.")); \
-// 			break; \
-// 		} \
-// 	}
-// #endif	//XFERTEXT
-
-// #ifndef XFERPTR
-// 	#define XFERPTR(T) \
-// 	{ \
-//    	    T AlignedPtr = NULL; \
-// 		ScriptPointerType TempCode; \
-//         if (!Ar.IsLoading()) \
-// 		{ \
-// 			FMemory::Memcpy( &TempCode, &Script[iCode], sizeof(ScriptPointerType) ); \
-// 			AlignedPtr = (T)(TempCode); \
-// 		} \
-// 		Ar << AlignedPtr; \
-// 		if (!Ar.IsSaving()) \
-// 		{ \
-// 			TempCode = (ScriptPointerType)(AlignedPtr); \
-// 			FMemory::Memcpy( &Script[iCode], &TempCode, sizeof(ScriptPointerType) ); \
-// 		} \
-// 		iCode += sizeof(ScriptPointerType); \
-// 	}
-// #endif	//	XFERPTR
-
-// #ifndef XFERTOBJPTR
-// 	#define XFERTOBJPTR() \
-// 	{ \
-// 		TObjectPtr<UObject> AlignedPtr; \
-// 		if (!Ar.IsLoading()) \
-// 		{ \
-// 			FMemory::Memcpy(&AlignedPtr, &Script[iCode], sizeof(ScriptPointerType)); \
-// 		} \
-// 			Ar << AlignedPtr; \
-// 		if (!Ar.IsSaving()) \
-// 		{ \
-// 			FMemory::Memcpy(&Script[iCode], &AlignedPtr, sizeof(ScriptPointerType)); \
-// 		} \
-// 		iCode += sizeof(ScriptPointerType); \
-// 	}
-// #endif	//	XFERTOBJPTR
-
-// #ifndef XFER_FUNC_POINTER
-// 	#define XFER_FUNC_POINTER	XFERPTR(UStruct*)
-// #endif	// XFER_FUNC_POINTER
-
-// #ifndef XFER_FUNC_NAME
-// 	#define XFER_FUNC_NAME		XFERNAME()
-// #endif	// XFER_FUNC_NAME
-
-// #ifndef XFER_PROP_POINTER
-// 	#define XFER_PROP_POINTER	XFERPTR(FProperty*)
-// #endif
-
-// #ifndef XFER_OBJECT_POINTER
-// 	#define XFER_OBJECT_POINTER(Type)	XFERPTR(Type)
-// #endif
-
-// #ifndef XFER_TOBJECT_PTR
-// 	#define XFER_TOBJECT_PTR	XFERTOBJPTR
-// #endif
-
-// #ifndef FIXUP_EXPR_OBJECT_POINTER
-// 	// sometimes after a UOBject* expression is loaded it may require some post-
-// 	// processing (see: the overridden FIXUP_EXPR_OBJECT_POINTER(), defined in Class.cpp)
-// 	#define FIXUP_EXPR_OBJECT_POINTER(Type)
-// #endif
-
-// /** UStruct::SerializeExpr() */
-// #ifdef SERIALIZEEXPR_INC
-// 	EExprToken Expr=(EExprToken)0;
-
-// 	// Get expr token.
-// 	XFER(uint8);
-// 	Expr = (EExprToken)Script[iCode-1];
-
-// 	switch( Expr )
-// 	{
-// 		case EX_Cast:
-// 		{
-// 			// A type conversion.
-// 			XFER(uint8); //which kind of conversion
-// 			SerializeExpr( iCode, Ar );
-// 			break;
-// 		}
-// 		case EX_ObjToInterfaceCast:
-// 		case EX_CrossInterfaceCast:
-// 		case EX_InterfaceToObjCast:
-// 		{
-// 			// A conversion from an object or interface variable to a native interface variable.
-// 			// We use a different bytecode to avoid the branching each time we process a cast token.
-
-// 			XFER_OBJECT_POINTER(UClass*); // the interface class to convert to
-// 			FIXUP_EXPR_OBJECT_POINTER(UClass*);
-
-// 			SerializeExpr( iCode, Ar );
-// 			break;
-// 		}
-// 		case EX_Let:
-// 		{
-// 			XFER_PROP_POINTER;
-// 		}
-// 		case EX_LetObj:
-// 		case EX_LetWeakObjPtr:
-// 		case EX_LetBool:
-// 		case EX_LetDelegate:
-// 		case EX_LetMulticastDelegate:
-// 		{
-// 			SerializeExpr( iCode, Ar ); // Variable expr.
-// 			SerializeExpr( iCode, Ar ); // Assignment expr.
-// 			break;
-// 		}
-// 		case EX_LetValueOnPersistentFrame:
-// 		{
-// 			XFER_PROP_POINTER;			// Destination property.
-// 			SerializeExpr(iCode, Ar);	// Assignment expr.
-// 			break;
-// 		}
-// 		case EX_StructMemberContext:
-// 		{
-// 			XFERPTR(FProperty*);        // struct member expr.
-// 			SerializeExpr( iCode, Ar ); // struct expr.
-// 			break;
-// 		}
-// 		case EX_Jump:
-// 		{
-// 			XFER(CodeSkipSizeType); // Code offset.
-// 			break;
-// 		}
-// 		case EX_ComputedJump:
-// 		{
-// 			SerializeExpr( iCode, Ar ); // Integer expression, specifying code offset.
-// 			break;
-// 		}
-// 		case EX_LocalVariable:
-// 		case EX_InstanceVariable:
-// 		case EX_DefaultVariable:
-// 		case EX_LocalOutVariable:
-// 		case EX_ClassSparseDataVariable:
-// 		case EX_PropertyConst:
-// 		{
-// 			XFER_PROP_POINTER;
-// 			break;
-// 		}
-// 		case EX_InterfaceContext:
-// 		{
-// 			SerializeExpr(iCode,Ar);
-// 			break;
-// 		}
-// 		case EX_PushExecutionFlow:
-// 		{
-// 			XFER(CodeSkipSizeType);		// location to push
-// 			break;
-// 		}
-// 		case EX_NothingInt32:
-// 		{
-// 			XFER(int32);
-// 			break;
-// 		}
-// 		case EX_Nothing:
-// 		case EX_EndOfScript:
-// 		case EX_EndFunctionParms:
-// 		case EX_EndStructConst:
-// 		case EX_EndArray:
-// 		case EX_EndArrayConst:
-// 		case EX_EndSet:
-// 		case EX_EndMap:
-// 		case EX_EndSetConst:
-// 		case EX_EndMapConst:
-// 		case EX_IntZero:
-// 		case EX_IntOne:
-// 		case EX_True:
-// 		case EX_False:
-// 		case EX_NoObject:
-// 		case EX_NoInterface:
-// 		case EX_Self:
-// 		case EX_EndParmValue:
-// 		case EX_PopExecutionFlow:
-// 		case EX_DeprecatedOp4A:
-// 		{
-// 			break;
-// 		}
-// 		case EX_WireTracepoint:
-// 		case EX_Tracepoint:
-// 		{
-// 			break;
-// 		}
-// 		case EX_Breakpoint:
-// 		{
-// 			if (Ar.IsLoading())
-// 			{
-// 				// Turn breakpoints into tracepoints on load
-// 				Script[iCode-1] = EX_Tracepoint;
-// 			}
-// 			break;
-// 		}
-// 		case EX_InstrumentationEvent:
-// 		{
-// 			if (Script[iCode] == EScriptInstrumentation::InlineEvent)
-// 			{
-// 				iCode += sizeof(FScriptName);
-// 			}
-// 			iCode += sizeof(uint8);
-// 			break;
-// 		}
-// 		case EX_Return:
-// 		{
-// 			SerializeExpr( iCode, Ar ); // Return expression.
-// 			break;
-// 		}
-// 		case EX_CallMath:
-// 		case EX_LocalFinalFunction:
-// 		case EX_FinalFunction:
-// 		{
-// 			XFER_FUNC_POINTER;											// Stack node.
-// 			FIXUP_EXPR_OBJECT_POINTER(UStruct*);
-// 			while( SerializeExpr( iCode, Ar ) != EX_EndFunctionParms ); // Parms.
-// 			break;
-// 		}
-// 		case EX_LocalVirtualFunction:
-// 		case EX_VirtualFunction:
-// 		{
-// 			XFER_FUNC_NAME;												// Virtual function name.
-// 			while( SerializeExpr( iCode, Ar ) != EX_EndFunctionParms );	// Parms.
-// 			break;
-// 		}
-// 		case EX_CallMulticastDelegate:
-// 		{
-// 			XFER_FUNC_POINTER;											// Stack node.
-// 			FIXUP_EXPR_OBJECT_POINTER(UStruct*);
-// 			while( SerializeExpr( iCode, Ar ) != EX_EndFunctionParms ); // Parms.
-// 			break;
-// 		}
-// 		case EX_ClassContext:
-// 		case EX_Context:
-// 		case EX_Context_FailSilent:
-// 		{
-// 			SerializeExpr( iCode, Ar ); // Object expression.
-// 			XFER(CodeSkipSizeType);		// Code offset for NULL expressions.
-// 			XFERPTR(FField*);			// Property corresponding to the r-value data, in case the l-value needs to be mem-zero'd
-// 			SerializeExpr( iCode, Ar ); // Context expression.
-// 			break;
-// 		}
-// 		case EX_AddMulticastDelegate:
-// 		case EX_RemoveMulticastDelegate:
-// 		{
-// 			SerializeExpr( iCode, Ar );	// Delegate property to assign to
-// 			SerializeExpr( iCode, Ar ); // Delegate to add to the MC delegate for broadcast
-// 			break;
-// 		}
-// 		case EX_ClearMulticastDelegate:
-// 		{
-// 			SerializeExpr( iCode, Ar );	// Delegate property to clear
-// 			break;
-// 		}
-// 		case EX_IntConst:
-// 		{
-// 			XFER(int32);
-// 			break;
-// 		}
-// 		case EX_Int64Const:
-// 		{
-// 			XFER(int64);
-// 			break;
-// 		}
-// 		case EX_UInt64Const:
-// 		{
-// 			XFER(uint64);
-// 			break;
-// 		}
-// 		case EX_SkipOffsetConst:
-// 		{
-// 			XFER(CodeSkipSizeType);
-// 			break;
-// 		}
-// 		case EX_FloatConst:
-// 		{
-// 			XFER(float);
-// 			break;
-// 		}
-// 		case EX_DoubleConst:
-// 		{
-// 			XFER(double);
-// 			break;
-// 		}
-// 		case EX_StringConst:
-// 		{
-// 			XFERSTRING();
-// 			break;
-// 		}
-// 		case EX_UnicodeStringConst:
-// 		{
-// 			XFERUNICODESTRING();
-// 			break;
-// 		}
-// 		case EX_TextConst:
-// 		{
-// 			XFERTEXT();
-// 			break;
-// 		}
-// 		case EX_ObjectConst:
-// 		{
-// 			XFER_TOBJECT_PTR();
-// 			FIXUP_EXPR_OBJECT_POINTER(TObjectPtr<UObject>);
-
-// 			break;
-// 		}
-// 		case EX_SoftObjectConst:
-// 		{
-// 			// if collecting references inform the archive of the reference:
-// 			if (Ar.IsSaving() && Ar.IsObjectReferenceCollector())
-// 			{
-// 				XFER(uint8);
-// 				Expr = (EExprToken)Script[iCode - 1];
-// 				check(Expr == EX_StringConst || Expr == EX_UnicodeStringConst);
-// 				FString LongPath;
-// 				if (Expr == EX_StringConst)
-// 				{
-// 					LongPath = (ANSICHAR*)&Script[iCode];
-// 					XFERSTRING();
-// 				}
-// 				else
-// 				{
-// 					LongPath = FString((UCS2CHAR*)&Script[iCode]);
-
-// 					// Inline combine any surrogate pairs in the data when loading into a UTF-32 string
-// 					StringConv::InlineCombineSurrogates(LongPath);
-// 					XFERUNICODESTRING();
-// 				}
-// 				FSoftObjectPath Path(LongPath);
-// 				Ar << Path;
-// 				// we can't patch the path, but we could log an attempt to do so
-// 				// or change the implementation to support patching (allocating
-// 				// these strings in a special region or distinct object)
-// 			}
-// 			else
-// 			{
-// 				// else just write the string literal instructions:
-// 				SerializeExpr(iCode, Ar);
-// 			}
-// 			break;
-// 		}
-// 		case EX_FieldPathConst:
-// 		{
-// 			SerializeExpr(iCode, Ar);
-// 			break;
-// 		}
-// 		case EX_NameConst:
-// 		{
-// 			XFERNAME();
-// 			break;
-// 		}
-// 		case EX_RotationConst:
-// 		{
-// 			if(Ar.UEVer() >= EUnrealEngineObjectUE5Version::LARGE_WORLD_COORDINATES)
-// 			{
-// 				XFER(int64); XFER(int64); XFER(int64);
-// 			}
-// 			else
-// 			{
-// 				XFER(int32); XFER(int32); XFER(int32);
-// 			}
-// 			break;
-// 		}
-// 		case EX_VectorConst:
-// 		{
-// 			if(Ar.UEVer() >= EUnrealEngineObjectUE5Version::LARGE_WORLD_COORDINATES)
-// 			{
-// 				XFER(double); XFER(double); XFER(double);
-// 			}
-// 			else
-// 			{
-// 				XFER(float); XFER(float); XFER(float);
-// 			}
-// 			break;
-// 		}
-// 		case EX_Vector3fConst:
-// 		{
-// 			XFER(float); XFER(float); XFER(float);
-// 			break;
-// 		}
-// 		case EX_TransformConst:
-// 		{
-// 			if(Ar.UEVer() >= EUnrealEngineObjectUE5Version::LARGE_WORLD_COORDINATES)
-// 			{
-// 				// Rotation
-// 				XFER(double); XFER(double); XFER(double); XFER(double);
-// 				// Translation
-// 				XFER(double); XFER(double); XFER(double);
-// 				// Scale
-// 				XFER(double); XFER(double); XFER(double);
-// 			}
-// 			else
-// 			{
-// 				// Rotation
-// 				XFER(float); XFER(float); XFER(float); XFER(float);
-// 				// Translation
-// 				XFER(float); XFER(float); XFER(float);
-// 				// Scale
-// 				XFER(float); XFER(float); XFER(float);
-// 			}
-// 			break;
-// 		}
-// 		case EX_StructConst:
-// 		{
-// 			XFERPTR(UScriptStruct*);	// Struct.
-// 			XFER(int32);					// Serialized struct size
-// 			while( SerializeExpr( iCode, Ar ) != EX_EndStructConst );
-// 			break;
-// 		}
-// 		case EX_SetArray:
-// 		{
-// 			// If not loading, or its a newer version
-// 			if((!GetLinker()) || !Ar.IsLoading() || (Ar.UEVer() >= VER_UE4_CHANGE_SETARRAY_BYTECODE))
-// 			{
-// 				// Array property to assign to
-// 				EExprToken TargetToken = SerializeExpr( iCode, Ar );
-// 			}
-// 			else
-// 			{
-// 				// Array Inner Prop
-// 				XFERPTR(FProperty*);
-// 			}
-
-// 			while( SerializeExpr( iCode, Ar) != EX_EndArray );
-// 			break;
-// 		}
-// 		case EX_SetSet:
-// 			SerializeExpr( iCode, Ar ); // set property
-// 			XFER(int32);			// Number of elements
-// 			while( SerializeExpr( iCode, Ar) != EX_EndSet );
-// 			break;
-// 		case EX_SetMap:
-// 			SerializeExpr( iCode, Ar ); // map property
-// 			XFER(int32);			// Number of elements
-// 			while( SerializeExpr( iCode, Ar) != EX_EndMap );
-// 			break;
-// 		case EX_ArrayConst:
-// 		{
-// 			XFERPTR(FProperty*);	// Inner property
-// 			XFER(int32);			// Number of elements
-// 			while (SerializeExpr(iCode, Ar) != EX_EndArrayConst);
-// 			break;
-// 		}
-// 		case EX_SetConst:
-// 		{
-// 			XFERPTR(FProperty*);	// Inner property
-// 			XFER(int32);			// Number of elements
-// 			while (SerializeExpr(iCode, Ar) != EX_EndSetConst);
-// 			break;
-// 		}
-// 		case EX_MapConst:
-// 		{
-// 			XFERPTR(FProperty*);	// Key property
-// 			XFERPTR(FProperty*);	// Val property
-// 			XFER(int32);			// Number of elements
-// 			while (SerializeExpr(iCode, Ar) != EX_EndMapConst);
-// 			break;
-// 		}
-// 		case EX_BitFieldConst:
-// 		{
-// 			XFERPTR(FProperty*);	// Bit property
-// 			XFER(uint8);			// bit value
-// 			break;
-// 		}
-// 		case EX_ByteConst:
-// 		case EX_IntConstByte:
-// 		{
-// 			XFER(uint8);
-// 			break;
-// 		}
-// 		case EX_MetaCast:
-// 		{
-// 			XFER_OBJECT_POINTER(UClass*);
-// 			FIXUP_EXPR_OBJECT_POINTER(UClass*);
-
-// 			SerializeExpr( iCode, Ar );
-// 			break;
-// 		}
-// 		case EX_DynamicCast:
-// 		{
-// 			XFER_OBJECT_POINTER(UClass*);
-// 			FIXUP_EXPR_OBJECT_POINTER(UClass*);
-
-// 			SerializeExpr( iCode, Ar );
-// 			break;
-// 		}
-// 		case EX_JumpIfNot:
-// 		{
-// 			XFER(CodeSkipSizeType);		// Code offset.
-// 			SerializeExpr( iCode, Ar ); // Boolean expr.
-// 			break;
-// 		}
-// 		case EX_PopExecutionFlowIfNot:
-// 		{
-// 			SerializeExpr( iCode, Ar ); // Boolean expr.
-// 			break;
-// 		}
-// 		case EX_Assert:
-// 		{
-// 			XFER(uint16); // Line number.
-// 			XFER(uint8); // debug mode or not
-// 			SerializeExpr( iCode, Ar ); // Assert expr.
-// 			break;
-// 		}
-// 		case EX_Skip:
-// 		{
-// 			XFER(CodeSkipSizeType);		// Skip size.
-// 			SerializeExpr( iCode, Ar ); // Expression to possibly skip.
-// 			break;
-// 		}
-// 		case EX_InstanceDelegate:
-// 		{
-// 			XFER_FUNC_NAME;				// the name of the function assigned to the delegate.
-// 			break;
-// 		}
-// 		case EX_BindDelegate:
-// 		{
-// 			XFER_FUNC_NAME;
-// 			SerializeExpr( iCode, Ar );	// Delegate property to assign to
-// 			SerializeExpr( iCode, Ar );
-// 			break;
-// 		}
-// 		case EX_SwitchValue:
-// 		{
-// 			XFER(uint16); // number of cases, without default one
-// 			const uint16 NumCases = FPlatformMemory::ReadUnaligned<uint16>(&Script[iCode - sizeof(uint16)]);
-// 			XFER(CodeSkipSizeType); // Code offset, go to it, when done.
-// 			SerializeExpr(iCode, Ar);	//index term
-
-// 			for (uint16 CaseIndex = 0; CaseIndex < NumCases; ++CaseIndex)
-// 			{
-// 				SerializeExpr(iCode, Ar);	// case index value term
-// 				XFER(CodeSkipSizeType);		// offset to the next case
-// 				SerializeExpr(iCode, Ar);	// case term
-// 			}
-
-// 			SerializeExpr(iCode, Ar);	//default term
-// 			break;
-// 		}
-// 		case EX_ArrayGetByRef:
-// 		{
-// 			SerializeExpr( iCode, Ar );
-// 			SerializeExpr( iCode, Ar );
-// 			break;
-// 		}
-// 		case EX_AutoRtfmTransact:
-// 		{
-// 			XFER(int32); // Transaction id
-// 			XFER(CodeSkipSizeType); // Code offset.
-// 			while( SerializeExpr( iCode, Ar ) != EX_AutoRtfmStopTransact ); // Parms.
-// 			break;
-// 		}
-// 		case EX_AutoRtfmStopTransact:
-// 		{
-// 			XFER(int32); // transaction id
-// 			XFER(int8); // stop mode
-// 			break;
-// 		}
-// 		case EX_AutoRtfmAbortIfNot:
-// 		{
-// 			SerializeExpr(iCode,Ar);
-// 			break;
-// 		}
-// 		default:
-// 		{
-// 			// This should never occur.
-// 			UE_LOG(LogScriptSerialization, Warning, TEXT("Error: Unknown bytecode 0x%02X; ignoring it"), (uint8)Expr );
-// 			break;
-// 		}
-// 	}

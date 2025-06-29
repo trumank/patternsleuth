@@ -295,20 +295,20 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                                     let mut out = kismet_transform::compile(func, graph);
                                     match &mut out {
                                         Ok(r) => {
-                                            ui.colored_label(Color32::GREEN, &format!("{r:?}"));
+                                            // ui.colored_label(Color32::GREEN, &format!("{r:?}"));
                                             let ser = normalize_and_serialize(r);
 
                                             match ser {
                                                 Ok(r) => {
-                                                    let hex = r
-                                                        .iter()
-                                                        .map(|b| format!("{b:02x}"))
-                                                        .collect::<Vec<_>>()
-                                                        .join(" ");
-                                                    ui.colored_label(
-                                                        Color32::GREEN,
-                                                        &format!("{}", hex),
-                                                    );
+                                                    // let hex = r
+                                                    //     .iter()
+                                                    //     .map(|b| format!("{b:02x}"))
+                                                    //     .collect::<Vec<_>>()
+                                                    //     .join(" ");
+                                                    // ui.colored_label(
+                                                    //     Color32::GREEN,
+                                                    //     &format!("{}", hex),
+                                                    // );
                                                     func.script.clear();
                                                     func.script.extend(&r);
                                                 }
