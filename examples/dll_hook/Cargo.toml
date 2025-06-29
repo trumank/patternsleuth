@@ -16,7 +16,7 @@ backtrace = "0.3.69"
 bitflags = "2.4.1"
 byteorder = "1.5.0"
 crossbeam-channel = "0.5.15"
-eframe = "0.31.0"
+eframe = { version = "0.31.0", default-features = false, features = ["default_fonts", "glow"] }
 egui-snarl = { path = "../../../../../src/third/egui-snarl", features = ["serde"] }
 egui-winit = { version = "0.31.0", default-features = false }
 indexmap = "2.1.0"
