@@ -241,7 +241,7 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                     .take(row_range.len())
                 {
                     ui.horizontal(|ui| {
-                        if ui.button(&format!("{i:10?}")).clicked() {
+                        if ui.button(format!("{i:10?}")).clicked() {
                             let graph = tick_ctx
                                 .get_ref(*i)
                                 .unwrap()
@@ -250,19 +250,16 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                                 .and_then(kismet_transform::transform);
                             state.open_objects.insert(*i, graph);
                         }
-                        match &obj.script_status {
-                            Some((len, res)) => {
-                                ui.colored_label(egui::Color32::GREEN, format!("{len}"));
-                                match res {
-                                    Ok(t) => {
-                                        ui.colored_label(egui::Color32::GREEN, t);
-                                    }
-                                    Err(t) => {
-                                        ui.colored_label(egui::Color32::RED, t);
-                                    }
+                        if let Some((len, res)) = &obj.script_status {
+                            ui.colored_label(egui::Color32::GREEN, format!("{len}"));
+                            match res {
+                                Ok(t) => {
+                                    ui.colored_label(egui::Color32::GREEN, t);
+                                }
+                                Err(t) => {
+                                    ui.colored_label(egui::Color32::RED, t);
                                 }
                             }
-                            None => {}
                         };
                         ui.label(&obj.name);
                     });
@@ -313,12 +310,12 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                                                     func.script.extend(&r);
                                                 }
                                                 Err(r) => {
-                                                    ui.colored_label(Color32::RED, &format!("{r}"));
+                                                    ui.colored_label(Color32::RED, format!("{r}"));
                                                 }
                                             }
                                         }
                                         Err(r) => {
-                                            ui.colored_label(Color32::RED, &format!("{r}"));
+                                            ui.colored_label(Color32::RED, format!("{r}"));
                                         }
                                     }
                                     graph.ui(ui, egui::Id::new(name));
@@ -344,7 +341,7 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             for (offset, name, mut field) in props {
                                 ui.horizontal(|ui| {
-                                    ui.label(&format!("0x{:02x} {}", offset, name.to_string()));
+                                    ui.label(format!("0x{offset:02x} {name}"));
                                     if let Some(p) = field.get::<ue::FNameProperty>() {
                                         let mut text = p.to_string();
                                         if ui.text_edit_singleline(&mut text).changed() {

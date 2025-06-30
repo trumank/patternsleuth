@@ -5,7 +5,7 @@ use crate::{
     kismet_nodes::{GenericNode, GenericPin, KismetGraph, NodeType, PinType},
     ue,
 };
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use eframe::egui;
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use itertools::Itertools;
@@ -946,13 +946,13 @@ mod layout {
 
             // Print column headers
             for col in min_col..=max_col {
-                print!("{:8}", col);
+                print!("{col:8}");
             }
             println!();
 
             // Print each row
             for row in min_row..=max_row {
-                print!("{:5}: ", row);
+                print!("{row:5}: ");
                 for col in min_col..=max_col {
                     let cell = cell(row, col);
                     if let Some(&node_id) = self.grid.get(&cell) {
@@ -998,7 +998,7 @@ mod layout {
                 .nodes
                 .keys()
                 .copied()
-                .filter(|id| !exec_inputs.contains(&id) && exec_outputs.contains(&id))
+                .filter(|id| !exec_inputs.contains(id) && exec_outputs.contains(id))
                 .collect();
 
             let mut inputs: HashMap<NodeId, Vec<(usize, NodeId)>> = HashMap::new();
@@ -1088,7 +1088,7 @@ mod layout {
                             if !self.grid_inv.contains_key(&input_id) {
                                 queue.push_back((
                                     input_id,
-                                    cell(current_cell.row + offset as i32, current_cell.col - 1),
+                                    cell(current_cell.row + offset, current_cell.col - 1),
                                     Dir::Left,
                                 ));
                             }

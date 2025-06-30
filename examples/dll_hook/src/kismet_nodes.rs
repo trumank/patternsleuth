@@ -1,8 +1,6 @@
 use eframe::egui::{self, Color32, Ui};
 use egui_snarl::{
-    ui::{
-        AnyPins, NodeLayout, PinInfo, PinPlacement, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle,
-    },
+    ui::{AnyPins, PinInfo, SnarlViewer, SnarlWidget, WireStyle},
     InPin, NodeId, OutPin, Snarl,
 };
 
@@ -75,7 +73,7 @@ impl PinType {
                 .with_fill(NUMBER_COLOR)
                 .with_wire_style(WireStyle::Bezier5),
             Self::Float(_) => PinInfo::circle()
-                .with_fill(NUMBER_COLOR)
+                .with_fill(FLOAT_COLOR)
                 .with_wire_style(WireStyle::Bezier5),
         }
     }
@@ -171,12 +169,12 @@ impl SnarlViewer<GenericNode> for KismetViewer {
             PinType::Function(ptr) => {
                 let ptr = *ptr as *const ue::UFunction;
                 let prop = unsafe { ptr.as_ref().unwrap() };
-                ui.label(format!("{}", prop.path()));
+                ui.label(prop.path().to_string());
             }
             PinType::Object(ptr) => {
                 let ptr = *ptr as *const ue::UObject;
                 let prop = unsafe { ptr.as_ref().unwrap() };
-                ui.label(format!("{}", prop.path()));
+                ui.label(prop.path().to_string());
             }
 
             PinType::Bool(value) => {

@@ -425,7 +425,7 @@ pub fn read_all(s: &mut Cursor<&[u8]>) -> Result<literal::ExprGraph> {
 }
 
 pub fn normalize_and_serialize(exs: &mut Vec<literal::Expr>) -> Result<Vec<u8>> {
-    use literal::{Expr as Ex, ExprOp as Op, *};
+    use literal::{Expr as Ex, *};
     impl Ctx<'_> {
         fn get_next(&mut self) -> Option<literal::Expr> {
             let next = self.exs.get(self.index).cloned();

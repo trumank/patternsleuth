@@ -21,7 +21,6 @@ use patternsleuth::resolvers::unreal::{
     guobject_array::{
         FUObjectArrayAllocateUObjectIndex, FUObjectArrayFreeUObjectIndex, GUObjectArray,
     },
-    kismet::{FFrameStep, FFrameStepExplicitProperty, FFrameStepViaExec},
 };
 use windows::Win32::{
     Foundation::HMODULE,
