@@ -55,11 +55,18 @@ pub fn init() {
                         let mut stream = std::io::Cursor::new(obj.script.as_slice());
 
                         let ex = crate::kismet::read_all(&mut stream);
-                        // match ex {
-                        //     Ok(ex) => tracing::info!("ex: {ex:#?}"),
-                        //     // Err(err) => tracing::error!("ex: {err}"),
-                        //     _ => {}
-                        // }
+                        match ex {
+                            // Ok(ex) => tracing::info!("ex: {ex:#?}"),
+                            Ok(ex) => {
+                                tracing::info!("ex: {}", ex.len());
+                                if ex.len() == 1708 {
+                                    let dot = crate::kismet::render::render(&ex);
+                                    std::fs::write("/tmp/buh.dot", dot).unwrap();
+                                }
+                            }
+                            Err(err) => tracing::error!("ex: {err}"),
+                            _ => {}
+                        }
 
                         for (i, field) in obj.props().enumerate() {
                             // if let Some(value) = field.get::<ue::FNameProperty>() {

@@ -1,4 +1,5 @@
 mod crash_handler;
+mod dot;
 mod events;
 mod gui;
 mod hooks;

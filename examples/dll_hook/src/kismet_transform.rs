@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::{
-    kismet::{ExprIndex, KismetPropertyPointer, KismetSwitchCase, PackageIndex},
+    kismet::{ExprIndex, Inline, KismetPropertyPointer, KismetSwitchCase, PackageIndex},
     kismet_nodes::{GenericNode, GenericPin, KismetGraph, NodeType, PinType},
     ue,
 };
@@ -122,7 +122,7 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         }
         Ex::ExDefaultVariable(_) => {}
         Ex::ExReturn(ex) => {
-            in_conns.push((inputs.len(), build_node(ctx, ex.return_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.return_expression)));
             inputs.push(pin("return", PinType::Data));
         }
         Ex::ExJump(ex) => {
@@ -132,7 +132,7 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         Ex::ExJumpIfNot(ex) => {
             out_conns.push((outputs.len(), build_node(ctx, ex.code_offset)));
             outputs.push(pin("else", PinType::Exec));
-            in_conns.push((inputs.len(), build_node(ctx, ex.boolean_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.boolean_expression)));
             inputs.push(pin("condition", PinType::Data));
         }
         //     Ex::ExAssert(ex_assert) => bail!("todo map ExAssert"),
@@ -140,25 +140,25 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         Ex::ExNothingInt32(_) => {}
         Ex::ExLet(ex) => {
             inputs.push(pin("value", PinType::Property(ex.value.0)));
-            in_conns.push((inputs.len(), build_node(ctx, ex.variable)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.variable)));
             inputs.push(pin("variable", PinType::Data));
-            in_conns.push((inputs.len(), build_node(ctx, ex.expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.expression)));
             inputs.push(pin("expression", PinType::Data));
         }
         //     Ex::ExBitFieldConst(ex_bit_field_const) => bail!("todo map ExBitFieldConst"),
         Ex::ExClassContext(ex) => {
-            in_conns.push((inputs.len(), build_node(ctx, ex.object_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.object_expression)));
             inputs.push(pin("object", PinType::Data));
             inputs.push(pin("offset", PinType::Int(ex.offset as i32)));
             inputs.push(pin("property", PinType::Property(ex.r_value_pointer.0)));
-            in_conns.push((inputs.len(), build_node(ctx, ex.context_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.context_expression)));
             inputs.push(pin("context", PinType::Data));
         }
         //     Ex::ExMetaCast(ex_meta_cast) => bail!("todo map ExMetaCast"),
         Ex::ExLetBool(ex) => {
-            in_conns.push((inputs.len(), build_node(ctx, ex.variable_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.variable_expression)));
             inputs.push(pin("variable", PinType::Data));
-            in_conns.push((inputs.len(), build_node(ctx, ex.assignment_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.assignment_expression)));
             inputs.push(pin("expression", PinType::Data));
         }
         Ex::ExEndParmValue(_) => {}
@@ -166,32 +166,32 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         Ex::ExSelf(_) => {}
         //     Ex::ExSkip(ex_skip) => bail!("todo map ExSkip"),
         Ex::ExContext(ex) => {
-            in_conns.push((inputs.len(), build_node(ctx, ex.object_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.object_expression)));
             inputs.push(pin("object", PinType::Data));
             inputs.push(pin("offset", PinType::Int(ex.offset as i32)));
             inputs.push(pin("property", PinType::Property(ex.r_value_pointer.0)));
-            in_conns.push((inputs.len(), build_node(ctx, ex.context_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.context_expression)));
             inputs.push(pin("context", PinType::Data));
         }
         Ex::ExContextFailSilent(ex) => {
-            in_conns.push((inputs.len(), build_node(ctx, ex.object_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.object_expression)));
             inputs.push(pin("object", PinType::Data));
             inputs.push(pin("offset", PinType::Int(ex.offset as i32)));
             inputs.push(pin("property", PinType::Property(ex.r_value_pointer.0)));
-            in_conns.push((inputs.len(), build_node(ctx, ex.context_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.context_expression)));
             inputs.push(pin("context", PinType::Data));
         }
         Ex::ExVirtualFunction(ex) => {
             inputs.push(pin("func", PinType::FName(ex.virtual_function_name)));
             for (i, p) in ex.parameters.iter().enumerate() {
-                in_conns.push((inputs.len(), build_node(ctx, *p)));
+                in_conns.push((inputs.len(), build_node(ctx, **p)));
                 inputs.push(pin(format!("param {i}"), PinType::Data));
             }
         }
         Ex::ExFinalFunction(ex) => {
             inputs.push(pin("func", PinType::Function(ex.stack_node.0)));
             for (i, p) in ex.parameters.iter().enumerate() {
-                in_conns.push((inputs.len(), build_node(ctx, *p)));
+                in_conns.push((inputs.len(), build_node(ctx, **p)));
                 inputs.push(pin(format!("param {i}"), PinType::Data));
             }
         }
@@ -226,21 +226,21 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
                     localized_key,
                     localized_namespace,
                 } => {
-                    in_conns.push((inputs.len(), build_node(ctx, localized_source)));
+                    in_conns.push((inputs.len(), build_node(ctx, *localized_source)));
                     inputs.push(pin("source", PinType::Data));
-                    in_conns.push((inputs.len(), build_node(ctx, localized_key)));
+                    in_conns.push((inputs.len(), build_node(ctx, *localized_key)));
                     inputs.push(pin("key", PinType::Data));
-                    in_conns.push((inputs.len(), build_node(ctx, localized_namespace)));
+                    in_conns.push((inputs.len(), build_node(ctx, *localized_namespace)));
                     inputs.push(pin("namespace", PinType::Data));
                 }
                 InvariantText {
                     invariant_literal_string,
                 } => {
-                    in_conns.push((inputs.len(), build_node(ctx, invariant_literal_string)));
+                    in_conns.push((inputs.len(), build_node(ctx, *invariant_literal_string)));
                     inputs.push(pin("invariant", PinType::Data));
                 }
                 LiteralString { literal_string } => {
-                    in_conns.push((inputs.len(), build_node(ctx, literal_string)));
+                    in_conns.push((inputs.len(), build_node(ctx, *literal_string)));
                     inputs.push(pin("literal", PinType::Data));
                 }
                 StringTableEntry {
@@ -249,28 +249,26 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
                     string_table_key,
                 } => {
                     inputs.push(pin("table asset", PinType::Object(string_table_asset.0)));
-                    in_conns.push((inputs.len(), build_node(ctx, string_table_id)));
+                    in_conns.push((inputs.len(), build_node(ctx, *string_table_id)));
                     inputs.push(pin("table id", PinType::Data));
-                    in_conns.push((inputs.len(), build_node(ctx, string_table_key)));
+                    in_conns.push((inputs.len(), build_node(ctx, *string_table_key)));
                     inputs.push(pin("table key", PinType::Data));
                 }
             }
-            // in_conns.push((inputs.len(), build_node(ctx, ex.value)));
-            // inputs.push(pin("value", PinType::Data));
         }
         Ex::ExNoObject(_) => {}
         Ex::ExTransformConst(_) => {}
         Ex::ExIntConstByte(_) => {}
         Ex::ExNoInterface(_) => {}
         Ex::ExDynamicCast(ex) => {
-            in_conns.push((inputs.len(), build_node(ctx, ex.target_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.target_expression)));
             inputs.push(pin("input", PinType::Data));
         }
         Ex::ExStructConst(ex) => {
             inputs.push(pin("struct value", PinType::Object(ex.struct_value.0)));
             inputs.push(pin("struct size", PinType::Int(ex.struct_size)));
             for (i, p) in ex.value.iter().enumerate() {
-                in_conns.push((inputs.len(), build_node(ctx, *p)));
+                in_conns.push((inputs.len(), build_node(ctx, **p)));
                 inputs.push(pin(format!("member {i}"), PinType::Data));
             }
         }
@@ -278,11 +276,11 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         Ex::ExSetArray(ex) => {
             in_conns.push((
                 inputs.len(),
-                build_node(ctx, ex.assigning_property.expect("TODO old versions")),
+                build_node(ctx, *ex.assigning_property.expect("TODO old versions")),
             ));
             inputs.push(pin("property", PinType::Data));
             for (i, p) in ex.elements.iter().enumerate() {
-                in_conns.push((inputs.len(), build_node(ctx, *p)));
+                in_conns.push((inputs.len(), build_node(ctx, **p)));
                 inputs.push(pin(format!("element {i}"), PinType::Data));
             }
         }
@@ -293,7 +291,7 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         Ex::ExUInt64Const(_) => {}
         Ex::ExDoubleConst(_) => {}
         Ex::ExCast(ex) => {
-            in_conns.push((inputs.len(), build_node(ctx, ex.target)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.target)));
             inputs.push(pin("target", PinType::Data));
         }
         //     Ex::ExSetSet(ex_set_set) => bail!("todo map ExSetSet"),
@@ -310,7 +308,7 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
                 "member",
                 PinType::Property(ex.struct_member_expression.0),
             ));
-            in_conns.push((inputs.len(), build_node(ctx, ex.struct_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.struct_expression)));
             inputs.push(pin("expr", PinType::Data));
         }
         //     Ex::ExLetMulticastDelegate(ex_let_multicast_delegate) => {
@@ -320,14 +318,14 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         Ex::ExLocalVirtualFunction(ex) => {
             inputs.push(pin("func", PinType::FName(ex.virtual_function_name)));
             for (i, p) in ex.parameters.iter().enumerate() {
-                in_conns.push((inputs.len(), build_node(ctx, *p)));
+                in_conns.push((inputs.len(), build_node(ctx, **p)));
                 inputs.push(pin(format!("param {i}"), PinType::Data));
             }
         }
         Ex::ExLocalFinalFunction(ex) => {
             inputs.push(pin("func", PinType::Function(ex.stack_node.0)));
             for (i, p) in ex.parameters.iter().enumerate() {
-                in_conns.push((inputs.len(), build_node(ctx, *p)));
+                in_conns.push((inputs.len(), build_node(ctx, **p)));
                 inputs.push(pin(format!("param {i}"), PinType::Data));
             }
         }
@@ -342,11 +340,11 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         }
         Ex::ExPopExecutionFlow(_) => {}
         Ex::ExComputedJump(ex) => {
-            in_conns.push((inputs.len(), build_node(ctx, ex.code_offset_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.code_offset_expression)));
             inputs.push(pin("offset", PinType::Data));
         }
         Ex::ExPopExecutionFlowIfNot(ex) => {
-            in_conns.push((inputs.len(), build_node(ctx, ex.boolean_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.boolean_expression)));
             inputs.push(pin("condition", PinType::Data));
         }
         //     Ex::ExBreakpoint(ex_breakpoint) => bail!("todo map ExBreakpoint"),
@@ -371,9 +369,9 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         //     }
         //     Ex::ExTracepoint(ex_tracepoint) => bail!("todo map ExTracepoint"),
         Ex::ExLetObj(ex) => {
-            in_conns.push((inputs.len(), build_node(ctx, ex.variable_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.variable_expression)));
             inputs.push(pin("variable", PinType::Data));
-            in_conns.push((inputs.len(), build_node(ctx, ex.assignment_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.assignment_expression)));
             inputs.push(pin("expression", PinType::Data));
         }
         //     Ex::ExLetWeakObjPtr(ex_let_weak_obj_ptr) => bail!("todo map ExLetWeakObjPtr"),
@@ -384,7 +382,7 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         Ex::ExCallMulticastDelegate(ex) => {
             inputs.push(pin("func", PinType::Function(ex.stack_node.0)));
             for (i, p) in ex.parameters.iter().enumerate() {
-                in_conns.push((inputs.len(), build_node(ctx, *p)));
+                in_conns.push((inputs.len(), build_node(ctx, **p)));
                 inputs.push(pin(format!("param {i}"), PinType::Data));
             }
         }
@@ -393,7 +391,7 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
                 "property",
                 PinType::Property(ex.destination_property.0),
             ));
-            in_conns.push((inputs.len(), build_node(ctx, ex.assignment_expression)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.assignment_expression)));
             inputs.push(pin("value", PinType::Data));
         }
         //     Ex::ExArrayConst(ex_array_const) => bail!("todo map ExArrayConst"),
@@ -402,19 +400,19 @@ fn build_node(ctx: &mut Ctx, index: ExprIndex) -> NodeId {
         Ex::ExCallMath(ex) => {
             inputs.push(pin("func", PinType::Function(ex.stack_node.0)));
             for (i, p) in ex.parameters.iter().enumerate() {
-                in_conns.push((inputs.len(), build_node(ctx, *p)));
+                in_conns.push((inputs.len(), build_node(ctx, **p)));
                 inputs.push(pin(format!("param {i}"), PinType::Data));
             }
         }
         Ex::ExSwitchValue(ex) => {
-            in_conns.push((inputs.len(), build_node(ctx, ex.index_term)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.index_term)));
             inputs.push(pin("index", PinType::Data));
-            in_conns.push((inputs.len(), build_node(ctx, ex.default_term)));
+            in_conns.push((inputs.len(), build_node(ctx, *ex.default_term)));
             inputs.push(pin("default value", PinType::Data));
             for (i, case) in ex.cases.iter().enumerate() {
-                in_conns.push((inputs.len(), build_node(ctx, case.case_index_value_term)));
+                in_conns.push((inputs.len(), build_node(ctx, *case.case_index_value_term)));
                 inputs.push(pin(format!("case {i} index"), PinType::Data));
-                in_conns.push((inputs.len(), build_node(ctx, case.case_term)));
+                in_conns.push((inputs.len(), build_node(ctx, *case.case_term)));
                 inputs.push(pin(format!("case {i} value"), PinType::Data));
             }
         }
@@ -488,6 +486,7 @@ pub fn compile(
         queue: VecDeque<NodeId>,
         prev_map: HashMap<InPinId, OutPinId>,
         next_map: HashMap<OutPinId, InPinId>,
+        fixups: HashMap<NodeId, Vec<usize>>,
     }
 
     let mut c = Ctx {
@@ -496,9 +495,14 @@ pub fn compile(
         queue: Default::default(),
         prev_map,
         next_map,
+        fixups: Default::default(),
     };
 
     impl Ctx<'_> {
+        fn mark_fixup(&mut self, to_node: NodeId) {
+            let current = self.exs.len() - 1;
+            self.fixups.entry(to_node).or_default().push(current);
+        }
         fn get_out_pin(&self, node: NodeId, pin_name: &str) -> Result<(usize, &GenericPin)> {
             self.snarl[node]
                 .outputs
@@ -598,26 +602,41 @@ pub fn compile(
             .into(),
             Op::ExDefaultVariable => bail!("gen ExDefaultVariable"),
             Op::ExReturn => ExReturn {
-                return_expression: build_ex(c, c.get_prev(id, "return")?)?,
+                return_expression: build_ex(c, c.get_prev(id, "return")?)?.into(),
             }
             .into(),
-            Op::ExJump => bail!("gen ExJump"),
-            Op::ExJumpIfNot => bail!("gen ExJumpIfNot"),
+            Op::ExJump => {
+                let next = c.get_next(id, "then")?;
+                c.mark_fixup(next);
+                ExJump {
+                    code_offset: ExprIndex(0),
+                }
+                .into()
+            }
+            Op::ExJumpIfNot => {
+                let next = c.get_next(id, "else")?;
+                c.mark_fixup(next);
+                ExJumpIfNot {
+                    code_offset: ExprIndex(0),
+                    boolean_expression: build_ex(c, c.get_prev(id, "condition")?)?.into(),
+                }
+                .into()
+            }
             Op::ExAssert => bail!("gen ExAssert"),
             Op::ExNothing => ExNothing {}.into(),
             Op::ExNothingInt32 => bail!("gen ExNothingInt32"),
             Op::ExLet => ExLet {
                 value: c.pin_prop(id, "value")?,
-                variable: build_ex(c, c.get_prev(id, "variable")?)?,
-                expression: build_ex(c, c.get_prev(id, "expression")?)?,
+                variable: build_ex(c, c.get_prev(id, "variable")?)?.into(),
+                expression: build_ex(c, c.get_prev(id, "expression")?)?.into(),
             }
             .into(),
             Op::ExBitFieldConst => bail!("gen ExBitFieldConst"),
             Op::ExClassContext => bail!("gen ExClassContext"),
             Op::ExMetaCast => bail!("gen ExMetaCast"),
             Op::ExLetBool => ExLetBool {
-                variable_expression: build_ex(c, c.get_prev(id, "variable")?)?,
-                assignment_expression: build_ex(c, c.get_prev(id, "expression")?)?,
+                variable_expression: build_ex(c, c.get_prev(id, "variable")?)?.into(),
+                assignment_expression: build_ex(c, c.get_prev(id, "expression")?)?.into(),
             }
             .into(),
             Op::ExEndParmValue => bail!("gen ExEndParmValue"),
@@ -625,10 +644,10 @@ pub fn compile(
             Op::ExSelf => bail!("gen ExSelf"),
             Op::ExSkip => bail!("gen ExSkip"),
             Op::ExContext => ExContext {
-                object_expression: build_ex(c, c.get_prev(id, "object")?)?,
+                object_expression: build_ex(c, c.get_prev(id, "object")?)?.into(),
                 offset: c.pin_int(id, "offset")? as u32,
                 r_value_pointer: c.pin_prop(id, "property")?,
-                context_expression: build_ex(c, c.get_prev(id, "context")?)?,
+                context_expression: build_ex(c, c.get_prev(id, "context")?)?.into(),
             }
             .into(),
             Op::ExContextFailSilent => bail!("gen ExContextFailSilent"),
@@ -638,7 +657,7 @@ pub fn compile(
                     .inputs
                     .iter()
                     .filter_map(|p| p.name.starts_with("param ").then_some(&p.name))
-                    .map(|n| c.get_prev(id, n).and_then(|n| build_ex(c, n)))
+                    .map(|n| c.get_prev(id, n).and_then(|n| build_ex(c, n).map(Inline)))
                     .collect::<Result<Vec<_>>>()?,
             }
             .into(),
@@ -648,7 +667,7 @@ pub fn compile(
                     .inputs
                     .iter()
                     .filter_map(|p| p.name.starts_with("param ").then_some(&p.name))
-                    .map(|n| c.get_prev(id, n).and_then(|n| build_ex(c, n)))
+                    .map(|n| c.get_prev(id, n).and_then(|n| build_ex(c, n).map(Inline)))
                     .collect::<Result<Vec<_>>>()?,
             }
             .into(),
@@ -689,7 +708,7 @@ pub fn compile(
                     .inputs
                     .iter()
                     .filter_map(|p| p.name.starts_with("member ").then_some(&p.name))
-                    .map(|n| c.get_prev(id, n).and_then(|n| build_ex(c, n)))
+                    .map(|n| c.get_prev(id, n).and_then(|n| build_ex(c, n).map(Inline)))
                     .collect::<Result<Vec<_>>>()?,
             }
             .into(),
@@ -713,7 +732,7 @@ pub fn compile(
             Op::ExVector3fConst => bail!("gen ExVector3fConst"),
             Op::ExStructMemberContext => ExStructMemberContext {
                 struct_member_expression: c.pin_prop(id, "member")?,
-                struct_expression: build_ex(c, c.get_prev(id, "expr")?)?,
+                struct_expression: build_ex(c, c.get_prev(id, "expr")?)?.into(),
             }
             .into(),
             Op::ExLetMulticastDelegate => bail!("gen ExLetMulticastDelegate"),
@@ -724,7 +743,7 @@ pub fn compile(
                     .inputs
                     .iter()
                     .filter_map(|p| p.name.starts_with("param ").then_some(&p.name))
-                    .map(|n| c.get_prev(id, n).and_then(|n| build_ex(c, n)))
+                    .map(|n| c.get_prev(id, n).and_then(|n| build_ex(c, n).map(Inline)))
                     .collect::<Result<Vec<_>>>()?,
             }
             .into(),
@@ -765,13 +784,13 @@ pub fn compile(
                     .inputs
                     .iter()
                     .filter_map(|p| p.name.starts_with("param ").then_some(&p.name))
-                    .map(|n| c.get_prev(id, n).and_then(|n| build_ex(c, n)))
+                    .map(|n| c.get_prev(id, n).and_then(|n| build_ex(c, n).map(Inline)))
                     .collect::<Result<Vec<_>>>()?,
             }
             .into(),
             Op::ExSwitchValue => ExSwitchValue {
                 end_goto_offset: 0, // filled in later
-                index_term: build_ex(c, c.get_prev(id, "index")?)?,
+                index_term: build_ex(c, c.get_prev(id, "index")?)?.into(),
                 cases: node
                     .inputs
                     .iter()
@@ -782,15 +801,17 @@ pub fn compile(
                         Ok(KismetSwitchCase {
                             case_index_value_term: c
                                 .get_prev(id, chunk.next().unwrap())
-                                .and_then(|n| build_ex(c, n))?,
+                                .and_then(|n| build_ex(c, n))?
+                                .into(),
                             code_skip_size_type: 0, // filled in later
                             case_term: c
                                 .get_prev(id, chunk.next().unwrap())
-                                .and_then(|n| build_ex(c, n))?,
+                                .and_then(|n| build_ex(c, n))?
+                                .into(),
                         })
                     })
                     .collect::<Result<Vec<_>>>()?,
-                default_term: build_ex(c, c.get_prev(id, "default value")?)?,
+                default_term: build_ex(c, c.get_prev(id, "default value")?)?.into(),
             }
             .into(),
             Op::ExInstrumentationEvent => bail!("gen ExInstrumentationEvent"),
@@ -816,12 +837,8 @@ pub fn compile(
         build_ex(&mut c, next)?;
     }
 
-    // let exec_map: HashMap<NodeId> = self
-    //     .connections
-    //     .iter()
-    //     .filter(|c| c.connection_type == ConnectionType::Exec)
-    //     .map(|c| c.from_node)
-    //     .collect();
+    // TODO cook jump fixups
+    // TODO also handle cases where next instruction has already been serialized
 
     Ok(c.exs)
 }
@@ -1279,35 +1296,6 @@ mod layout {
             layout.compute_layout();
 
             layout.print_grid("shifted");
-
-            // assert_eq!(*layout.grid_inv.get(&a).unwrap(), cell(0, 0));
-            // assert_eq!(*layout.grid_inv.get(&b).unwrap(), cell(0, 2));
-            // assert_eq!(*layout.grid_inv.get(&c).unwrap(), cell(0, 3));
-
-            // layout.connections.push(Connection {
-            //     connection_type: ConnectionType::Data,
-            //     from_node: NodeId(2),
-            //     from_output: 0,
-            //     to_node: NodeId(1),
-            //     to_input: 0,
-            // });
-
-            // let final_distance =
-            //     (layout.nodes[&2].grid_cell.col - layout.nodes[&1].grid_cell.col).abs();
-            // assert!(
-            //     final_distance > 1,
-            //     "Nodes should be further apart after data layout"
-            // );
-        }
-
-        #[test]
-        fn test_graph_json() {
-            let mut layout: GraphLayout =
-                serde_json::from_slice(include_bytes!("../graph.json")).unwrap();
-
-            layout.compute_layout();
-
-            layout.print_grid("json");
 
             // assert_eq!(*layout.grid_inv.get(&a).unwrap(), cell(0, 0));
             // assert_eq!(*layout.grid_inv.get(&b).unwrap(), cell(0, 2));
