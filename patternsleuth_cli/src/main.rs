@@ -60,7 +60,11 @@ struct CommandScan {
 
     /// A game process ID to attach to and scan
     #[arg(long)]
-    pid: Option<i32>,
+    pid: Vec<i32>,
+
+    /// A path to a game's exe
+    #[arg(long)]
+    path: Vec<PathBuf>,
 
     /// A resolver to scan for (can be specified multiple times)
     #[arg(short, long, value_parser(resolver_parser()))]
@@ -309,9 +313,20 @@ fn scan(command: CommandScan) -> Result<()> {
 
     let mut games_vec = vec![];
 
-    if let Some(pid) = command.pid {
+    for pid in command.pid {
         games_vec.push(GameEntry::Process(GameProcessEntry { pid }));
-    } else {
+    }
+    for path in command.path {
+        games_vec.push(GameEntry::File(GameFileEntry {
+            name: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+            exe_path: path,
+        }));
+    }
+    if games_vec.is_empty() {
         games_vec.extend(get_games(command.game)?.into_iter().map(GameEntry::File));
     }
 
