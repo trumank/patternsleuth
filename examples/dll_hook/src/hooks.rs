@@ -1,4 +1,9 @@
-use std::ffi::c_void;
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    ffi::c_void,
+    sync::{LazyLock, Mutex, RwLock},
+};
 
 use anyhow::Result;
 
@@ -9,6 +14,7 @@ use crate::{
 };
 
 retour::static_detour! {
+    static HookWinMain: unsafe extern "system" fn(*mut (), *mut (), *mut (), i32, *const ()) -> i32;
     static HookUGameEngineTick: unsafe extern "system" fn(*mut c_void, f32, u8);
     static HookFEngineLoopInit: unsafe extern "system" fn(*mut c_void);
     static HookAllocateUObject: unsafe extern "system" fn(*mut c_void, *const ue::UObjectBase, bool);
@@ -29,6 +35,12 @@ pub unsafe fn initialize() -> Result<()> {
     assert_main_thread!();
 
     GUOBJECT_LOCK = Some(globals().guobject_array());
+
+    HookWinMain.initialize(
+        std::mem::transmute(globals().resolution.main.0),
+        detour_main,
+    )?;
+    HookWinMain.enable()?;
 
     HookFEngineLoopInit.initialize(
         std::mem::transmute(globals().resolution.engine_loop_init.0),
@@ -217,4 +229,98 @@ unsafe extern "system" fn exec_regex(
     std::mem::forget(matches);
 
     stack.code = stack.code.add(1);
+}
+
+fn detour_main(
+    h_instance: *mut (),
+    h_prev_instance: *mut (),
+    lp_cmd_line: *mut (),
+    n_cmd_show: i32,
+    cmd_line: *const (),
+) -> i32 {
+    let ret = unsafe {
+        static mut ERM: bool = true;
+        tracing::warn!("main hooked");
+        if ERM {
+            hook_gnatives(globals().gnatives_mut());
+            ERM = false
+        }
+
+        HookWinMain.call(
+            h_instance,
+            h_prev_instance,
+            lp_cmd_line,
+            n_cmd_show,
+            cmd_line,
+        )
+    };
+
+    ret
+}
+
+static KISMET_STATE: LazyLock<Mutex<KismetState>> = LazyLock::new(|| Default::default());
+
+struct KismetState {
+    gnatives_old: ue::GNatives,
+    function_name_cache: HashMap<usize, String>,
+}
+impl Default for KismetState {
+    fn default() -> Self {
+        Self {
+            gnatives_old: [None; 0xff],
+            function_name_cache: Default::default(),
+        }
+    }
+}
+
+unsafe fn hook_exec_inst(
+    ctx: *mut ue::UObject,
+    frame: &mut ue::kismet::FFrame,
+    ret: *mut c_void,
+    expr: usize,
+) {
+    // assert_main_thread!();
+
+    let mut state = KISMET_STATE.lock().unwrap();
+    let expr = state.gnatives_old[expr].unwrap();
+
+    let frame_info = {
+        let func = &*(frame.node as *const ue::UFunction);
+
+        let index = (frame.code as usize) - (func.ustruct.script.as_ptr() as usize) - 1;
+
+        let func_key = frame.node as usize;
+        let name = state
+            .function_name_cache
+            .entry(func_key)
+            .or_insert_with(|| func.path());
+
+        tracing::warn!("{:?}", (index, &name));
+        // Frame {
+        //     func: frame.node as usize,
+        //     index,
+        // }
+    };
+
+    drop(state);
+
+    // KISMET_STACK.push(frame_info);
+    (expr)(ctx, frame, ret);
+    // KISMET_STACK.pop();
+}
+
+unsafe extern "system" fn hook_exec<const N: usize>(
+    ctx: *mut ue::UObject,
+    frame: &mut ue::kismet::FFrame,
+    ret: *mut c_void,
+) {
+    hook_exec_inst(ctx, frame, ret, N);
+}
+
+unsafe fn hook_gnatives(gnatives: &mut ue::GNatives) {
+    let mut state = KISMET_STATE.lock().unwrap();
+    state.gnatives_old.copy_from_slice(gnatives);
+    seq_macro::seq!(N in 0..255 {
+        gnatives[N] = Some(hook_exec::<N>);
+    });
 }

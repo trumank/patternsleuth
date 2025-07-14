@@ -15,6 +15,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use patternsleuth::resolvers::impl_try_collector;
 use patternsleuth::resolvers::unreal::blueprint_library::UFunctionBind;
+use patternsleuth::resolvers::unreal::game_loop::Main;
+use patternsleuth::resolvers::unreal::kismet::GNatives;
 use patternsleuth::resolvers::unreal::{
     fname::FNameToString,
     game_loop::{FEngineLoopInit, FEngineLoopTick},
@@ -86,6 +88,8 @@ impl_try_collector! {
         // fframe_step: FFrameStep,
         // fframe_step_explicit_property: FFrameStepExplicitProperty,
         ufunction_bind: UFunctionBind,
+        gnatives: GNatives,
+        main: Main,
     }
 }
 
@@ -115,6 +119,12 @@ impl Globals {
     }
     pub unsafe fn guobject_array_unchecked(&self) -> &ue::FUObjectArray {
         *self.guobject_array.data_ptr()
+    }
+    pub fn gnatives(&self) -> &'static ue::GNatives {
+        unsafe { std::mem::transmute(self.resolution.gnatives.0) }
+    }
+    pub unsafe fn gnatives_mut(&self) -> &'static mut ue::GNatives {
+        unsafe { std::mem::transmute(self.resolution.gnatives.0) }
     }
 }
 

@@ -25,6 +25,7 @@ parking_lot = "0.12.1"
 patternsleuth = { path = "../../patternsleuth", features = ["process-internal", "image-pe"] }
 regex.workspace = true
 retour = { git = "https://github.com/Hpmason/retour-rs", features = ["static-detour"] }
+seq-macro = "0.3.6"
 serde = { workspace = true, features = ["derive"] }
 serde_json = "1.0.140"
 strum.workspace = true

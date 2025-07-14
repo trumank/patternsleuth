@@ -1,5 +1,5 @@
 use std::{
-    cell::UnsafeCell,
+    cell::{Cell, UnsafeCell},
     convert::Infallible,
     ffi::c_void,
     fmt::Display,
@@ -28,6 +28,9 @@ macro_rules! impl_deref {
     };
 }
 
+pub type GNatives = [Option<FNativesFuncPtr>; 0xff];
+pub type FNativesFuncPtr =
+    unsafe extern "system" fn(*mut UObject, stack: &mut kismet::FFrame, result: *mut c_void);
 pub type FnFFrameStep =
     unsafe extern "system" fn(stack: &mut kismet::FFrame, *mut UObject, result: *mut c_void);
 pub type FnFFrameStepExplicitProperty = unsafe extern "system" fn(
@@ -1090,6 +1093,9 @@ impl<T> TArray<T> {
         for o in other {
             self.push(*o);
         }
+    }
+    pub fn as_ptr(&self) -> *const T {
+        self.data
     }
 }
 
