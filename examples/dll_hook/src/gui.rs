@@ -108,11 +108,13 @@ fn run(channels: (Sender<GuiFn>, Receiver<GuiRet>)) -> Result<(), eframe::Error>
         viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
         ..Default::default()
     };
-    eframe::run_native(
+    let res = eframe::run_native(
         "My egui App",
         options,
         Box::new(|_cc| Ok(Box::new(MyApp::new(channels)))),
-    )
+    );
+    tracing::info!("{res:#?}");
+    res
 }
 
 #[derive(Debug, Clone)]

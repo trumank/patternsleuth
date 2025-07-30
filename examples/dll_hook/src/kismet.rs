@@ -412,10 +412,12 @@ pub enum ECastToken {
     InterfaceToBool = 0x02,
     DoubleToFloat = 0x03,
     FloatToDouble = 0x04,
+    Other(u8),
 }
 impl ECastToken {
     fn try_from_repr(repr: u8) -> Result<Self> {
-        Self::from_repr(repr).ok_or_else(|| anyhow!("invalid ECastToken: {repr}"))
+        // Self::from_repr(repr).ok_or_else(|| anyhow!("invalid ECastToken: {repr}"))
+        Ok(Self::from_repr(repr).unwrap_or(Self::Other(repr)))
     }
 }
 

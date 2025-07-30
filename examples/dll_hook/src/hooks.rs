@@ -289,13 +289,19 @@ unsafe fn hook_exec_inst(
 
         let index = (frame.code as usize) - (func.ustruct.script.as_ptr() as usize) - 1;
 
+        let mut graph = Default::default();
+        let mut cur = std::io::Cursor::new(func.script.as_slice());
+        cur.set_position(index as u64);
+        let expr = crate::kismet::read(&mut cur, &mut graph).unwrap();
+        let expr = &graph[&expr];
+
         let func_key = frame.node as usize;
         let name = state
             .function_name_cache
             .entry(func_key)
             .or_insert_with(|| func.path());
 
-        tracing::warn!("{:?}", (index, &name));
+        // tracing::warn!("{:?}", (index, &name, expr));
         // Frame {
         //     func: frame.node as usize,
         //     index,

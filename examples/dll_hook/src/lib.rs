@@ -144,10 +144,47 @@ fn dump_backtrace() {
         "Dumping backtrace on thread {:?}:",
         std::thread::current().id()
     );
-    let backtrace = backtrace::Backtrace::new();
-    for (index, frame) in backtrace.frames().iter().enumerate() {
-        tracing::info!("  {index}: {:?} {:?}", frame.ip(), frame.symbols());
-    }
+    // let backtrace = backtrace::Backtrace::new();
+    // tracing::error!("{backtrace:?}");
+    // for (index, frame) in backtrace.frames().iter().enumerate() {
+    //     let mut symbols = frame.symbols().into_iter();
+    //     tracing::info!(
+    //         "  {index}: {:?} {}",
+    //         frame.ip(),
+    //         symbols.next().map(format).unwrap_or_default()
+    //     );
+    //     for rest in symbols {
+    //         tracing::info!("          {}", format(rest));
+    //     }
+    // }
+
+    // fn format(sym: &backtrace::BacktraceSymbol) -> String {
+    //     format!(
+    //         "{} [{}]",
+    //         sym.name()
+    //             .map(|s| s.to_string())
+    //             .unwrap_or_else(|| "unknown".into()),
+    //         sym.filename()
+    //             .map(|p| p.to_string_lossy())
+    //             .unwrap_or("unknown".into())
+    //     )
+    // }
+    backtrace::trace(|frame| {
+        let ip = frame.ip();
+        let symbol_address = frame.symbol_address();
+
+        // Resolve this instruction pointer to a symbol name
+        let mut missing = true;
+        backtrace::resolve_frame(frame, |symbol| {
+            missing = false;
+            tracing::info!("  {:?} {:?}", frame.ip(), symbol);
+        });
+        if missing {
+            tracing::info!("  {:?}", frame.ip());
+        }
+
+        true // keep going to the next frame
+    });
 }
 
 unsafe fn patch(bin_dir: PathBuf) -> Result<()> {

@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use futures::future::join_all;
+use futures::{future::join_all, join};
 use iced_x86::{Decoder, DecoderOptions, Instruction};
 use patternsleuth_scanner::Pattern;
 
@@ -40,28 +40,47 @@ impl_resolver_singleton!(all, UObjectSkipFunction, |ctx| async {
 pub struct GNatives(pub usize);
 impl_resolver_singleton!(collect, GNatives);
 impl_resolver_singleton!(PEImage, GNatives, |ctx| async {
-    use iced_x86::{Code, Register};
+    let asm = async {
+        use iced_x86::{Code, Register};
 
-    let skip_function = ctx.resolve(UObjectSkipFunction::resolver()).await?;
-    let bytes = ctx.image().memory.range_from(skip_function.0..)?;
+        let skip_function = ctx.resolve(UObjectSkipFunction::resolver()).await?;
+        let bytes = ctx.image().memory.range_from(skip_function.0..)?;
 
-    let mut decoder = Decoder::with_ip(
-        64,
-        &bytes[0..bytes.len().min(500)],
-        skip_function.0 as u64,
-        DecoderOptions::NONE,
-    );
+        let mut decoder = Decoder::with_ip(
+            64,
+            &bytes[0..bytes.len().min(500)],
+            skip_function.0 as u64,
+            DecoderOptions::NONE,
+        );
 
-    // TODO recursive decode candidate
-    let mut instruction = Instruction::default();
-    while decoder.can_decode() {
-        decoder.decode_out(&mut instruction);
-        if instruction.code() == Code::Lea_r64_m && instruction.memory_base() == Register::RIP {
-            return Ok(GNatives(instruction.memory_displacement64() as usize));
+        // TODO recursive decode candidate
+        let mut instruction = Instruction::default();
+        while decoder.can_decode() {
+            decoder.decode_out(&mut instruction);
+            if instruction.code() == Code::Lea_r64_m && instruction.memory_base() == Register::RIP {
+                return Ok(instruction.memory_displacement64() as usize);
+            }
         }
-    }
 
-    bail_out!("failed to not find LEA instruction");
+        bail_out!("failed to not find LEA instruction");
+    };
+
+    let pattern = async {
+        let patterns = [
+            "80 3d ?? ?? ?? ?? 00 48 8d 15 ?? ?? ?? ?? 75 ?? c6 05 ?? ?? ?? ?? 01 48 8d 05 | ?? ?? ?? ?? b9"
+        ];
+        let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+        Ok::<usize, crate::resolvers::ResolveError>(try_ensure_one(
+            res.iter()
+                .flatten()
+                .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) }),
+        )?)
+    };
+
+    let (asm, pattern) = join!(asm, pattern);
+
+    Ok(Self(try_ensure_one([asm, pattern])?))
 });
 
 impl_resolver_singleton!(ElfImage, GNatives, |ctx| async {
