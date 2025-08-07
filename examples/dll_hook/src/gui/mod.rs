@@ -1,6 +1,5 @@
 use crossbeam_channel::{Receiver, Sender};
 use egui_wgpu_win32::{Window, WindowConfig};
-use regex::Regex;
 use std::{cell::RefCell, collections::HashMap};
 
 use egui::{self, Color32};
@@ -13,6 +12,9 @@ use crate::{
 };
 
 use super::*;
+
+mod search;
+use search::{ObjectCache, ObjectFilter};
 
 thread_local! {
     static STATE: RefCell<(InnerState, Option<Window>)> = Default::default();
@@ -97,61 +99,6 @@ pub fn init() {
     });
 }
 
-#[derive(Debug, Clone)]
-struct ObjectCache {
-    name: String,
-    script_status: Option<(usize, Result<String, String>)>,
-}
-impl ObjectCache {
-    fn new(object: &ue::UObjectBase) -> Self {
-        let script_status = if let Some(func) = object.cast::<ue::UFunction>() {
-            let mut stream = std::io::Cursor::new(func.script.as_slice());
-            let ex = crate::kismet::read_all(&mut stream);
-            Some((
-                func.script.len(),
-                ex.map(|ex| format!("{}", ex.len()))
-                    .map_err(|e| e.to_string()),
-            ))
-        } else {
-            None
-        };
-
-        Self {
-            name: object.path(),
-            script_status,
-        }
-    }
-}
-
-struct ObjectFilter {
-    name_search: String,
-    re: Option<Regex>,
-}
-impl ObjectFilter {
-    fn new(search: String) -> Self {
-        let mut new = Self {
-            name_search: String::new(),
-            re: None,
-        };
-        new.set_search(search);
-        new
-    }
-    fn get_search(&self) -> &str {
-        &self.name_search
-    }
-    fn set_search(&mut self, value: String) {
-        self.name_search = value;
-        self.re = Regex::new(&self.name_search).ok()
-    }
-    fn matches(&self, object: &ObjectCache) -> bool {
-        if let Some(re) = &self.re {
-            re.is_match(&object.name)
-        } else {
-            true
-        }
-    }
-}
-
 struct InnerState {
     buh: i32,
     filter: ObjectFilter,
@@ -181,6 +128,20 @@ impl InnerState {
     }
 }
 
+fn update_filtered(state: &mut InnerState) {
+    state.filtered = state
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if state.filter.matches(obj) {
+                Some((*id, obj.clone()))
+            } else {
+                None
+            }
+        })
+        .collect::<IndexMap<_, _>>();
+}
+
 fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
     assert_main_thread!();
 
@@ -195,18 +156,51 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
             let res = ui.text_edit_singleline(&mut tmp).labelled_by(name_label.id);
             if res.changed() {
                 state.filter.set_search(tmp.to_string());
+                update_filtered(state);
+            }
+        });
 
-                state.filtered = state
-                    .objects
-                    .iter()
-                    .filter_map(|(id, obj)| {
-                        if state.filter.matches(obj) {
-                            Some((*id, obj.clone()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<IndexMap<_, _>>();
+        ui.horizontal(|ui| {
+            ui.label("Filter options:");
+            let mut flags_changed = false;
+
+            flags_changed |= ui
+                .checkbox(
+                    &mut state.filter.flags.include_class_default_objects,
+                    "CDOs",
+                )
+                .changed();
+            flags_changed |= ui
+                .checkbox(&mut state.filter.flags.include_instances, "Instances")
+                .changed();
+            flags_changed |= ui
+                .checkbox(
+                    &mut state.filter.flags.search_parent_classes,
+                    "Search parent classes",
+                )
+                .changed();
+
+            if flags_changed {
+                update_filtered(state);
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Class filter:");
+            let mut class_filter = state
+                .filter
+                .flags
+                .class_name_filter
+                .clone()
+                .unwrap_or_default();
+            let res = ui.text_edit_singleline(&mut class_filter);
+            if res.changed() {
+                state.filter.flags.class_name_filter = if class_filter.is_empty() {
+                    None
+                } else {
+                    Some(class_filter)
+                };
+                update_filtered(state);
             }
         });
 
