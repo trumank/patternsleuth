@@ -1,52 +1,63 @@
 use super::*;
-use std::ffi::c_void;
+use std::{ffi::c_void, marker::PhantomData};
 
-#[derive(Debug)]
 #[repr(C)]
-pub struct TArray<T> {
-    data: *const T,
-    num: i32,
-    max: i32,
+pub struct TArray<T, Allocator = TSizedHeapAllocator32>
+where
+    Allocator: self::Allocator,
+{
+    pub allocator_instance: Allocator::ForAnyElementType<T>,
+    pub num: i32,
+    pub max: i32,
 }
-impl<T> Drop for TArray<T> {
-    fn drop(&mut self) {
-        unsafe {
-            std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(
-                self.data.cast_mut(),
-                self.num as usize,
-            ));
-            gmalloc().free(self.data as *mut c_void);
-        }
+impl<T, A> std::fmt::Debug for TArray<T, A>
+where
+    A: self::Allocator,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // TODO elements
+        f.debug_struct("TArray")
+            .field("num", &self.num)
+            .field("max", &self.max)
+            .finish()
     }
 }
-impl<T> Default for TArray<T> {
+impl<T, A> Drop for TArray<T, A>
+where
+    A: self::Allocator,
+{
+    fn drop(&mut self) {
+        self.clear();
+        self.allocator_instance.deallocate();
+    }
+}
+impl<T, A> Default for TArray<T, A>
+where
+    A: self::Allocator,
+{
     fn default() -> Self {
         Self {
-            data: std::ptr::null(),
+            allocator_instance: A::ForAnyElementType::default(),
             num: 0,
             max: 0,
         }
     }
 }
-impl<T> TArray<T> {
+impl<T, A> TArray<T, A>
+where
+    A: self::Allocator,
+{
     pub fn new() -> Self {
-        Self {
-            data: std::ptr::null(),
-            num: 0,
-            max: 0,
-        }
+        Self::default()
     }
+
     pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            data: unsafe {
-                gmalloc().malloc(
-                    capacity * std::mem::size_of::<T>(),
-                    std::mem::align_of::<T>() as u32,
-                ) as *const T
-            },
-            num: 0,
-            max: capacity as i32,
+        let mut array = Self::new();
+        if capacity > 0 {
+            array.allocator_instance.allocate(capacity);
+            array.max = capacity as i32;
         }
+        array
     }
     pub fn len(&self) -> usize {
         self.num as usize
@@ -61,40 +72,53 @@ impl<T> TArray<T> {
         if self.num == 0 {
             &[]
         } else {
-            unsafe { std::slice::from_raw_parts(self.data, self.num as usize) }
+            let ptr = self.allocator_instance.data_ptr();
+            if ptr.is_null() {
+                &[]
+            } else {
+                unsafe { std::slice::from_raw_parts(ptr, self.num as usize) }
+            }
         }
     }
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         if self.num == 0 {
             &mut []
         } else {
-            unsafe { std::slice::from_raw_parts_mut(self.data as *mut _, self.num as usize) }
+            let ptr = self.allocator_instance.data_ptr_mut();
+            if ptr.is_null() {
+                &mut []
+            } else {
+                unsafe { std::slice::from_raw_parts_mut(ptr, self.num as usize) }
+            }
         }
     }
     pub fn clear(&mut self) {
-        let elems: *mut [T] = self.as_mut_slice();
-
-        unsafe {
+        if self.num > 0 {
+            let ptr = self.allocator_instance.data_ptr_mut();
+            if !ptr.is_null() {
+                unsafe {
+                    std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(
+                        ptr,
+                        self.num as usize,
+                    ));
+                }
+            }
             self.num = 0;
-            std::ptr::drop_in_place(elems);
         }
     }
     pub fn push(&mut self, new_value: T) {
         if self.num >= self.max {
-            self.max = u32::next_power_of_two((self.max + 1) as u32) as i32;
-            let new = unsafe {
-                gmalloc().realloc(
-                    self.data as *mut c_void,
-                    self.max as usize * std::mem::size_of::<T>(),
-                    std::mem::align_of::<T>() as u32,
-                ) as *const T
-            };
-            self.data = new;
+            let new_capacity = u32::next_power_of_two((self.max + 1) as u32) as usize;
+            self.allocator_instance.reallocate(new_capacity);
+            self.max = new_capacity as i32;
         }
-        unsafe {
-            std::ptr::write(self.data.add(self.num as usize).cast_mut(), new_value);
+        let ptr = self.allocator_instance.data_ptr_mut();
+        if !ptr.is_null() {
+            unsafe {
+                std::ptr::write(ptr.add(self.num as usize), new_value);
+            }
+            self.num += 1;
         }
-        self.num += 1;
     }
     pub fn extend(&mut self, other: &[T])
     where
@@ -105,19 +129,18 @@ impl<T> TArray<T> {
         }
     }
     pub fn as_ptr(&self) -> *const T {
-        self.data
+        self.allocator_instance.data_ptr()
     }
 }
 
-impl<T> From<&[T]> for TArray<T>
+impl<T, A> From<&[T]> for TArray<T, A>
 where
     T: Copy,
+    A: self::Allocator,
 {
     fn from(value: &[T]) -> Self {
         let mut new = Self::with_capacity(value.len());
-        // TODO this is probably unsound
-        new.num = value.len() as i32;
-        new.as_mut_slice().copy_from_slice(value);
+        new.extend(value);
         new
     }
 }
@@ -211,4 +234,80 @@ mod tests {
         assert_eq!(array.len(), 6);
         assert_eq!(array.as_slice(), &[1, 2, 3, 4, 5, 6]);
     }
+
+    #[test]
+    fn test_tarray_with_inline_allocator_small() {
+        setup_test_globals();
+
+        let mut array: TArray<i32, TInlineAllocator<4>> = TArray::new();
+
+        // Test operations within inline capacity
+        array.push(10);
+        array.push(20);
+        array.push(30);
+
+        assert_eq!(array.len(), 3);
+        assert_eq!(array.as_slice(), &[10, 20, 30]);
+
+        // Still within inline capacity
+        array.push(40);
+        assert_eq!(array.len(), 4);
+        assert_eq!(array.as_slice(), &[10, 20, 30, 40]);
+    }
+
+    #[test]
+    fn test_tarray_with_inline_allocator_overflow() {
+        setup_test_globals();
+
+        let mut array: TArray<u8, TInlineAllocator<2>> = TArray::new();
+
+        // Fill inline capacity
+        array.push(1);
+        array.push(2);
+        assert_eq!(array.len(), 2);
+        assert_eq!(array.as_slice(), &[1, 2]);
+
+        // This should cause transition to heap allocation
+        array.push(3);
+        array.push(4);
+        array.push(5);
+
+        assert_eq!(array.len(), 5);
+        assert_eq!(array.as_slice(), &[1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_tarray_inline_allocator_clear() {
+        setup_test_globals();
+
+        let mut array: TArray<i32, TInlineAllocator<3>> = TArray::new();
+
+        // Add some elements
+        for i in 0..5 {
+            array.push(i * 10);
+        }
+
+        assert_eq!(array.len(), 5);
+
+        array.clear();
+        assert_eq!(array.len(), 0);
+        assert!(array.is_empty());
+        assert_eq!(array.as_slice(), &[]);
+
+        // Should still work after clearing
+        array.push(100);
+        assert_eq!(array.len(), 1);
+        assert_eq!(array.as_slice(), &[100]);
+    }
+
+    // #[test]
+    // fn test_tarray_inline_allocator_from_slice() {
+    //     setup_test_globals();
+
+    //     let source = &[10, 20, 30, 40, 50];
+    //     let array: TArray<i32, TInlineAllocator<3>> = TArray::from(source);
+
+    //     assert_eq!(array.len(), 5);
+    //     assert_eq!(array.as_slice(), source);
+    // }
 }

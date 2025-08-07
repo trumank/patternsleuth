@@ -57,7 +57,9 @@ pub(crate) mod test {
 
             let old_layout = {
                 let mut allocations = self.allocations.lock().unwrap();
-                allocations.remove(&(original as usize)).unwrap()
+                allocations
+                    .remove(&(original as usize))
+                    .expect("existing alloc not found")
             };
 
             let new_ptr =

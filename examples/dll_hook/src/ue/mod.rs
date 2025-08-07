@@ -1,6 +1,8 @@
+mod allocator;
 mod array;
 mod malloc;
 
+pub use allocator::*;
 pub use array::*;
 pub use malloc::*;
 
