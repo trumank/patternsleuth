@@ -2,6 +2,7 @@ mod allocator;
 mod array;
 mod bitarray;
 mod malloc;
+mod script_array;
 mod set;
 mod sparsearray;
 
@@ -9,6 +10,7 @@ pub use allocator::*;
 pub use array::*;
 pub use bitarray::*;
 pub use malloc::*;
+pub use script_array::*;
 pub use set::*;
 pub use sparsearray::*;
 
