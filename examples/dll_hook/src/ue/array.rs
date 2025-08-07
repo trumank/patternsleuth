@@ -131,6 +131,17 @@ where
     pub fn as_ptr(&self) -> *const T {
         self.allocator_instance.data_ptr()
     }
+
+    pub fn reserve_capacity(&mut self, capacity: usize) {
+        if capacity > self.capacity() {
+            if self.max == 0 {
+                self.allocator_instance.allocate(capacity);
+            } else {
+                self.allocator_instance.reallocate(capacity);
+            }
+            self.max = capacity as i32;
+        }
+    }
 }
 
 impl<T, A> From<&[T]> for TArray<T, A>

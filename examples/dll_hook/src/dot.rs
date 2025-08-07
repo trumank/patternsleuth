@@ -341,6 +341,7 @@ mod test {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_dot() {
         let mut graph = Graph::new("digraph");
 

@@ -1,10 +1,66 @@
 mod allocator;
 mod array;
+mod bitarray;
 mod malloc;
+mod set;
+mod sparsearray;
 
 pub use allocator::*;
 pub use array::*;
+pub use bitarray::*;
 pub use malloc::*;
+pub use set::*;
+pub use sparsearray::*;
+
+// Size assertions to verify UE memory layout compatibility
+const _: () = {
+    // Basic types
+    assert!(std::mem::size_of::<FSetElementId>() == 4);
+
+    // Allocator sizes
+    assert!(std::mem::size_of::<TSizedHeapAllocatorForAnyElementType<FSetElementId>>() == 8);
+    assert!(std::mem::size_of::<TSizedHeapAllocatorForAnyElementType<u32>>() == 8);
+    assert!(std::mem::size_of::<TInlineAllocatorForElementType<FSetElementId, 1>>() == 16);
+    assert!(std::mem::size_of::<TInlineAllocatorForElementType<u32, 4>>() == 24);
+
+    // TArray sizes
+    assert!(std::mem::size_of::<TArray<u32, TSizedHeapAllocator32>>() == 16);
+    assert!(
+        std::mem::size_of::<
+            TArray<
+                TSparseArrayElementOrFreeListLink<TSetElement<TTuple<u32, u32>>>,
+                TSizedHeapAllocator32,
+            >,
+        >() == 16
+    );
+    assert!(
+        std::mem::size_of::<
+            TArray<
+                TSparseArrayElementOrFreeListLink<TSetElement<TTuple<*mut UObject, *mut UObject>>>,
+                TSizedHeapAllocator32,
+            >,
+        >() == 16
+    );
+
+    // TBitArray size
+    assert!(std::mem::size_of::<TBitArray<TInlineAllocator<4>>>() == 32);
+
+    // TSparseArray sizes
+    assert!(
+        std::mem::size_of::<TSparseArray<TSetElement<TTuple<u32, u32>>, TSparseArrayAllocator32>>()
+            == 56
+    );
+    assert!(
+        std::mem::size_of::<
+            TSparseArray<TSetElement<TTuple<*mut UObject, *mut UObject>>, TSparseArrayAllocator32>,
+        >() == 56
+    );
+
+    // TSet sizes
+    assert!(std::mem::size_of::<TSet<TTuple<u32, u32>>>() == 80);
+    assert!(std::mem::size_of::<TSet<TTuple<*mut UObject, *mut UObject>>>() == 80);
+    assert!(std::mem::size_of::<TSet<u32, DefaultKeyFuncs, FDefaultSetAllocator>>() == 80);
+};
 
 use std::{
     cell::{Cell, UnsafeCell},
