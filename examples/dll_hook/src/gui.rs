@@ -1,13 +1,10 @@
 use crossbeam_channel::{Receiver, Sender};
+use egui_wgpu_win32::{Window, WindowConfig};
 use regex::Regex;
 use std::{cell::RefCell, collections::HashMap};
 
-use eframe::egui::{self, Color32};
+use egui::{self, Color32};
 
-#[cfg(windows)]
-use egui_winit::winit::platform::windows::EventLoopBuilderExtWindows;
-#[cfg(unix)]
-use egui_winit::winit::platform::x11::EventLoopBuilderExtX11;
 use indexmap::IndexMap;
 
 use crate::{
@@ -17,21 +14,15 @@ use crate::{
 
 use super::*;
 
-pub type GuiFn = Box<dyn FnOnce(&TickContext) -> GuiRet + Send + Sync>;
-pub type GuiRet = ();
-
 thread_local! {
-    static STATE: RefCell<InnerState> = RefCell::new(InnerState::new());
+    static STATE: RefCell<(InnerState, Option<Window>)> = Default::default();
 }
 
 pub fn init() {
-    let (tx_main, rx_ui) = crossbeam_channel::bounded::<crate::gui::GuiRet>(0);
-    let (tx_ui, rx_main) = crossbeam_channel::bounded::<crate::gui::GuiFn>(0);
-
     events::register(move |hooks::GameTick(events)| {
         let ctx = unsafe { TickContext::new() };
 
-        STATE.with_borrow_mut(|s| {
+        STATE.with_borrow_mut(|(s, window)| {
             for e in events {
                 match e {
                     ObjectEvent::Created { id } => {
@@ -87,34 +78,23 @@ pub fn init() {
                     }
                 }
             }
+
+            if window.is_none() {
+                *window = Some(
+                    Window::new(WindowConfig {
+                        title: "dll_hook".into(),
+                        width: 600,
+                        height: 400,
+                        resizable: true,
+                    })
+                    .unwrap(),
+                );
+            }
+            window.as_mut().unwrap().tick(|c| {
+                ui(s, c, &ctx);
+            });
         });
-
-        if let Ok(f) = rx_main.try_recv() {
-            #[allow(clippy::unit_arg)]
-            tx_main.send(f(&ctx)).unwrap();
-        }
     });
-
-    std::thread::spawn(move || run((tx_ui, rx_ui)).unwrap());
-}
-
-fn run(channels: (Sender<GuiFn>, Receiver<GuiRet>)) -> Result<(), eframe::Error> {
-    let event_loop_builder: Option<eframe::EventLoopBuilderHook> =
-        Some(Box::new(|event_loop_builder| {
-            event_loop_builder.with_any_thread(true);
-        }));
-    let options = eframe::NativeOptions {
-        event_loop_builder,
-        viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
-        ..Default::default()
-    };
-    let res = eframe::run_native(
-        "My egui App",
-        options,
-        Box::new(|_cc| Ok(Box::new(MyApp::new(channels)))),
-    );
-    tracing::info!("{res:#?}");
-    res
 }
 
 #[derive(Debug, Clone)]
@@ -172,11 +152,6 @@ impl ObjectFilter {
     }
 }
 
-struct MyApp {
-    tx_ui: Sender<GuiFn>,
-    rx_ui: Receiver<GuiRet>,
-}
-
 struct InnerState {
     buh: i32,
     filter: ObjectFilter,
@@ -185,6 +160,11 @@ struct InnerState {
     filtered: IndexMap<ObjectId, ObjectCache>,
 
     open_objects: HashMap<ObjectId, Result<crate::kismet_nodes::KismetGraph>>,
+}
+impl Default for InnerState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 impl InnerState {
     fn new() -> Self {
@@ -201,11 +181,6 @@ impl InnerState {
     }
 }
 
-impl MyApp {
-    fn new((tx_ui, rx_ui): (Sender<GuiFn>, Receiver<GuiRet>)) -> Self {
-        Self { tx_ui, rx_ui }
-    }
-}
 fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
     assert_main_thread!();
 
@@ -393,20 +368,4 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
             open
         });
     });
-}
-
-impl eframe::App for MyApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_visuals(egui::Visuals::dark());
-
-        let ctx = ctx.clone();
-        self.tx_ui
-            .send(Box::new(move |tick_ctx| {
-                STATE.with_borrow_mut(|state| {
-                    ui(state, &ctx, tick_ctx);
-                })
-            }))
-            .unwrap();
-        self.rx_ui.recv().unwrap();
-    }
 }

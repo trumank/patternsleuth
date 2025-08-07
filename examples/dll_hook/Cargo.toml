@@ -18,9 +18,9 @@ backtrace = { git = "https://github.com/rust-lang/backtrace-rs", rev = "036d4909
 bitflags = "2.4.1"
 byteorder = "1.5.0"
 crossbeam-channel = "0.5.15"
-eframe = { version = "0.31.0", default-features = false, features = ["default_fonts", "glow", "x11"] }
+egui = "0.32"
 egui-snarl = { path = "../../../../../src/third/egui-snarl", features = ["serde"] }
-egui-winit = { version = "0.31.0", default-features = false }
+egui_wgpu_win32 = { git = "https://github.com/trumank/egui_wgpu_win32", version = "0.1.0" }
 indexmap = "2.1.0"
 itertools.workspace = true
 parking_lot = "0.12.1"

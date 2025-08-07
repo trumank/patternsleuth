@@ -6,7 +6,6 @@ use crate::{
     ue,
 };
 use anyhow::{bail, Context, Result};
-use eframe::egui;
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use itertools::Itertools;
 
@@ -844,7 +843,7 @@ pub fn compile(
 }
 
 mod layout {
-    type Position = eframe::egui::Pos2;
+    type Position = egui::Pos2;
 
     use super::*;
 

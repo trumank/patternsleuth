@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, Ui};
+use egui::{self, Color32, Ui};
 use egui_snarl::{
     ui::{AnyPins, PinInfo, SnarlViewer, SnarlWidget, WireStyle},
     InPin, NodeId, OutPin, Snarl,
