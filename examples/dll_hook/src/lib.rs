@@ -102,9 +102,6 @@ pub struct Globals {
 }
 
 impl Globals {
-    pub fn gmalloc(&self) -> &ue::FMalloc {
-        unsafe { &**(self.resolution.gmalloc.0 as *const *const ue::FMalloc) }
-    }
     // pub fn fframe_step(&self) -> ue::FnFFrameStep {
     //     unsafe { std::mem::transmute(self.resolution.fframe_step.0) }
     // }
@@ -198,6 +195,10 @@ unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
 
     let guobject_array: &'static ue::FUObjectArray =
         &*(resolution.guobject_array.0 as *const ue::FUObjectArray);
+
+    unsafe {
+        ue::init_gmalloc(resolution.gmalloc.0 as *const *const ue::FMalloc);
+    }
 
     GLOBALS = Some(Globals {
         guobject_array: guobject_array.into(),

@@ -12,6 +12,16 @@ use windows::Win32::System::Threading::{
 
 use crate::globals;
 
+static mut GMALLOC: *const *const FMalloc = std::ptr::null();
+
+pub unsafe fn gmalloc() -> &'static FMalloc {
+    unsafe { &**GMALLOC }
+}
+
+pub unsafe fn init_gmalloc(malloc: *const *const FMalloc) {
+    GMALLOC = malloc;
+}
+
 macro_rules! impl_deref {
     ($class:ty, $member:ident: $parent:ty) => {
         impl std::ops::Deref for $class {
@@ -116,6 +126,8 @@ pub struct FMallocVTable {
     pub validate_heap: *const (),
     pub get_descriptive_name: *const (),
 }
+unsafe impl Sync for FMallocVTable {}
+unsafe impl Send for FMallocVTable {}
 
 #[derive(Debug)]
 #[repr(C)]
@@ -1015,9 +1027,9 @@ impl<T> Drop for TArray<T> {
             std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(
                 self.data.cast_mut(),
                 self.num as usize,
-            ))
+            ));
+            gmalloc().free(self.data as *mut c_void);
         }
-        globals().gmalloc().free(self.data as *mut c_void);
     }
 }
 impl<T> Default for TArray<T> {
@@ -1032,10 +1044,12 @@ impl<T> Default for TArray<T> {
 impl<T> TArray<T> {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            data: globals().gmalloc().malloc(
-                capacity * std::mem::size_of::<T>(),
-                std::mem::align_of::<T>() as u32,
-            ) as *const T,
+            data: unsafe {
+                gmalloc().malloc(
+                    capacity * std::mem::size_of::<T>(),
+                    std::mem::align_of::<T>() as u32,
+                ) as *const T
+            },
             num: 0,
             max: capacity as i32,
         }
@@ -1074,11 +1088,13 @@ impl<T> TArray<T> {
     pub fn push(&mut self, new_value: T) {
         if self.num >= self.max {
             self.max = u32::next_power_of_two((self.max + 1) as u32) as i32;
-            let new = globals().gmalloc().realloc(
-                self.data as *mut c_void,
-                self.max as usize * std::mem::size_of::<T>(),
-                std::mem::align_of::<T>() as u32,
-            ) as *const T;
+            let new = unsafe {
+                gmalloc().realloc(
+                    self.data as *mut c_void,
+                    self.max as usize * std::mem::size_of::<T>(),
+                    std::mem::align_of::<T>() as u32,
+                ) as *const T
+            };
             self.data = new;
         }
         unsafe {
@@ -1182,5 +1198,228 @@ pub mod kismet {
         //         (globals().fframe_step())(stack, stack.object, output);
         //     }
         // }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::alloc::{GlobalAlloc, Layout};
+
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    struct MiriAllocator {
+        allocations: Mutex<HashMap<usize, Layout>>,
+    }
+
+    impl MiriAllocator {
+        fn new() -> Self {
+            Self {
+                allocations: Mutex::new(HashMap::new()),
+            }
+        }
+
+        unsafe fn malloc(&self, size: usize, alignment: u32) -> *mut c_void {
+            let layout = Layout::from_size_align(size, alignment as usize).unwrap();
+            let ptr = std::alloc::System.alloc(layout) as *mut c_void;
+
+            if !ptr.is_null() {
+                self.allocations
+                    .lock()
+                    .unwrap()
+                    .insert(ptr as usize, layout);
+            }
+
+            ptr
+        }
+
+        unsafe fn realloc(
+            &self,
+            original: *mut c_void,
+            size: usize,
+            alignment: u32,
+        ) -> *mut c_void {
+            if original.is_null() {
+                return self.malloc(size, alignment);
+            }
+
+            let new_layout = Layout::from_size_align(size, alignment as usize).unwrap();
+
+            let old_layout = {
+                let mut allocations = self.allocations.lock().unwrap();
+                allocations.remove(&(original as usize)).unwrap()
+            };
+
+            let new_ptr =
+                std::alloc::System.realloc(original as *mut u8, old_layout, size) as *mut c_void;
+
+            if !new_ptr.is_null() {
+                self.allocations
+                    .lock()
+                    .unwrap()
+                    .insert(new_ptr as usize, new_layout);
+            }
+
+            new_ptr
+        }
+
+        unsafe fn free(&self, ptr: *mut c_void) {
+            if !ptr.is_null() {
+                let layout = {
+                    let mut allocations = self.allocations.lock().unwrap();
+                    allocations.remove(&(ptr as usize))
+                };
+
+                if let Some(layout) = layout {
+                    std::alloc::System.dealloc(ptr as *mut u8, layout);
+                }
+            }
+        }
+    }
+
+    use std::sync::{LazyLock, Once};
+    static MIRI_ALLOCATOR: LazyLock<MiriAllocator> = LazyLock::new(|| MiriAllocator::new());
+
+    unsafe extern "system" fn miri_malloc(
+        _this: &FMalloc,
+        count: usize,
+        alignment: u32,
+    ) -> *mut c_void {
+        MIRI_ALLOCATOR.malloc(count, alignment)
+    }
+
+    unsafe extern "system" fn miri_realloc(
+        _this: &FMalloc,
+        original: *mut c_void,
+        count: usize,
+        alignment: u32,
+    ) -> *mut c_void {
+        MIRI_ALLOCATOR.realloc(original, count, alignment)
+    }
+
+    unsafe extern "system" fn miri_free(_this: &FMalloc, original: *mut c_void) {
+        MIRI_ALLOCATOR.free(original);
+    }
+
+    unsafe extern "system" fn stub() {}
+
+    static MIRI_VTABLE: FMallocVTable = FMallocVTable {
+        __vec_del_dtor: stub as *const (),
+        exec: stub as *const (),
+        malloc: miri_malloc,
+        try_malloc: miri_malloc,
+        realloc: miri_realloc,
+        try_realloc: miri_realloc,
+        free: miri_free,
+        quantize_size: stub as *const (),
+        get_allocation_size: stub as *const (),
+        trim: stub as *const (),
+        setup_tls_caches_on_current_thread: stub as *const (),
+        clear_and_disable_tlscaches_on_current_thread: stub as *const (),
+        initialize_stats_metadata: stub as *const (),
+        update_stats: stub as *const (),
+        get_allocator_stats: stub as *const (),
+        dump_allocator_stats: stub as *const (),
+        is_internally_thread_safe: stub as *const (),
+        validate_heap: stub as *const (),
+        get_descriptive_name: stub as *const (),
+    };
+
+    static MIRI_MALLOC: FMalloc = FMalloc {
+        vtable: &MIRI_VTABLE,
+    };
+
+    static INIT: Once = Once::new();
+
+    fn setup_test_globals() {
+        INIT.call_once(|| unsafe {
+            init_gmalloc(&MIRI_MALLOC);
+        });
+    }
+
+    #[test]
+    fn test_tarray_basic_operations() {
+        setup_test_globals();
+
+        let mut array: TArray<i32> = TArray::new();
+
+        assert_eq!(array.len(), 0);
+        assert!(array.is_empty());
+        assert_eq!(array.as_slice(), &[]);
+
+        array.push(42);
+        assert_eq!(array.len(), 1);
+        assert!(!array.is_empty());
+        assert_eq!(array.as_slice(), &[42]);
+
+        array.push(100);
+        array.push(200);
+        assert_eq!(array.len(), 3);
+        assert_eq!(array.as_slice(), &[42, 100, 200]);
+    }
+
+    #[test]
+    fn test_tarray_with_capacity() {
+        setup_test_globals();
+
+        let mut array: TArray<u32> = TArray::with_capacity(10);
+        assert_eq!(array.len(), 0);
+        assert_eq!(array.capacity(), 10);
+
+        for i in 0..5 {
+            array.push(i * 2);
+        }
+
+        assert_eq!(array.len(), 5);
+        assert_eq!(array.capacity(), 10);
+        assert_eq!(array.as_slice(), &[0, 2, 4, 6, 8]);
+    }
+
+    #[test]
+    fn test_tarray_growth() {
+        setup_test_globals();
+
+        let mut array: TArray<u8> = TArray::new();
+
+        for i in 0..20u8 {
+            array.push(i);
+        }
+
+        assert_eq!(array.len(), 20);
+        let expected: Vec<u8> = (0..20).collect();
+        assert_eq!(array.as_slice(), expected.as_slice());
+    }
+
+    #[test]
+    fn test_tarray_clear() {
+        setup_test_globals();
+
+        let mut array: TArray<i32> = TArray::new();
+        for i in 0..10 {
+            array.push(i);
+        }
+
+        assert_eq!(array.len(), 10);
+
+        array.clear();
+        assert_eq!(array.len(), 0);
+        assert!(array.is_empty());
+        assert_eq!(array.as_slice(), &[]);
+    }
+
+    #[test]
+    fn test_tarray_extend() {
+        setup_test_globals();
+
+        let mut array: TArray<i32> = TArray::new();
+        array.push(1);
+        array.push(2);
+
+        let more_data = &[3, 4, 5, 6];
+        array.extend(more_data);
+
+        assert_eq!(array.len(), 6);
+        assert_eq!(array.as_slice(), &[1, 2, 3, 4, 5, 6]);
     }
 }

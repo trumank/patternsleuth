@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use crate::dot;
 use crate::ue::{self, FName};
 use anyhow::{anyhow, bail, Result};
