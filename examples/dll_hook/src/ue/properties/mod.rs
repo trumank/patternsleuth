@@ -115,6 +115,81 @@ impl_basic_prop!(FUInt64Property, u64, CASTCLASS_FUInt64Property);
 impl_basic_prop!(FFloatProperty, f32, CASTCLASS_FFloatProperty);
 impl_basic_prop!(FDoubleProperty, f64, CASTCLASS_FDoubleProperty);
 
+// FBoolProperty requires special bitfield handling
+impl_deref!(FBoolProperty, fproperty: FProperty);
+unsafe impl FieldTrait for FBoolProperty {
+    const CAST_FLAGS: EClassCastFlags = EClassCastFlags::CASTCLASS_FBoolProperty;
+}
+#[derive(Debug)]
+#[repr(C)]
+pub struct FBoolProperty {
+    fproperty: FProperty,
+    field_size: u8,
+    byte_offset: u8,
+    byte_mask: u8,
+    field_mask: u8,
+}
+
+pub struct FBoolPropertyData<'o> {
+    property: &'o FBoolProperty,
+    data_ptr: *const u8,
+}
+
+impl<'o> FBoolPropertyData<'o> {
+    pub fn get(&self) -> bool {
+        unsafe {
+            let byte_value = *self.data_ptr.add(self.property.byte_offset as usize);
+            (byte_value & self.property.byte_mask) != 0
+        }
+    }
+}
+
+pub struct FBoolPropertyDataMut<'o> {
+    property: &'o FBoolProperty,
+    data_ptr: *mut u8,
+}
+
+impl<'o> FBoolPropertyDataMut<'o> {
+    pub fn get(&self) -> bool {
+        unsafe {
+            let byte_value = *self.data_ptr.add(self.property.byte_offset as usize);
+            (byte_value & self.property.byte_mask) != 0
+        }
+    }
+
+    pub fn set(&mut self, value: bool) {
+        unsafe {
+            let byte_ptr = self.data_ptr.add(self.property.byte_offset as usize);
+            let mut byte_value = *byte_ptr;
+            if value {
+                byte_value |= self.property.byte_mask;
+            } else {
+                byte_value &= !self.property.byte_mask;
+            }
+            *byte_ptr = byte_value;
+        }
+    }
+}
+
+impl PropTrait for FBoolProperty {
+    type PropValue<'o> = FBoolPropertyData<'o>;
+    type PropValueMut<'o> = FBoolPropertyDataMut<'o>;
+
+    unsafe fn value<'o>(&'o self, data: *const ()) -> Self::PropValue<'o> {
+        FBoolPropertyData {
+            property: self,
+            data_ptr: data.cast(),
+        }
+    }
+
+    unsafe fn value_mut<'o>(&'o self, data: *mut ()) -> Self::PropValueMut<'o> {
+        FBoolPropertyDataMut {
+            property: self,
+            data_ptr: data.cast(),
+        }
+    }
+}
+
 pub struct FArrayPropertyData<'o> {
     array_property: &'o FArrayProperty,
     array: &'o FScriptArray,

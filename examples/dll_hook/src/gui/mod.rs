@@ -35,6 +35,15 @@ fn render_string_property(ui: &mut egui::Ui, value: &mut ue::FString) -> bool {
     false
 }
 
+fn render_bool_property(ui: &mut egui::Ui, value: &mut ue::FBoolPropertyDataMut) -> bool {
+    let mut current_value = value.get();
+    if ui.checkbox(&mut current_value, "").changed() {
+        value.set(current_value);
+        return true;
+    }
+    false
+}
+
 fn render_property_ui<'o>(ui: &mut egui::Ui, accessor: &mut impl ue::PropertyAccess<'o>) -> bool {
     let mut changed = false;
 
@@ -60,6 +69,8 @@ fn render_property_ui<'o>(ui: &mut egui::Ui, accessor: &mut impl ue::PropertyAcc
         changed = render_text_property(ui, &mut *val);
     } else if let Some(mut val) = accessor.try_get_mut::<ue::FStrProperty>() {
         changed = render_string_property(ui, &mut val);
+    } else if let Some(mut val) = accessor.try_get_mut::<ue::FBoolProperty>() {
+        changed = render_bool_property(ui, &mut val);
     } else if let Some(val) = accessor.try_get::<ue::FNameProperty>() {
         // TODO: FName editing
         ui.colored_label(egui::Color32::GRAY, format!("{}", *val));
