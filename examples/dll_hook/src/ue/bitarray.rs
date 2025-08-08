@@ -1,5 +1,4 @@
 use super::*;
-use std::marker::PhantomData;
 
 #[repr(C)]
 #[derive(Debug)]

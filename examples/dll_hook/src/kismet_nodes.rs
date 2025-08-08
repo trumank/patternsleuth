@@ -264,7 +264,7 @@ impl SnarlViewer<GenericNode> for KismetViewer {
                     ],
                 },
             );
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("String").clicked() {
             snarl.insert_node(
@@ -293,7 +293,7 @@ impl SnarlViewer<GenericNode> for KismetViewer {
                     ],
                 },
             );
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("If").clicked() {
             snarl.insert_node(
@@ -322,7 +322,7 @@ impl SnarlViewer<GenericNode> for KismetViewer {
                     ],
                 },
             );
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("For").clicked() {
             snarl.insert_node(
@@ -359,7 +359,7 @@ impl SnarlViewer<GenericNode> for KismetViewer {
                     ],
                 },
             );
-            ui.close_menu();
+            ui.close();
         }
     }
 
@@ -395,7 +395,7 @@ impl SnarlViewer<GenericNode> for KismetViewer {
         ui.label("Node menu");
         if ui.button("Remove").clicked() {
             snarl.remove_node(node);
-            ui.close_menu();
+            ui.close();
         }
     }
 

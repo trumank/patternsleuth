@@ -1,8 +1,7 @@
 use std::{
-    borrow::Cow,
     collections::HashMap,
     ffi::c_void,
-    sync::{LazyLock, Mutex, RwLock},
+    sync::{LazyLock, Mutex},
 };
 
 use anyhow::Result;

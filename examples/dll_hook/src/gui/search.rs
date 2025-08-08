@@ -1,6 +1,6 @@
 use regex::{Regex, RegexBuilder};
 
-use crate::{object_cache::ObjectId, ue};
+use crate::ue;
 
 #[derive(Debug, Clone)]
 pub struct ObjectCache {

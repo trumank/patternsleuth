@@ -1,20 +1,130 @@
-use crossbeam_channel::{Receiver, Sender};
-use egui_wgpu_win32::{Window, WindowConfig};
-use std::{cell::RefCell, collections::HashMap};
+mod search;
 
-use egui::{self, Color32};
-
-use indexmap::IndexMap;
-
+use super::*;
 use crate::{
     kismet::normalize_and_serialize,
     object_cache::{ObjectEvent, ObjectId, TickContext},
 };
 
-use super::*;
-
-mod search;
+use egui::{self, Color32, UiBuilder};
+use egui_wgpu_win32::{Window, WindowConfig};
+use indexmap::IndexMap;
 use search::{ObjectCache, ObjectFilter};
+use std::{cell::RefCell, collections::HashMap};
+
+fn render_text_property<T>(ui: &mut egui::Ui, value: &mut T) -> bool
+where
+    T: std::fmt::Display + std::str::FromStr,
+{
+    let mut text = value.to_string();
+    if ui.text_edit_singleline(&mut text).changed() {
+        if let Ok(parsed_value) = text.parse() {
+            *value = parsed_value;
+            return true;
+        }
+    }
+    false
+}
+
+fn render_string_property(ui: &mut egui::Ui, value: &mut ue::FString) -> bool {
+    let mut text = value.to_string();
+    if ui.text_edit_singleline(&mut text).changed() {
+        *value = text.as_str().into();
+        return true;
+    }
+    false
+}
+
+fn render_property_ui<'o>(ui: &mut egui::Ui, accessor: &mut impl ue::PropertyAccess<'o>) -> bool {
+    let mut changed = false;
+
+    if let Some(mut val) = accessor.try_get_mut::<ue::FIntProperty>() {
+        changed = render_text_property(ui, &mut *val);
+    } else if let Some(mut val) = accessor.try_get_mut::<ue::FFloatProperty>() {
+        changed = render_text_property(ui, &mut *val);
+    } else if let Some(mut val) = accessor.try_get_mut::<ue::FDoubleProperty>() {
+        changed = render_text_property(ui, &mut *val);
+    } else if let Some(mut val) = accessor.try_get_mut::<ue::FStrProperty>() {
+        changed = render_string_property(ui, &mut val);
+    } else if let Some(val) = accessor.try_get::<ue::FNameProperty>() {
+        // TODO: FName editing
+        ui.colored_label(egui::Color32::GRAY, format!("{}", *val));
+    } else if let Some(array_data) = accessor.try_get_mut::<ue::FArrayProperty>() {
+        render_array_property_ui(ui, array_data);
+    } else {
+        ui.colored_label(egui::Color32::GRAY, "Unsupported property type");
+    }
+
+    changed
+}
+
+fn render_array_property_ui(ui: &mut egui::Ui, mut array_data: ue::FArrayPropertyDataMut) {
+    let num_elements = array_data.len();
+    let inner_prop = array_data.inner_property();
+
+    let id = ui.id().with("array_collapse");
+    let mut open = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
+
+    ui.horizontal(|ui| {
+        if ui
+            .selectable_label(open, if open { "▼" } else { "►" })
+            .clicked()
+        {
+            open = !open;
+            ui.data_mut(|d| d.insert_temp(id, open));
+        }
+        ui.label(format!("Array[{}] ({})", num_elements, inner_prop.name()));
+
+        if ui.small_button("+").clicked() {
+            array_data.add_zeroed_element(1);
+        }
+        if ui.small_button("-").clicked() && num_elements > 0 {
+            array_data.remove_element(num_elements - 1, 1);
+        }
+        if ui.small_button("Clear").clicked() {
+            array_data.empty(0);
+        }
+    });
+
+    if open {
+        let current_num = array_data.len();
+        let mut to_remove = None;
+        for i in 0..current_num {
+            ui.horizontal(|ui| {
+                ui.label(format!("[{i}]"));
+
+                let mut elem = array_data.get_element_mut(i);
+                render_property_ui(ui, &mut elem);
+
+                if ui.small_button("×").clicked() {
+                    to_remove = Some(i);
+                }
+            });
+        }
+
+        if let Some(i) = to_remove {
+            array_data.remove_element(i, 1);
+        }
+
+        if ui.small_button("+ Add Element").clicked() {
+            array_data.add_zeroed_element(1);
+        }
+    }
+}
+
+fn render_object_property_row(
+    ui: &mut egui::Ui,
+    offset: i32,
+    name: &str,
+    mut field: ue::BoundFieldMut,
+) {
+    ui.horizontal(|ui| {
+        ui.label(format!("0x{offset:02x} {name}"));
+        ui.push_id(format!("offset_{offset}"), |ui| {
+            render_property_ui(ui, &mut field)
+        })
+    });
+}
 
 thread_local! {
     static STATE: RefCell<(InnerState, Option<Window>)> = Default::default();
@@ -317,43 +427,8 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                         props.sort_by_key(|p| p.0);
 
                         egui::ScrollArea::vertical().show(ui, |ui| {
-                            for (offset, name, mut field) in props {
-                                ui.horizontal(|ui| {
-                                    ui.label(format!("0x{offset:02x} {name}"));
-                                    if let Some(p) = field.get::<ue::FNameProperty>() {
-                                        let mut text = p.to_string();
-                                        if ui.text_edit_singleline(&mut text).changed() {
-                                            // TODO create FName
-                                            // *p = text.as_str().into();
-                                        }
-                                    } else if let Some(p) = field.get::<ue::FStrProperty>() {
-                                        let mut text = p.to_string();
-                                        if ui.text_edit_singleline(&mut text).changed() {
-                                            *p = text.as_str().into();
-                                        }
-                                    } else if let Some(p) = field.get::<ue::FIntProperty>() {
-                                        let mut text = p.to_string();
-                                        if ui.text_edit_singleline(&mut text).changed() {
-                                            if let Ok(value) = text.parse() {
-                                                *p = value;
-                                            }
-                                        }
-                                    } else if let Some(p) = field.get::<ue::FFloatProperty>() {
-                                        let mut text = p.to_string();
-                                        if ui.text_edit_singleline(&mut text).changed() {
-                                            if let Ok(value) = text.parse() {
-                                                *p = value;
-                                            }
-                                        }
-                                    } else if let Some(p) = field.get::<ue::FDoubleProperty>() {
-                                        let mut text = p.to_string();
-                                        if ui.text_edit_singleline(&mut text).changed() {
-                                            if let Ok(value) = text.parse() {
-                                                *p = value;
-                                            }
-                                        }
-                                    }
-                                });
+                            for (offset, name, field) in props {
+                                render_object_property_row(ui, offset, &name.to_string(), field);
                             }
                             ui.allocate_space(ui.available_size());
                         });

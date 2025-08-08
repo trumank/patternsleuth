@@ -1,6 +1,6 @@
 use super::*;
+use std::ffi::c_void;
 use std::mem::MaybeUninit;
-use std::{ffi::c_void, marker::PhantomData};
 
 pub trait AllocatorInstance<T> {
     fn data_ptr(&self) -> *const T;
