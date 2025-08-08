@@ -38,7 +38,21 @@ fn render_string_property(ui: &mut egui::Ui, value: &mut ue::FString) -> bool {
 fn render_property_ui<'o>(ui: &mut egui::Ui, accessor: &mut impl ue::PropertyAccess<'o>) -> bool {
     let mut changed = false;
 
-    if let Some(mut val) = accessor.try_get_mut::<ue::FIntProperty>() {
+    if let Some(mut val) = accessor.try_get_mut::<ue::FInt8Property>() {
+        changed = render_text_property(ui, &mut *val);
+    } else if let Some(mut val) = accessor.try_get_mut::<ue::FInt16Property>() {
+        changed = render_text_property(ui, &mut *val);
+    } else if let Some(mut val) = accessor.try_get_mut::<ue::FIntProperty>() {
+        changed = render_text_property(ui, &mut *val);
+    } else if let Some(mut val) = accessor.try_get_mut::<ue::FInt64Property>() {
+        changed = render_text_property(ui, &mut *val);
+    } else if let Some(mut val) = accessor.try_get_mut::<ue::FByteProperty>() {
+        changed = render_text_property(ui, &mut *val);
+    } else if let Some(mut val) = accessor.try_get_mut::<ue::FUInt16Property>() {
+        changed = render_text_property(ui, &mut *val);
+    } else if let Some(mut val) = accessor.try_get_mut::<ue::FUInt32Property>() {
+        changed = render_text_property(ui, &mut *val);
+    } else if let Some(mut val) = accessor.try_get_mut::<ue::FUInt64Property>() {
         changed = render_text_property(ui, &mut *val);
     } else if let Some(mut val) = accessor.try_get_mut::<ue::FFloatProperty>() {
         changed = render_text_property(ui, &mut *val);
@@ -52,7 +66,13 @@ fn render_property_ui<'o>(ui: &mut egui::Ui, accessor: &mut impl ue::PropertyAcc
     } else if let Some(array_data) = accessor.try_get_mut::<ue::FArrayProperty>() {
         render_array_property_ui(ui, array_data);
     } else {
-        ui.colored_label(egui::Color32::GRAY, "Unsupported property type");
+        let mut cast_flags = accessor.field().class().cast_flags;
+        cast_flags.remove(
+            ue::EClassCastFlags::CASTCLASS_UField
+                | ue::EClassCastFlags::CASTCLASS_FProperty
+                | ue::EClassCastFlags::CASTCLASS_FObjectPropertyBase,
+        );
+        ui.colored_label(egui::Color32::DARK_RED, format!("{:?}", cast_flags));
     }
 
     changed
@@ -110,20 +130,6 @@ fn render_array_property_ui(ui: &mut egui::Ui, mut array_data: ue::FArrayPropert
             array_data.add_zeroed_element(1);
         }
     }
-}
-
-fn render_object_property_row(
-    ui: &mut egui::Ui,
-    offset: i32,
-    name: &str,
-    mut field: ue::BoundFieldMut,
-) {
-    ui.horizontal(|ui| {
-        ui.label(format!("0x{offset:02x} {name}"));
-        ui.push_id(format!("offset_{offset}"), |ui| {
-            render_property_ui(ui, &mut field)
-        })
-    });
 }
 
 thread_local! {
@@ -210,7 +216,7 @@ impl InnerState {
         Self {
             buh: 0,
             // filter: ObjectFilter::new("Function /Game/".to_string()),
-            filter: ObjectFilter::new("GetMaxBots".to_string()),
+            filter: ObjectFilter::new("^GameEngine".to_string()),
             filtered: Default::default(),
             objects: Default::default(),
             kismet_log: "".to_string(),
@@ -409,10 +415,40 @@ fn ui(state: &mut InnerState, ctx: &egui::Context, tick_ctx: &TickContext) {
                         props.sort_by_key(|p| p.0);
 
                         egui::ScrollArea::vertical().show(ui, |ui| {
-                            for (offset, name, field) in props {
-                                render_object_property_row(ui, offset, &name.to_string(), field);
-                            }
-                            ui.allocate_space(ui.available_size());
+                            use egui_extras::{Column, TableBuilder};
+
+                            TableBuilder::new(ui)
+                                .column(Column::exact(60.0)) // Offset column
+                                .column(Column::exact(200.0)) // Name column
+                                .column(Column::remainder().at_least(200.0)) // Value column
+                                .header(20.0, |mut header| {
+                                    header.col(|ui| {
+                                        ui.strong("Offset");
+                                    });
+                                    header.col(|ui| {
+                                        ui.strong("Name");
+                                    });
+                                    header.col(|ui| {
+                                        ui.strong("Value");
+                                    });
+                                })
+                                .body(|mut body| {
+                                    for (offset, name, mut field) in props {
+                                        body.row(18.0, |mut row| {
+                                            row.col(|ui| {
+                                                ui.label(format!("0x{offset:02x}"));
+                                            });
+                                            row.col(|ui| {
+                                                ui.label(name.to_string());
+                                            });
+                                            row.col(|ui| {
+                                                ui.push_id(format!("offset_{offset}"), |ui| {
+                                                    render_property_ui(ui, &mut field);
+                                                });
+                                            });
+                                        });
+                                    }
+                                });
                         });
                     }
                 });

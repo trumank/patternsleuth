@@ -719,6 +719,7 @@ impl<'o> Iterator for IterFieldsBound<'o> {
 pub trait PropertyAccess<'o> {
     fn try_get<P: PropTrait + 'o>(&self) -> Option<P::PropValue<'o>>;
     fn try_get_mut<P: PropTrait + 'o>(&mut self) -> Option<P::PropValueMut<'o>>;
+    fn field(&self) -> &FField;
 }
 
 pub struct BoundField<'o> {
@@ -740,6 +741,10 @@ impl<'o> PropertyAccess<'o> for BoundField<'o> {
         // BoundField doesn't support mutable access directly since it's for immutable object references
         // This could be implemented if needed by converting to BoundFieldMut
         None
+    }
+
+    fn field(&self) -> &FField {
+        self.field
     }
 }
 
@@ -768,6 +773,10 @@ impl<'o> PropertyAccess<'o> for BoundArrayElement<'o> {
     fn try_get_mut<P: PropTrait + 'o>(&mut self) -> Option<P::PropValueMut<'o>> {
         // BoundArrayElement is immutable, return None for mutable access
         None
+    }
+
+    fn field(&self) -> &FField {
+        &self.property
     }
 }
 
@@ -804,6 +813,10 @@ impl<'o> PropertyAccess<'o> for BoundArrayElementMut<'o> {
     fn try_get_mut<P: PropTrait + 'o>(&mut self) -> Option<P::PropValueMut<'o>> {
         self.get::<P>()
     }
+
+    fn field(&self) -> &FField {
+        &self.property
+    }
 }
 
 pub struct IterFieldsBoundMut<'o> {
@@ -838,6 +851,10 @@ impl<'o> PropertyAccess<'o> for BoundFieldMut<'o> {
 
     fn try_get_mut<P: PropTrait + 'o>(&mut self) -> Option<P::PropValueMut<'o>> {
         FieldTrait::cast::<P>(self.field).map(|f| unsafe { f.value_obj_mut(self.object) })
+    }
+
+    fn field(&self) -> &FField {
+        self.field
     }
 }
 
@@ -887,10 +904,10 @@ pub struct FStructBaseChain {
 
 #[derive(Debug)]
 #[repr(C)]
-struct FFieldClass {
+pub struct FFieldClass {
     pub name: FName,
     id: u64,
-    cast_flags: EClassCastFlags, // u64
+    pub cast_flags: EClassCastFlags, // u64
     class_flags: EClassFlags,
     super_class: *const FFieldClass,
     default_object: *const FField,

@@ -20,6 +20,7 @@ byteorder = "1.5.0"
 crossbeam-channel = "0.5.15"
 egui = "0.32"
 egui-snarl = { path = "../../../../../src/third/egui-snarl", features = ["serde"] }
+egui_extras = "0.32.0"
 egui_wgpu_win32 = { git = "https://github.com/trumank/egui_wgpu_win32", version = "0.1.0" }
 indexmap = "2.1.0"
 itertools.workspace = true
