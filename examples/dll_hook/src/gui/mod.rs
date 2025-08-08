@@ -120,6 +120,13 @@ fn render_property_ui<'o>(ui: &mut egui::Ui, accessor: &mut impl ue::PropertyAcc
         render_array_property_ui(ui, array_data);
     } else if let Some(struct_data) = accessor.try_get_mut::<ue::FStructProperty>() {
         changed = render_struct_property(ui, struct_data);
+    } else if let Some(obj_data) = accessor.try_get::<ue::FObjectProperty>() {
+        // Display object path, no editing
+        if let Some(obj) = *obj_data {
+            ui.colored_label(egui::Color32::LIGHT_BLUE, obj.path());
+        } else {
+            ui.colored_label(egui::Color32::GRAY, "nullptr");
+        }
     } else {
         let mut cast_flags = accessor.field().class().cast_flags;
         cast_flags.remove(

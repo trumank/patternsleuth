@@ -114,6 +114,11 @@ impl_basic_prop!(FUInt32Property, u32, CASTCLASS_FUInt32Property);
 impl_basic_prop!(FUInt64Property, u64, CASTCLASS_FUInt64Property);
 impl_basic_prop!(FFloatProperty, f32, CASTCLASS_FFloatProperty);
 impl_basic_prop!(FDoubleProperty, f64, CASTCLASS_FDoubleProperty);
+impl_basic_prop!(
+    FObjectProperty,
+    Option<&'o UObject>,
+    CASTCLASS_FObjectProperty
+); // TODO figure out lifetimes
 
 // FBoolProperty requires special bitfield handling
 impl_deref!(FBoolProperty, fproperty: FProperty);
