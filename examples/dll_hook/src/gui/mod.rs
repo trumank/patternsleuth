@@ -44,6 +44,48 @@ fn render_bool_property(ui: &mut egui::Ui, value: &mut ue::FBoolPropertyDataMut)
     false
 }
 
+fn render_struct_property(ui: &mut egui::Ui, struct_data: ue::FStructPropertyDataMut) -> bool {
+    let struct_name = struct_data.get_struct().path();
+
+    let id = ui.id().with("struct_collapse");
+    let mut open = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        if ui
+            .selectable_label(open, if open { "▼" } else { "►" })
+            .clicked()
+        {
+            open = !open;
+            ui.data_mut(|d| d.insert_temp(id, open));
+        }
+        ui.label(format!("Struct ({})", struct_name));
+    });
+
+    if open {
+        let props: Vec<_> = struct_data.props().collect();
+        ui.vertical(|ui| {
+            ui.indent("struct_properties", |ui| {
+                for mut prop in props {
+                    if let Some(fprop) = prop.field.cast::<ue::FProperty>() {
+                        let name = fprop.name().to_string();
+                        let offset = fprop.offset();
+
+                        ui.horizontal(|ui| {
+                            ui.label(format!("0x{offset:02x} {name}"));
+                            ui.push_id(format!("struct_prop_{offset}"), |ui| {
+                                changed |= render_property_ui(ui, &mut prop);
+                            });
+                        });
+                    }
+                }
+            });
+        });
+    }
+
+    changed
+}
+
 fn render_property_ui<'o>(ui: &mut egui::Ui, accessor: &mut impl ue::PropertyAccess<'o>) -> bool {
     let mut changed = false;
 
@@ -76,6 +118,8 @@ fn render_property_ui<'o>(ui: &mut egui::Ui, accessor: &mut impl ue::PropertyAcc
         ui.colored_label(egui::Color32::GRAY, format!("{}", *val));
     } else if let Some(array_data) = accessor.try_get_mut::<ue::FArrayProperty>() {
         render_array_property_ui(ui, array_data);
+    } else if let Some(struct_data) = accessor.try_get_mut::<ue::FStructProperty>() {
+        changed = render_struct_property(ui, struct_data);
     } else {
         let mut cast_flags = accessor.field().class().cast_flags;
         cast_flags.remove(
@@ -83,7 +127,10 @@ fn render_property_ui<'o>(ui: &mut egui::Ui, accessor: &mut impl ue::PropertyAcc
                 | ue::EClassCastFlags::CASTCLASS_FProperty
                 | ue::EClassCastFlags::CASTCLASS_FObjectPropertyBase,
         );
-        ui.colored_label(egui::Color32::DARK_RED, format!("{:?}", cast_flags));
+        ui.colored_label(
+            egui::Color32::DARK_RED,
+            format!("{:?} {}", cast_flags, accessor.field().name()),
+        );
     }
 
     changed
@@ -125,7 +172,9 @@ fn render_array_property_ui(ui: &mut egui::Ui, mut array_data: ue::FArrayPropert
                 ui.label(format!("[{i}]"));
 
                 let mut elem = array_data.get_element_mut(i);
-                render_property_ui(ui, &mut elem);
+                ui.push_id(format!("array_elem_{i}"), |ui| {
+                    render_property_ui(ui, &mut elem);
+                });
 
                 if ui.small_button("×").clicked() {
                     to_remove = Some(i);

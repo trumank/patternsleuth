@@ -166,22 +166,24 @@ fn dump_backtrace() {
     //             .unwrap_or("unknown".into())
     //     )
     // }
-    backtrace::trace(|frame| {
-        let ip = frame.ip();
-        let symbol_address = frame.symbol_address();
+    // backtrace::trace(|frame| {
+    //     let ip = frame.ip();
+    //     let symbol_address = frame.symbol_address();
 
-        // Resolve this instruction pointer to a symbol name
-        let mut missing = true;
-        backtrace::resolve_frame(frame, |symbol| {
-            missing = false;
-            tracing::info!("  {:?} {:?}", frame.ip(), symbol);
-        });
-        if missing {
-            tracing::info!("  {:?}", frame.ip());
-        }
+    //     // Resolve this instruction pointer to a symbol name
+    //     let mut missing = true;
+    //     backtrace::resolve_frame(frame, |symbol| {
+    //         missing = false;
+    //         tracing::info!("  {:?} {:?}", frame.ip(), symbol);
+    //     });
+    //     if missing {
+    //         tracing::info!("  {:?}", frame.ip());
+    //     }
 
-        true // keep going to the next frame
-    });
+    //     true // keep going to the next frame
+    // });
+
+    tracing::info!("{:?}", backtrace::Backtrace::new());
 }
 
 unsafe fn patch(bin_dir: PathBuf) -> Result<()> {

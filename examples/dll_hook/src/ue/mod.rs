@@ -689,21 +689,21 @@ impl UObjectBase {
     pub fn props<'o>(&'o self) -> IterFieldsBound<'o> {
         let inner = self.class().iter_props();
         IterFieldsBound {
-            object: self,
+            object: std::ptr::from_ref(self).cast(),
             inner,
         }
     }
     pub fn props_mut<'o>(&'o mut self) -> IterFieldsBoundMut<'o> {
         let inner = unsafe { &*std::ptr::from_ref(self.class()) }.iter_props();
         IterFieldsBoundMut {
-            object: self,
+            object: std::ptr::from_mut(self).cast(),
             inner,
         }
     }
 }
 
 pub struct IterFieldsBound<'o> {
-    object: &'o UObjectBase,
+    object: *const (),
     inner: IterProps<'o>,
 }
 impl<'o> Iterator for IterFieldsBound<'o> {
@@ -723,7 +723,7 @@ pub trait PropertyAccess<'o> {
 }
 
 pub struct BoundField<'o> {
-    object: &'o UObjectBase,
+    object: *const (),
     pub field: &'o FField,
 }
 impl<'o> BoundField<'o> {
@@ -820,7 +820,7 @@ impl<'o> PropertyAccess<'o> for BoundArrayElementMut<'o> {
 }
 
 pub struct IterFieldsBoundMut<'o> {
-    object: &'o mut UObjectBase,
+    object: *mut (),
     inner: IterProps<'o>,
 }
 impl<'o> Iterator for IterFieldsBoundMut<'o> {
@@ -828,13 +828,13 @@ impl<'o> Iterator for IterFieldsBoundMut<'o> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next().map(|f| BoundFieldMut {
-            object: std::ptr::from_mut(self.object),
+            object: self.object,
             field: f,
         })
     }
 }
 pub struct BoundFieldMut<'o> {
-    object: *mut UObjectBase,
+    object: *mut (),
     pub field: &'o FField,
 }
 impl<'o> BoundFieldMut<'o> {
