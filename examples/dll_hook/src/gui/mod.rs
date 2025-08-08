@@ -6,7 +6,7 @@ use crate::{
     object_cache::{ObjectEvent, ObjectId, TickContext},
 };
 
-use egui::{self, Color32, UiBuilder};
+use egui::{self, Color32};
 use egui_wgpu_win32::{Window, WindowConfig};
 use indexmap::IndexMap;
 use search::{ObjectCache, ObjectFilter};
@@ -162,26 +162,8 @@ pub fn init() {
                             // Ok(ex) => tracing::info!("ex: {ex:#?}"),
                             Ok(ex) => {
                                 tracing::info!("ex: {}", ex.len());
-                                if ex.len() == 1708 {
-                                    let dot = crate::kismet::render::render(&ex);
-                                    std::fs::write("/tmp/buh.dot", dot).unwrap();
-                                }
                             }
                             Err(err) => tracing::error!("ex: {err}"),
-                            _ => {}
-                        }
-
-                        for (i, field) in obj.props().enumerate() {
-                            // if let Some(value) = field.get::<ue::FNameProperty>() {
-                            //     let value = value.to_string();
-                            //     if !value.is_empty() {
-                            //         tracing::info!(
-                            //             "  {} = {}",
-                            //             field.field.name().to_string(),
-                            //             value.to_string()
-                            //         );
-                            //     }
-                            // }
                         }
                     }
                     ObjectEvent::Deleted { id } => {
