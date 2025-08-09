@@ -78,7 +78,7 @@ const _: () = {
     // TSet sizes
     assert!(std::mem::size_of::<TSet<TTuple<u32, u32>>>() == 80);
     assert!(std::mem::size_of::<TSet<TTuple<*mut UObject, *mut UObject>>>() == 80);
-    assert!(std::mem::size_of::<TSet<u32, DefaultKeyFuncs, FDefaultSetAllocator>>() == 80);
+    assert!(std::mem::size_of::<TSet<u32, DefaultKeyFuncs<u32>, FDefaultSetAllocator>>() == 80);
 };
 
 macro_rules! impl_deref {
