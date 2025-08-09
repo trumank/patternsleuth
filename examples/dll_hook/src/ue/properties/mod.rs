@@ -1,8 +1,10 @@
 mod array;
+mod set;
 mod r#struct;
 
 pub use array::*;
 pub use r#struct::*;
+pub use set::*;
 
 use super::*;
 

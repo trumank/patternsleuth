@@ -118,6 +118,8 @@ fn render_property_ui<'o>(ui: &mut egui::Ui, accessor: &mut impl ue::PropertyAcc
         ui.colored_label(egui::Color32::GRAY, format!("{}", *val));
     } else if let Some(array_data) = accessor.try_get_mut::<ue::FArrayProperty>() {
         render_array_property_ui(ui, array_data);
+    } else if let Some(set_data) = accessor.try_get_mut::<ue::FSetProperty>() {
+        render_set_property_ui(ui, set_data);
     } else if let Some(struct_data) = accessor.try_get_mut::<ue::FStructProperty>() {
         changed = render_struct_property(ui, struct_data);
     } else if let Some(obj_data) = accessor.try_get::<ue::FObjectProperty>() {
@@ -193,6 +195,58 @@ fn render_array_property_ui(ui: &mut egui::Ui, mut array_data: ue::FArrayPropert
 
         if ui.small_button("+ Add Element").clicked() {
             array_data.add_zeroed_element(1);
+        }
+    }
+}
+
+fn render_set_property_ui(ui: &mut egui::Ui, mut set_data: ue::FSetPropertyDataMut) {
+    let num_elements = set_data.len();
+    let element_prop = set_data.element_property();
+
+    let id = ui.id().with("set_collapse");
+    let mut open = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
+
+    ui.horizontal(|ui| {
+        if ui
+            .selectable_label(open, if open { "▼" } else { "►" })
+            .clicked()
+        {
+            open = !open;
+            ui.data_mut(|d| d.insert_temp(id, open));
+        }
+        ui.label(format!("Set{{{}}} ({})", num_elements, element_prop.name()));
+
+        if ui.small_button("+").clicked() {
+            set_data.add_uninitialized();
+        }
+        if ui.small_button("Clear").clicked() {
+            set_data.empty(0);
+        }
+    });
+
+    if open {
+        // For sets, we'll display elements with their iteration order
+        // Since we can't easily get sparse array indices for removal,
+        // we'll use a simpler approach focused on display
+        let elements: Vec<_> = set_data.iter().collect();
+
+        for (display_idx, elem) in elements.into_iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(format!("{{{display_idx}}}"));
+
+                ui.push_id(format!("set_elem_{display_idx}"), |ui| {
+                    // Note: elem is BoundSetElement, which is immutable
+                    // For now, we'll just display the element
+                    ui.colored_label(egui::Color32::GRAY, "Set element (read-only)");
+                });
+
+                // TODO: Individual element removal requires more complex tracking
+                // For now, only support clearing the entire set
+            });
+        }
+
+        if ui.small_button("+ Add Element").clicked() {
+            set_data.add_uninitialized();
         }
     }
 }

@@ -4,6 +4,8 @@ mod bitarray;
 mod malloc;
 mod properties;
 mod script_array;
+mod script_set;
+mod script_sparse_array;
 mod set;
 mod sparsearray;
 
@@ -13,6 +15,8 @@ pub use bitarray::*;
 pub use malloc::*;
 pub use properties::*;
 pub use script_array::*;
+pub use script_set::*;
+pub use script_sparse_array::*;
 pub use set::*;
 pub use sparsearray::*;
 

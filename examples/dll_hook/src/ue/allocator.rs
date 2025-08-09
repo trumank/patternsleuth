@@ -171,6 +171,12 @@ impl<T, const INLINE_ELEMENTS: usize> AllocatorInstance<T>
     }
 }
 
+impl<T, const INLINE_ELEMENTS: usize> Drop for TInlineAllocatorForElementType<T, INLINE_ELEMENTS> {
+    fn drop(&mut self) {
+        self.deallocate();
+    }
+}
+
 impl<T, const INLINE_ELEMENTS: usize> TInlineAllocatorForElementType<T, INLINE_ELEMENTS> {
     pub fn new() -> Self {
         Self::default()
