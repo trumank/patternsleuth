@@ -365,29 +365,127 @@ where
         self.add_new_element(layout, get_key_hash, key_hash, construct_fn)
     }
 
-    pub fn add(
+    /// Add or replace an element in the set
+    /// Returns (index, was_existing) where was_existing indicates if we replaced an existing element
+    pub fn add_element<T>(
         &mut self,
-        element: *const c_void,
-        layout: &FScriptSetLayout,
-        get_key_hash: impl Fn(*const c_void) -> u32,
-        equality_fn: impl Fn(*const c_void, *const c_void) -> bool,
-        construct_fn: impl Fn(*mut c_void),
-        destruct_fn: impl Fn(*mut c_void),
-    ) {
-        let key_hash = get_key_hash(element);
-        let existing_index = self.find_index_by_hash(element, layout, key_hash, &equality_fn);
+        element: T,
+        get_key_hash: impl Fn(&T) -> u32,
+        equality_fn: impl Fn(&T, &T) -> bool,
+    ) -> (i32, bool) {
+        let layout = FScriptSetLayout::get_layout(
+            std::mem::size_of::<T>() as i32,
+            std::mem::align_of::<T>() as i32,
+        );
+
+        let key_hash = get_key_hash(&element);
+
+        // Look for existing element
+        let existing_index = self.find_element_index(&element, &layout, key_hash, &equality_fn);
 
         if existing_index != -1 {
             // Replace existing element
-            let element_ptr = self.get_data_mut(existing_index, layout);
+            let element_ptr = self.get_data_mut(existing_index, &layout);
             if !element_ptr.is_null() {
-                destruct_fn(element_ptr);
-                construct_fn(element_ptr);
+                unsafe {
+                    // Drop the old element
+                    std::ptr::drop_in_place(element_ptr as *mut T);
+                    // Write the new element
+                    std::ptr::write(element_ptr as *mut T, element);
+                }
             }
+            (existing_index, true)
         } else {
             // Add new element
-            self.add_new_element(layout, get_key_hash, key_hash, construct_fn);
+            let new_index = self.add_new_element_direct(&layout, element, key_hash, get_key_hash);
+            (new_index, false)
         }
+    }
+
+    /// Find an element's index by value and hash
+    fn find_element_index<T>(
+        &self,
+        element: &T,
+        layout: &FScriptSetLayout,
+        key_hash: u32,
+        equality_fn: impl Fn(&T, &T) -> bool,
+    ) -> i32 {
+        if self.elements.num() == 0 || self.hash_size == 0 {
+            return -1;
+        }
+
+        let hash_index = (key_hash as i32) & (self.hash_size - 1);
+        let hash_ptr = self.get_typed_hash(0);
+
+        if hash_ptr.is_null() {
+            return -1;
+        }
+
+        unsafe {
+            let mut element_id = *hash_ptr.add(hash_index as usize);
+
+            while element_id.is_valid() {
+                let current_element_ptr = self.get_data(element_id.index, layout);
+                if !current_element_ptr.is_null() {
+                    let current_element = &*(current_element_ptr as *const T);
+                    if equality_fn(element, current_element) {
+                        return element_id.index;
+                    }
+                }
+
+                // Move to next element in hash chain
+                let current_element_ptr = self.get_data(element_id.index, layout);
+                element_id = get_hash_next_id_ref(current_element_ptr, layout);
+            }
+        }
+
+        -1
+    }
+
+    /// Add a new element directly (assumes it doesn't exist)
+    fn add_new_element_direct<T>(
+        &mut self,
+        layout: &FScriptSetLayout,
+        element: T,
+        key_hash: u32,
+        get_key_hash: impl Fn(&T) -> u32,
+    ) -> i32 {
+        let new_element_index = self.elements.add_uninitialized(&layout.sparse_array_layout);
+        let element_ptr = self.get_data_mut(new_element_index, layout);
+
+        if element_ptr.is_null() {
+            return -1;
+        }
+
+        // Write the element to its location
+        unsafe {
+            std::ptr::write(element_ptr as *mut T, element);
+        }
+
+        // Check if we need to rehash
+        let desired_hash_size = get_number_of_hash_buckets(self.num());
+        if self.hash_size == 0 || self.hash_size < desired_hash_size {
+            // Rehash will handle linking the new element
+            self.rehash(layout, |ptr: *const c_void| {
+                get_key_hash(unsafe { &*(ptr as *const T) })
+            });
+        } else {
+            // Link the new element into existing hash
+            let hash_bucket = (key_hash as i32) & (self.hash_size - 1);
+            let hash_ptr = self.get_typed_hash_mut(hash_bucket);
+
+            if !hash_ptr.is_null() {
+                unsafe {
+                    *get_hash_index_ref_mut(element_ptr, layout) = hash_bucket;
+                    *get_hash_next_id_ref_mut(element_ptr, layout) = *hash_ptr;
+                    *hash_ptr = FSetElementId {
+                        index: new_element_index,
+                    };
+                }
+            }
+        }
+
+        new_element_index
     }
 
     fn add_new_element(
@@ -534,8 +632,183 @@ pub type FScriptSet = TScriptSet<FDefaultSetAllocator, ()>;
 
 // Implementation that makes FScriptSet compatible with the expected interface
 impl FScriptSet {
-    // Additional methods specific to FScriptSet can be added here
-    // This matches the interface expected by UE reflection system
+    /// Check if the set contains an element with the given hash and equality function
+    pub fn contains<T>(
+        &self,
+        element: &T,
+        get_key_hash: impl Fn(&T) -> u32,
+        equality_fn: impl Fn(&T, &T) -> bool,
+    ) -> bool {
+        self.find(element, get_key_hash, equality_fn) != -1
+    }
+
+    /// Find an element in the set, returning its index or -1 if not found
+    pub fn find<T>(
+        &self,
+        element: &T,
+        get_key_hash: impl Fn(&T) -> u32,
+        equality_fn: impl Fn(&T, &T) -> bool,
+    ) -> i32 {
+        let layout = FScriptSetLayout::get_layout(
+            std::mem::size_of::<T>() as i32,
+            std::mem::align_of::<T>() as i32,
+        );
+
+        let key_hash = get_key_hash(element);
+        self.find_element_index(element, &layout, key_hash, equality_fn)
+    }
+
+    /// Get a reference to an element at the given index
+    pub fn get<T>(&self, index: i32) -> Option<&T> {
+        if !self.is_valid_index(index) {
+            return None;
+        }
+
+        let layout = FScriptSetLayout::get_layout(
+            std::mem::size_of::<T>() as i32,
+            std::mem::align_of::<T>() as i32,
+        );
+
+        let data_ptr = self.get_data(index, &layout);
+        if data_ptr.is_null() {
+            None
+        } else {
+            Some(unsafe { &*(data_ptr as *const T) })
+        }
+    }
+
+    /// Get a mutable reference to an element at the given index
+    pub fn get_mut<T>(&mut self, index: i32) -> Option<&mut T> {
+        if !self.is_valid_index(index) {
+            return None;
+        }
+
+        let layout = FScriptSetLayout::get_layout(
+            std::mem::size_of::<T>() as i32,
+            std::mem::align_of::<T>() as i32,
+        );
+
+        let data_ptr = self.get_data_mut(index, &layout);
+        if data_ptr.is_null() {
+            None
+        } else {
+            Some(unsafe { &mut *(data_ptr as *mut T) })
+        }
+    }
+
+    /// Insert an element into the set, returning its index
+    pub fn insert<T>(
+        &mut self,
+        element: T,
+        get_key_hash: impl Fn(&T) -> u32,
+        equality_fn: impl Fn(&T, &T) -> bool,
+    ) -> i32 {
+        let (index, _was_existing) = self.add_element(element, get_key_hash, equality_fn);
+        index
+    }
+
+    /// Remove an element at the given index
+    pub fn remove<T>(&mut self, index: i32) -> bool {
+        if !self.is_valid_index(index) {
+            return false;
+        }
+
+        let layout = FScriptSetLayout::get_layout(
+            std::mem::size_of::<T>() as i32,
+            std::mem::align_of::<T>() as i32,
+        );
+
+        // Drop the element before removing
+        if let Some(element_ptr) = self.get_mut::<T>(index) {
+            unsafe {
+                std::ptr::drop_in_place(element_ptr);
+            }
+        }
+
+        self.remove_at(index, &layout);
+        true
+    }
+
+    /// Remove an element by value, returning true if found and removed
+    pub fn remove_by_value<T>(
+        &mut self,
+        element: &T,
+        get_key_hash: impl Fn(&T) -> u32,
+        equality_fn: impl Fn(&T, &T) -> bool,
+    ) -> bool {
+        let index = self.find(element, get_key_hash, equality_fn);
+        if index != -1 {
+            self.remove::<T>(index)
+        } else {
+            false
+        }
+    }
+
+    /// Clear all elements from the set
+    pub fn clear<T>(&mut self) {
+        let layout = FScriptSetLayout::get_layout(
+            std::mem::size_of::<T>() as i32,
+            std::mem::align_of::<T>() as i32,
+        );
+
+        // Drop all elements
+        let max_index = self.get_max_index();
+        for i in 0..max_index {
+            if self.is_valid_index(i) {
+                if let Some(element) = self.get_mut::<T>(i) {
+                    unsafe {
+                        std::ptr::drop_in_place(element);
+                    }
+                }
+            }
+        }
+
+        self.empty(0, &layout);
+    }
+
+    /// Reserve space for at least the given number of elements
+    pub fn reserve<T>(&mut self, capacity: i32) {
+        let layout = FScriptSetLayout::get_layout(
+            std::mem::size_of::<T>() as i32,
+            std::mem::align_of::<T>() as i32,
+        );
+
+        if capacity > self.num() {
+            self.empty(capacity, &layout);
+        }
+    }
+
+    /// Get an iterator over valid element indices
+    pub fn indices(&self) -> ScriptSetIndexIterator {
+        ScriptSetIndexIterator {
+            set: self,
+            current_index: 0,
+            max_index: self.get_max_index(),
+        }
+    }
+}
+
+/// Iterator over valid indices in a FScriptSet
+pub struct ScriptSetIndexIterator<'a> {
+    set: &'a FScriptSet,
+    current_index: i32,
+    max_index: i32,
+}
+
+impl<'a> Iterator for ScriptSetIndexIterator<'a> {
+    type Item = i32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current_index < self.max_index {
+            let index = self.current_index;
+            self.current_index += 1;
+
+            if self.set.is_valid_index(index) {
+                return Some(index);
+            }
+        }
+        None
+    }
 }
 
 // Static assertions to ensure layout compatibility with UE
@@ -639,5 +912,245 @@ mod tests {
         assert_eq!(get_number_of_hash_buckets(5), 8);
         assert_eq!(get_number_of_hash_buckets(10), 16);
         assert_eq!(get_number_of_hash_buckets(20), 32);
+    }
+
+    #[test]
+    fn test_script_set_high_level_api() {
+        setup_test_globals();
+
+        let mut set = FScriptSet::new();
+
+        // Define hash and equality functions for i32
+        let hash_fn = |x: &i32| *x as u32;
+        let eq_fn = |a: &i32, b: &i32| a == b;
+
+        // Test empty set
+        assert!(set.is_empty());
+        assert_eq!(set.num(), 0);
+        assert!(!set.contains(&42, hash_fn, eq_fn));
+
+        // Insert elements
+        let index1 = set.insert(10, hash_fn, eq_fn);
+        let index2 = set.insert(20, hash_fn, eq_fn);
+        let index3 = set.insert(30, hash_fn, eq_fn);
+
+        assert_eq!(set.num(), 3);
+        assert!(!set.is_empty());
+
+        // Test contains
+        assert!(set.contains(&10, hash_fn, eq_fn));
+        assert!(set.contains(&20, hash_fn, eq_fn));
+        assert!(set.contains(&30, hash_fn, eq_fn));
+        assert!(!set.contains(&40, hash_fn, eq_fn));
+
+        // Test find
+        assert!(set.find(&10, hash_fn, eq_fn) != -1);
+        assert!(set.find(&20, hash_fn, eq_fn) != -1);
+        assert!(set.find(&30, hash_fn, eq_fn) != -1);
+        assert_eq!(set.find(&40, hash_fn, eq_fn), -1);
+
+        // Test get
+        assert_eq!(set.get::<i32>(index1), Some(&10));
+        assert_eq!(set.get::<i32>(index2), Some(&20));
+        assert_eq!(set.get::<i32>(index3), Some(&30));
+
+        // Test invalid index
+        assert_eq!(set.get::<i32>(-1), None);
+        assert_eq!(set.get::<i32>(1000), None);
+    }
+
+    #[test]
+    fn test_script_set_remove_operations() {
+        setup_test_globals();
+
+        let mut set = FScriptSet::new();
+        let hash_fn = |x: &i32| *x as u32;
+        let eq_fn = |a: &i32, b: &i32| a == b;
+
+        // Insert elements
+        let index1 = set.insert(100, hash_fn, eq_fn);
+        let index2 = set.insert(200, hash_fn, eq_fn);
+        let index3 = set.insert(300, hash_fn, eq_fn);
+
+        assert_eq!(set.num(), 3);
+
+        // Remove by index
+        assert!(set.remove::<i32>(index2));
+        assert_eq!(set.num(), 2);
+        assert!(!set.is_valid_index(index2));
+        assert!(set.is_valid_index(index1));
+        assert!(set.is_valid_index(index3));
+
+        // Verify removed element is gone
+        assert!(!set.contains(&200, hash_fn, eq_fn));
+        assert!(set.contains(&100, hash_fn, eq_fn));
+        assert!(set.contains(&300, hash_fn, eq_fn));
+
+        // Remove by value
+        assert!(set.remove_by_value(&300, hash_fn, eq_fn));
+        assert_eq!(set.num(), 1);
+        assert!(!set.contains(&300, hash_fn, eq_fn));
+        assert!(set.contains(&100, hash_fn, eq_fn));
+
+        // Try to remove non-existent element
+        assert!(!set.remove_by_value(&999, hash_fn, eq_fn));
+        assert_eq!(set.num(), 1);
+    }
+
+    #[test]
+    fn test_script_set_clear() {
+        setup_test_globals();
+
+        let mut set = FScriptSet::new();
+        let hash_fn = |x: &i32| *x as u32;
+        let eq_fn = |a: &i32, b: &i32| a == b;
+
+        // Insert several elements
+        set.insert(1, hash_fn, eq_fn);
+        set.insert(2, hash_fn, eq_fn);
+        set.insert(3, hash_fn, eq_fn);
+        set.insert(4, hash_fn, eq_fn);
+
+        assert_eq!(set.num(), 4);
+        assert!(!set.is_empty());
+
+        // Clear the set
+        set.clear::<i32>();
+
+        assert_eq!(set.num(), 0);
+        assert!(set.is_empty());
+        assert!(!set.contains(&1, hash_fn, eq_fn));
+        assert!(!set.contains(&2, hash_fn, eq_fn));
+        assert!(!set.contains(&3, hash_fn, eq_fn));
+        assert!(!set.contains(&4, hash_fn, eq_fn));
+
+        // Verify we can still use the set after clearing
+        set.insert(42, hash_fn, eq_fn);
+        assert_eq!(set.num(), 1);
+        assert!(set.contains(&42, hash_fn, eq_fn));
+    }
+
+    #[test]
+    fn test_script_set_mutable_access() {
+        setup_test_globals();
+
+        let mut set = FScriptSet::new();
+        let hash_fn = |x: &i32| *x as u32;
+        let eq_fn = |a: &i32, b: &i32| a == b;
+
+        let index = set.insert(100, hash_fn, eq_fn);
+
+        // Test mutable access
+        {
+            let element_mut = set.get_mut::<i32>(index).expect("Should have element");
+            *element_mut = 200;
+        }
+
+        // Verify the change
+        assert_eq!(set.get::<i32>(index), Some(&200));
+
+        // Note: After mutating the element in place, the hash-based lookup
+        // might not work correctly since we changed the key. This is expected
+        // behavior that matches UE's TSet - modifying elements in-place can
+        // break hash-based operations.
+    }
+
+    #[test]
+    fn test_script_set_duplicate_insertion() {
+        setup_test_globals();
+
+        let mut set = FScriptSet::new();
+        let hash_fn = |x: &i32| *x as u32;
+        let eq_fn = |a: &i32, b: &i32| a == b;
+
+        // Insert the same value twice
+        let index1 = set.insert(42, hash_fn, eq_fn);
+        let index2 = set.insert(42, hash_fn, eq_fn);
+
+        // Should replace, not add new element
+        // In UE TSet, duplicate keys replace existing elements
+        assert_eq!(set.num(), 1);
+
+        // The indices might be different, but there should only be one element
+        assert!(set.contains(&42, hash_fn, eq_fn));
+    }
+
+    #[test]
+    fn test_script_set_index_iterator() {
+        setup_test_globals();
+
+        let mut set = FScriptSet::new();
+        let hash_fn = |x: &i32| *x as u32;
+        let eq_fn = |a: &i32, b: &i32| a == b;
+
+        // Insert elements
+        let index1 = set.insert(10, hash_fn, eq_fn);
+        let index2 = set.insert(20, hash_fn, eq_fn);
+        let index3 = set.insert(30, hash_fn, eq_fn);
+
+        // Remove middle element to create gaps
+        set.remove::<i32>(index2);
+
+        // Collect valid indices
+        let indices: Vec<i32> = set.indices().collect();
+        assert_eq!(indices.len(), 2);
+
+        // Should contain the remaining indices
+        assert!(indices.contains(&index1));
+        assert!(indices.contains(&index3));
+        assert!(!indices.contains(&index2));
+
+        // Verify we can access elements through the indices
+        for index in indices {
+            assert!(set.get::<i32>(index).is_some());
+        }
+    }
+
+    #[test]
+    fn test_script_set_with_complex_type() {
+        setup_test_globals();
+
+        #[derive(Debug, Clone, PartialEq)]
+        struct TestStruct {
+            id: u32,
+            name: String,
+        }
+
+        let mut set = FScriptSet::new();
+        let hash_fn = |x: &TestStruct| x.id;
+        let eq_fn = |a: &TestStruct, b: &TestStruct| a.id == b.id;
+
+        let item1 = TestStruct {
+            id: 1,
+            name: "First".to_string(),
+        };
+        let item2 = TestStruct {
+            id: 2,
+            name: "Second".to_string(),
+        };
+
+        // Insert complex objects
+        let index1 = set.insert(item1.clone(), hash_fn, eq_fn);
+        let index2 = set.insert(item2.clone(), hash_fn, eq_fn);
+
+        assert_eq!(set.num(), 2);
+
+        // Test retrieval
+        assert_eq!(set.get::<TestStruct>(index1), Some(&item1));
+        assert_eq!(set.get::<TestStruct>(index2), Some(&item2));
+
+        // Test find by value
+        assert!(set.contains(&item1, hash_fn, eq_fn));
+        assert!(set.contains(&item2, hash_fn, eq_fn));
+
+        // Test item not in set
+        let item3 = TestStruct {
+            id: 3,
+            name: "Third".to_string(),
+        };
+        assert!(!set.contains(&item3, hash_fn, eq_fn));
+
+        // Properly clean up to avoid memory leaks
+        set.clear::<TestStruct>();
     }
 }
