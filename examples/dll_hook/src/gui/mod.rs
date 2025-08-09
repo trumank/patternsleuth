@@ -172,19 +172,17 @@ fn render_array_property_ui(ui: &mut egui::Ui, mut array_data: ue::FArrayPropert
     });
 
     if open {
-        let current_num = array_data.len();
         let mut to_remove = None;
-        for i in 0..current_num {
+        for (i, mut elem) in array_data.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(format!("[{i}]"));
 
-                let mut elem = array_data.get_element_mut(i);
                 ui.push_id(format!("array_elem_{i}"), |ui| {
                     render_property_ui(ui, &mut elem);
                 });
 
                 if ui.small_button("×").clicked() {
-                    to_remove = Some(i);
+                    to_remove = Some(i as i32);
                 }
             });
         }

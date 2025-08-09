@@ -319,16 +319,10 @@ impl<'o> FArrayPropertyData<'o> {
         }
     }
 
-    pub fn get_element_cast<T>(&self, index: i32) -> Option<&'o T> {
-        if self.array.is_valid_index(index) {
-            let base_ptr = self.array.get_data() as *const u8;
-            let element_size = self.element_size() as usize;
-            unsafe {
-                let ptr = base_ptr.add((index as usize) * element_size) as *const T;
-                Some(&*ptr)
-            }
-        } else {
-            None
+    pub fn iter(&'o self) -> FArrayPropertyIterator<'o> {
+        FArrayPropertyIterator {
+            array_data: self,
+            index: 0,
         }
     }
 }
@@ -421,6 +415,13 @@ impl<'o> FArrayPropertyDataMut<'o> {
         let element_size = self.element_size();
         self.array.empty(slack, element_size)
     }
+
+    pub fn iter_mut(&mut self) -> FArrayPropertyIteratorMut<'o> {
+        FArrayPropertyIteratorMut {
+            array_data: self as *mut _,
+            index: 0,
+        }
+    }
 }
 
 impl_deref!(FArrayProperty, fproperty: FProperty);
@@ -463,67 +464,60 @@ impl FArrayProperty {
     }
 }
 
-// pub struct ArrayPropertyIterator<'o, T: 'o> {
-//     array_property: &'o FArrayProperty,
-//     object: &'o UObjectBase,
-//     index: i32,
-//     _phantom: std::marker::PhantomData<T>,
-// }
+pub struct FArrayPropertyIterator<'o> {
+    array_data: &'o FArrayPropertyData<'o>,
+    index: i32,
+}
 
-// impl<'o, T: 'o> Iterator for ArrayPropertyIterator<'o, T> {
-//     type Item = Option<&'o T>;
+impl<'o> Iterator for FArrayPropertyIterator<'o> {
+    type Item = BoundArrayElement<'o>;
 
-//     fn next(&mut self) -> Option<Self::Item> {
-//         let num_elements = self.array_property.num_elements(self.object);
-//         if self.index >= num_elements {
-//             None
-//         } else {
-//             let element = self
-//                 .array_property
-//                 .get_element::<T>(self.object, self.index);
-//             self.index += 1;
-//             Some(element)
-//         }
-//     }
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.array_data.len() {
+            let element = self.array_data.get_element(self.index)?;
+            self.index += 1;
+            Some(element)
+        } else {
+            None
+        }
+    }
 
-//     fn size_hint(&self) -> (usize, Option<usize>) {
-//         let remaining =
-//             (self.array_property.num_elements(self.object) - self.index).max(0) as usize;
-//         (remaining, Some(remaining))
-//     }
-// }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = (self.array_data.len() - self.index).max(0) as usize;
+        (remaining, Some(remaining))
+    }
+}
 
-// impl<'o, T: 'o> ExactSizeIterator for ArrayPropertyIterator<'o, T> {}
+impl<'o> ExactSizeIterator for FArrayPropertyIterator<'o> {}
 
-// pub struct ArrayPropertyIteratorMut<'o, T: 'o> {
-//     array_property: &'o FArrayProperty,
-//     object: *mut UObjectBase,
-//     index: i32,
-//     _phantom: std::marker::PhantomData<&'o mut T>,
-// }
+pub struct FArrayPropertyIteratorMut<'o> {
+    array_data: *mut FArrayPropertyDataMut<'o>,
+    index: i32,
+}
 
-// impl<'o, T: 'o> Iterator for ArrayPropertyIteratorMut<'o, T> {
-//     type Item = Option<&'o mut T>;
+impl<'o> Iterator for FArrayPropertyIteratorMut<'o> {
+    type Item = BoundArrayElementMut<'o>;
 
-//     fn next(&mut self) -> Option<Self::Item> {
-//         let num_elements = unsafe { self.array_property.num_elements(&*self.object) };
-//         if self.index >= num_elements {
-//             None
-//         } else {
-//             let element = unsafe {
-//                 self.array_property
-//                     .get_element_mut::<T>(&mut *self.object, self.index)
-//             };
-//             self.index += 1;
-//             Some(element)
-//         }
-//     }
+    fn next(&mut self) -> Option<Self::Item> {
+        unsafe {
+            let array_data = &mut *self.array_data;
+            if self.index < array_data.len() {
+                let element = array_data.get_element_mut(self.index);
+                self.index += 1;
+                Some(element)
+            } else {
+                None
+            }
+        }
+    }
 
-//     fn size_hint(&self) -> (usize, Option<usize>) {
-//         let num_elements = unsafe { self.array_property.num_elements(&*self.object) };
-//         let remaining = (num_elements - self.index).max(0) as usize;
-//         (remaining, Some(remaining))
-//     }
-// }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        unsafe {
+            let array_data = &*self.array_data;
+            let remaining = (array_data.len() - self.index).max(0) as usize;
+            (remaining, Some(remaining))
+        }
+    }
+}
 
-// impl<'o, T: 'o> ExactSizeIterator for ArrayPropertyIteratorMut<'o, T> {}
+impl<'o> ExactSizeIterator for FArrayPropertyIteratorMut<'o> {}
