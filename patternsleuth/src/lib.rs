@@ -19,8 +19,9 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use object::{File, Object, ObjectSection};
-
+use object::{File, Object, ObjectSection, SectionFlags};
+use object::elf::SHF_ALLOC;
+use object::pe::{IMAGE_SCN_CNT_UNINITIALIZED_DATA, IMAGE_SCN_MEM_READ};
 use image::Image;
 
 pub struct ResolveContext<'data, 'pattern> {
@@ -389,10 +390,22 @@ pub struct Memory<'data> {
 }
 
 impl<'data> Memory<'data> {
+    fn is_section_scannable(section_flags: SectionFlags) -> bool {
+        match section_flags {
+            SectionFlags::Coff { characteristics } => {
+                (characteristics & IMAGE_SCN_MEM_READ) != 0
+            }
+            SectionFlags::Elf { sh_flags } => {
+                (sh_flags & SHF_ALLOC as u64) != 0
+            }
+            _ => true,
+        }
+    }
     pub fn new(object: &File<'data>) -> Result<Self> {
         Ok(Self {
             sections: object
                 .sections()
+                .filter(|s| Self::is_section_scannable(s.flags()))
                 .map(|s| {
                     Ok(NamedMemorySection::new(
                         s.name()?.to_string(),
