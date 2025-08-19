@@ -174,7 +174,7 @@ impl std::fmt::Display for MemoryAccessError {
             Self::Utf8Error => write!(f, "Utf8Error"),
             Self::Utf16Error => write!(f, "Utf16Error"),
             Self::MisalginedAddress(addr, align) => {
-                write!(f, "MisalginedAddress: address {:#x} != {:#x}", addr, align)
+                write!(f, "MisalginedAddress: address {addr:#x} != {align:#x}")
             }
         }
     }
@@ -451,7 +451,7 @@ impl<'data> Memory<'data> {
                 .collect::<Result<Vec<_>>>()?,
         })
     }
-    pub fn sections(&self) -> &[NamedMemorySection] {
+    pub fn sections(&self) -> &[NamedMemorySection<'_>] {
         &self.sections
     }
     pub fn get_section_containing(
@@ -643,14 +643,14 @@ pub mod disassemble {
                 let start_index = self.instruction.ip() as usize - self.address;
                 let instr_bytes = &self.block[start_index..start_index + self.instruction.len()];
                 for b in instr_bytes.iter() {
-                    print!("{:02X}", b);
+                    print!("{b:02X}");
                 }
                 if instr_bytes.len() < 0x10 {
                     for _ in 0..0x10 - instr_bytes.len() {
                         print!("  ");
                     }
                 }
-                println!(" {}", output);
+                println!(" {output}");
             }
             fn start(&mut self, address: usize) -> Result<(), MemoryAccessError> {
                 //println!("starting at {address:x}");

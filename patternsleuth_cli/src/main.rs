@@ -60,7 +60,11 @@ struct CommandScan {
 
     /// A game process ID to attach to and scan
     #[arg(long)]
-    pid: Option<i32>,
+    pid: Vec<i32>,
+
+    /// A path to a game's exe
+    #[arg(long)]
+    path: Vec<PathBuf>,
 
     /// A resolver to scan for (can be specified multiple times)
     #[arg(short, long, value_parser(resolver_parser()))]
@@ -309,9 +313,20 @@ fn scan(command: CommandScan) -> Result<()> {
 
     let mut games_vec = vec![];
 
-    if let Some(pid) = command.pid {
+    for pid in command.pid {
         games_vec.push(GameEntry::Process(GameProcessEntry { pid }));
-    } else {
+    }
+    for path in command.path {
+        games_vec.push(GameEntry::File(GameFileEntry {
+            name: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+            exe_path: path,
+        }));
+    }
+    if games_vec.is_empty() {
         games_vec.extend(get_games(command.game)?.into_iter().map(GameEntry::File));
     }
 
@@ -426,7 +441,7 @@ fn scan(command: CommandScan) -> Result<()> {
                                         "".to_string()
                                     };
 
-                                    lines.push(format!("{:?}{}", name, count).normal().to_string());
+                                    lines.push(format!("{name:?}{count}").normal().to_string());
                                 }
                                 lines.push(dis);
 
@@ -507,11 +522,11 @@ fn scan(command: CommandScan) -> Result<()> {
                 [
                     Cell::new(resolver.name),
                     match resolution {
-                        Ok(res) => Cell::new(&format!("{:#x?}", res)),
+                        Ok(res) => Cell::new(&format!("{res:#x?}")),
                         Err(err) =>
                         {
                             #[allow(clippy::unnecessary_to_owned)]
-                            Cell::new(&format!("{:x?}", err).red().to_string())
+                            Cell::new(&format!("{err:x?}").red().to_string())
                         }
                     },
                 ]
@@ -615,10 +630,10 @@ fn scan(command: CommandScan) -> Result<()> {
             if let Some(res) = all_resolutions.get(game) {
                 for res in res {
                     match res {
-                        Ok(res) => row.push(Cell::new(&format!("{:x?}", res))),
+                        Ok(res) => row.push(Cell::new(&format!("{res:x?}"))),
                         Err(err) => {
                             #[allow(clippy::unnecessary_to_owned)]
-                            row.push(Cell::new(&format!("{:x?}", err).red().to_string()));
+                            row.push(Cell::new(&format!("{err:x?}").red().to_string()));
                         }
                     }
                 }
@@ -629,7 +644,7 @@ fn scan(command: CommandScan) -> Result<()> {
 
         let total_strs = [
             format!("total={}", games.len()),
-            format!("0={} 1={} >1={}", no_matches, one_match, gt_one_match),
+            format!("0={no_matches} 1={one_match} >1={gt_one_match}"),
         ]
         .into_iter()
         .chain(totals.iter().map(Summary::format))
@@ -777,7 +792,7 @@ fn diff_report(command: CommandDiffReport) -> Result<()> {
     }
 
     fn format_res(res: Result<&dyn Resolution, &ResolveError>) -> String {
-        local(format!("{:x?}", res).bold(), |s| match res {
+        local(format!("{res:x?}").bold(), |s| match res {
             Ok(_) => s,
             Err(_) => s.red(),
         })
@@ -786,7 +801,7 @@ fn diff_report(command: CommandDiffReport) -> Result<()> {
 
     fn format_percent_diff(percent_diff: f32) -> String {
         local(
-            format!("{:+.2?}%", percent_diff).bold(),
+            format!("{percent_diff:+.2?}%").bold(),
             |s| match percent_diff {
                 f if f < 0. => s.red(),
                 f if f > 0. => s.green(),

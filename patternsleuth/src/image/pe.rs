@@ -208,7 +208,7 @@ impl Image<'_> {
                             .or_default()
                             .push(f);
                     } else {
-                        println!("invalid unwind addr {:x}", unwind);
+                        println!("invalid unwind addr {unwind:x}");
                     }
                 }
             }
