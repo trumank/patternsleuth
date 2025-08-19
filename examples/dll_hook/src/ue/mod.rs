@@ -1056,12 +1056,13 @@ pub struct UClass {
     pub class_vtable_helper_ctor_caller: *const (), // extern "system" fn(*const FVTableHelper) -> *const UObject,
     pub cpp_class_static_functions: *const (),      // FUObjectCppClassStaticFunctions,
     pub class_unique: i32,
-    pub first_owned_class_rep: i32,
-    pub cooked: bool,
-    pub layout_changing: bool,
+    // pub first_owned_class_rep: i32,
+    // pub cooked: bool,
+    // pub layout_changing: bool,
     pub class_flags: EClassFlags,
     pub class_cast_flags: EClassCastFlags,
 }
+const _: () = assert!(std::mem::offset_of!(UClass, class_flags) == 0xcc);
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]

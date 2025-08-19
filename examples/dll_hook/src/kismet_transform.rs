@@ -746,7 +746,16 @@ pub fn compile(
                     .collect::<Result<Vec<_>>>()?,
             }
             .into(),
-            Op::ExLocalFinalFunction => bail!("gen ExLocalFinalFunction"),
+            Op::ExLocalFinalFunction => ExLocalFinalFunction {
+                stack_node: c.pin_function(id, "func")?,
+                parameters: node
+                    .inputs
+                    .iter()
+                    .filter_map(|p| p.name.starts_with("param ").then_some(&p.name))
+                    .map(|n| c.get_prev(id, n).and_then(|n| build_ex(c, n).map(Inline)))
+                    .collect::<Result<Vec<_>>>()?,
+            }
+            .into(),
             Op::ExLocalOutVariable => ExLocalOutVariable {
                 variable: c.pin_prop(id, "variable")?,
             }
@@ -773,7 +782,11 @@ pub fn compile(
             Op::ExBindDelegate => bail!("gen ExBindDelegate"),
             Op::ExRemoveMulticastDelegate => bail!("gen ExRemoveMulticastDelegate"),
             Op::ExCallMulticastDelegate => bail!("gen ExCallMulticastDelegate"),
-            Op::ExLetValueOnPersistentFrame => bail!("gen ExLetValueOnPersistentFrame"),
+            Op::ExLetValueOnPersistentFrame => ExLetValueOnPersistentFrame {
+                destination_property: c.pin_prop(id, "property")?,
+                assignment_expression: build_ex(c, c.get_prev(id, "value")?)?.into(),
+            }
+            .into(),
             Op::ExArrayConst => bail!("gen ExArrayConst"),
             Op::ExEndArrayConst => bail!("gen ExEndArrayConst"),
             Op::ExSoftObjectConst => bail!("gen ExSoftObjectConst"),

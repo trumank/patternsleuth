@@ -69,6 +69,7 @@ pub unsafe fn initialize() -> Result<()> {
     HookAllocateUObject.initialize(
         std::mem::transmute(globals().resolution.allocate_uobject.0),
         |this, object, merging_threads| {
+            // println!("alloc {this:p} {object:p}");
             HookAllocateUObject.call(this, object, merging_threads);
             ObjectRegistry::on_object_created(object as *mut _);
         },
@@ -78,6 +79,7 @@ pub unsafe fn initialize() -> Result<()> {
     HookFreeUObject.initialize(
         std::mem::transmute(globals().resolution.free_uobject.0),
         |this, object| {
+            // println!("free  {this:p} {object:p}");
             ObjectRegistry::on_object_deleted(this as *mut _);
             HookFreeUObject.call(this, object);
         },
@@ -323,9 +325,9 @@ unsafe extern "system" fn hook_exec<const N: usize>(
 }
 
 unsafe fn hook_gnatives(gnatives: &mut ue::GNatives) {
-    let mut state = KISMET_STATE.lock().unwrap();
-    state.gnatives_old.copy_from_slice(gnatives);
-    seq_macro::seq!(N in 0..255 {
-        gnatives[N] = Some(hook_exec::<N>);
-    });
+    // let mut state = KISMET_STATE.lock().unwrap();
+    // state.gnatives_old.copy_from_slice(gnatives);
+    // seq_macro::seq!(N in 0..255 {
+    //     gnatives[N] = Some(hook_exec::<N>);
+    // });
 }

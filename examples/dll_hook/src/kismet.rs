@@ -818,7 +818,9 @@ pub fn normalize_and_serialize(exs: &mut Vec<literal::Expr>) -> Result<Vec<u8>> 
                 Ex::ExRemoveMulticastDelegate(ex) => bail!("todo write ExRemoveMulticastDelegate"),
                 Ex::ExCallMulticastDelegate(ex) => bail!("todo write ExCallMulticastDelegate"),
                 Ex::ExLetValueOnPersistentFrame(ex) => {
-                    bail!("todo write ExLetValueOnPersistentFrame")
+                    self.s.write_u64::<LE>(ex.destination_property.0)?;
+                    let e = self.advance(ex.assignment_expression);
+                    self.write_ex(e)?;
                 }
                 Ex::ExArrayConst(ex) => bail!("todo write ExArrayConst"),
                 Ex::ExEndArrayConst(_) => {}

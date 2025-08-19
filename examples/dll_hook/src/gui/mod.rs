@@ -276,20 +276,20 @@ pub fn init() {
                         let Some(obj) = object.cast::<ue::UFunction>() else {
                             continue;
                         };
-                        if obj.script.is_empty() {
-                            continue;
-                        }
-                        // tracing::info!("len={}: {}", obj.script.len(), obj.path());
-                        let mut stream = std::io::Cursor::new(obj.script.as_slice());
+                        // if obj.script.is_empty() {
+                        //     continue;
+                        // }
+                        // // tracing::info!("len={}: {}", obj.script.len(), obj.path());
+                        // let mut stream = std::io::Cursor::new(obj.script.as_slice());
 
-                        let ex = crate::kismet::read_all(&mut stream);
-                        match ex {
-                            // Ok(ex) => tracing::info!("ex: {ex:#?}"),
-                            Ok(ex) => {
-                                tracing::info!("ex: {}", ex.len());
-                            }
-                            Err(err) => tracing::error!("ex: {err}"),
-                        }
+                        // let ex = crate::kismet::read_all(&mut stream);
+                        // match ex {
+                        //     // Ok(ex) => tracing::info!("ex: {ex:#?}"),
+                        //     Ok(ex) => {
+                        //         tracing::info!("ex: {}", ex.len());
+                        //     }
+                        //     Err(err) => tracing::error!("ex: {err}"),
+                        // }
                     }
                     ObjectEvent::Deleted { id } => {
                         s.objects.shift_remove(id);
@@ -335,7 +335,7 @@ impl InnerState {
         Self {
             buh: 0,
             // filter: ObjectFilter::new("Function /Game/".to_string()),
-            filter: ObjectFilter::new("^GameEngine".to_string()),
+            filter: ObjectFilter::new("BndEvt__InstantUsable_K2Node_ComponentBoundEvent_1_UsedBySignature__DelegateSignature".to_string()),
             filtered: Default::default(),
             objects: Default::default(),
             kismet_log: "".to_string(),

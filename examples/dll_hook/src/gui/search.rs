@@ -14,13 +14,14 @@ pub struct ObjectCache {
 impl ObjectCache {
     pub fn new(object: &ue::UObjectBase) -> Self {
         let script_status = if let Some(func) = object.cast::<ue::UFunction>() {
-            let mut stream = std::io::Cursor::new(func.script.as_slice());
-            let ex = crate::kismet::read_all(&mut stream);
-            Some((
-                func.script.len(),
-                ex.map(|ex| format!("{}", ex.len()))
-                    .map_err(|e| e.to_string()),
-            ))
+            // let mut stream = std::io::Cursor::new(func.script.as_slice());
+            // let ex = crate::kismet::read_all(&mut stream);
+            // Some((
+            //     func.script.len(),
+            //     ex.map(|ex| format!("{}", ex.len()))
+            //         .map_err(|e| e.to_string()),
+            // ))
+            None
         } else {
             None
         };
