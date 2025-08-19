@@ -25,6 +25,7 @@ typetag = { version = "0.2.15", optional = true }
 gimli = { version = "0.28.1", optional = true }
 tracing = "0.1.40"
 paste = "1.0.15"
+minidump = { version = "0.26.0", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { version = "0.2.152", optional = true }
@@ -44,5 +45,5 @@ serde-resolvers = ["dep:serde", "dep:typetag"]
 symbols = ["dep:pdb", "dep:msvc-demangler"]
 process-external = ["image-pe", "dep:libc", "dep:windows"]
 process-internal = ["dep:libc", "dep:windows"]
-image-pe = []
+image-pe = ["dep:minidump"]
 image-elf = ["dep:gimli"]
