@@ -421,6 +421,7 @@ impl<'data> Memory<'data> {
         Ok(Self {
             sections: sections
                 .into_iter()
+                .filter(|(s, _)| Self::is_section_scannable(s.flags()))
                 .map(|(s, d)| {
                     Ok(NamedMemorySection::new(
                         s.name()?.to_string(),
@@ -438,6 +439,7 @@ impl<'data> Memory<'data> {
         Ok(Self {
             sections: sections
                 .into_iter()
+                .filter(|(s, _)| Self::is_section_scannable(s.flags()))
                 .map(|(s, d)| {
                     Ok(NamedMemorySection::new(
                         s.name()?.to_string(),
