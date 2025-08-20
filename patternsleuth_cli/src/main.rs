@@ -453,9 +453,8 @@ fn scan(command: CommandScan) -> Result<()> {
                         table.set_format(*format::consts::FORMAT_NO_BORDER);
 
                         table.add_row(Row::new(cells));
-
-                        &table.to_string()
-                    }));
+                        table.to_string()
+                    }.as_str()));
                 } else {
                     cells.push(Cell::new({
                         let mut lines = sig_scans
@@ -499,8 +498,8 @@ fn scan(command: CommandScan) -> Result<()> {
                                 ));
                             }
                         }
-                        &join(lines.iter().map(|(line, _)| line), "\n").to_string()
-                    }));
+                        join(lines.iter().map(|(line, _)| line), "\n").to_string()
+                    }.as_str()));
                 }
             } else {
                 #[allow(clippy::unnecessary_to_owned)]
@@ -992,7 +991,7 @@ fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameFileEntry>> {
                 return Ok(None);
             }
 
-            let Some(exe_path) = find_ext(entry.path(), &["exe", "elf"])
+            let Some(exe_path) = find_ext(entry.path(), &["exe", "elf", "dmp"])
                 .transpose()
                 .transpose()?
             else {
