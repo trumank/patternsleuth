@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use futures::future::join_all;
+use futures::{future::join_all, join};
 use iced_x86::{Decoder, DecoderOptions, Instruction};
 use patternsleuth_scanner::Pattern;
 
@@ -39,9 +39,62 @@ impl_resolver_singleton!(all, UObjectSkipFunction, |ctx| async {
 )]
 pub struct GNatives(pub usize);
 impl_resolver_singleton!(collect, GNatives);
-impl_resolver_singleton!(PEImage, GNatives, |ctx| async {
-    use iced_x86::{Code, Register};
 
+impl_resolver_singleton!(PEImage, GNatives, |ctx| async {
+    // On Windows, try both patterns and skip function
+    let (patterns, via_skip) = join!(
+        ctx.resolve(GNativesPatterns::resolver()),
+        ctx.resolve(GNativesViaSkipFunction::resolver()),
+    );
+    
+    Ok(Self(*ensure_one(
+        [patterns.map(|r| r.0), via_skip.map(|r| r.0)]
+            .iter()
+            .filter_map(|r| r.as_ref().ok()),
+    )?))
+});
+
+impl_resolver_singleton!(ElfImage, GNatives, |ctx| async {
+    // On Linux, only use skip function approach
+    ctx.resolve(GNativesViaSkipFunction::resolver()).await.map(|r| Self(r.0))
+});
+
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct GNativesPatterns(pub usize);
+impl_resolver_singleton!(collect, GNativesPatterns);
+
+impl_resolver_singleton!(PEImage, GNativesPatterns, |ctx| async {
+    let patterns = [
+        "80 3D ?? ?? ?? ?? 00 48 8D 15 ?? ?? ?? ?? 75 ?? C6 05 ?? ?? ?? ?? 01 48 8D 05 | ?? ?? ?? ?? B9",
+    ];
+
+    let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+
+    Ok(Self(try_ensure_one(res.iter().flatten().map(
+        |a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) },
+    ))?))
+});
+
+impl_resolver_singleton!(ElfImage, GNativesPatterns, |ctx| async {
+    bail_out!("GNativesPatterns not implemented for Linux");
+});
+
+// Skip-function-based resolver
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct GNativesViaSkipFunction(pub usize);
+impl_resolver_singleton!(collect, GNativesViaSkipFunction);
+
+impl_resolver_singleton!(PEImage, GNativesViaSkipFunction, |ctx| async {
+    use iced_x86::{Code, Register};
+    
     let skip_function = ctx.resolve(UObjectSkipFunction::resolver()).await?;
     let bytes = ctx.image().memory.range_from(skip_function.0..)?;
 
@@ -57,14 +110,14 @@ impl_resolver_singleton!(PEImage, GNatives, |ctx| async {
     while decoder.can_decode() {
         decoder.decode_out(&mut instruction);
         if instruction.code() == Code::Lea_r64_m && instruction.memory_base() == Register::RIP {
-            return Ok(GNatives(instruction.memory_displacement64() as usize));
+            return Ok(GNativesViaSkipFunction(instruction.memory_displacement64() as usize));
         }
     }
 
-    bail_out!("failed to not find LEA instruction");
+    bail_out!("failed to find LEA instruction");
 });
 
-impl_resolver_singleton!(ElfImage, GNatives, |ctx| async {
+impl_resolver_singleton!(ElfImage, GNativesViaSkipFunction, |ctx| async {
     let skip_function = ctx.resolve(UObjectSkipFunction::resolver()).await?;
     let bytes = ctx.image().memory.range_from(skip_function.0..)?;
 
@@ -75,16 +128,15 @@ impl_resolver_singleton!(ElfImage, GNatives, |ctx| async {
         DecoderOptions::NONE,
     );
 
-    // TODO recursive decode candidate
     let mut instruction = Instruction::default();
     while decoder.can_decode() {
         decoder.decode_out(&mut instruction);
         if instruction.is_call_near_indirect() && instruction.memory_index_scale() == 8 {
-            return Ok(GNatives(instruction.memory_displacement32() as usize));
+            return Ok(GNativesViaSkipFunction(instruction.memory_displacement32() as usize));
         }
     }
 
-    bail_out!("failed to not find LEA instruction");
+    bail_out!("failed to find call instruction");
 });
 
 /// public: void __cdecl FFrame::Step(class UObject *, void *const)
