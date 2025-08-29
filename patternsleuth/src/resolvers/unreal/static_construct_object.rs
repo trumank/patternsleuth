@@ -219,10 +219,10 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
             for call in util::find_calls(img, f)? {
                 let mut f = call.callee;
                 // sometimes there's a jmp stub between
-                if let Some(inst) = disassemble_single(img, f)? {
-                    if inst.flow_control() == FlowControl::UnconditionalBranch {
-                        f = inst.near_branch_target() as usize;
-                    }
+                if let Some(inst) = disassemble_single(img, f)?
+                    && inst.flow_control() == FlowControl::UnconditionalBranch
+                {
+                    f = inst.near_branch_target() as usize;
                 }
 
                 if check(f)? {
@@ -318,10 +318,10 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
             checked.insert(call.callee);
 
             let mut f = call.callee;
-            if let Some(inst) = disassemble_single(ctx.image(), f)? {
-                if inst.flow_control() == FlowControl::UnconditionalBranch {
-                    f = inst.near_branch_target() as usize;
-                }
+            if let Some(inst) = disassemble_single(ctx.image(), f)?
+                && inst.flow_control() == FlowControl::UnconditionalBranch
+            {
+                f = inst.near_branch_target() as usize;
             }
 
             if check_is_static_construct(ctx.image(), f)? {

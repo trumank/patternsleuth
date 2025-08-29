@@ -270,14 +270,13 @@ impl Display for Pattern {
                 write!(f, " |")?;
             }
             write!(f, " ")?;
-            if *mask == 0 {
-                if let Some((_offset, xref)) =
+            if *mask == 0
+                && let Some((_offset, xref)) =
                     self.xrefs.iter().find(|(offset, _xref)| *offset == i)
-                {
-                    write!(f, "X0x{:X}", xref.0)?;
-                    iter.nth(2); // skip 3
-                    continue;
-                }
+            {
+                write!(f, "X0x{:X}", xref.0)?;
+                iter.nth(2); // skip 3
+                continue;
             }
             fmt_byte(f, *sig, *mask)?;
         }
@@ -387,24 +386,24 @@ fn group_patterns<'p>(patterns: &[&'p Pattern]) -> Vec<PatternPair<'p>> {
             },
         ) = counts.iter().max_by_key(|a| a.1).unwrap();
         for (i, p) in patterns.iter().enumerate() {
-            if let Some(p) = p {
-                if pattern_indexes.contains(&i) {
-                    let pos = p
-                        .simple
-                        .iter()
-                        .enumerate()
-                        .find_map(|(i, (sig, mask))| (sig == max_key && *mask == 0xff).then_some(i))
-                        .unwrap();
+            if let Some(p) = p
+                && pattern_indexes.contains(&i)
+            {
+                let pos = p
+                    .simple
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, (sig, mask))| (sig == max_key && *mask == 0xff).then_some(i))
+                    .unwrap();
 
-                    pattern_pairs[i] = Some(PatternPair {
-                        pattern: p,
-                        partial: PatternSimple {
-                            sig: p.simple.sig[pos..].to_vec(),
-                            mask: p.simple.mask[pos..].to_vec(),
-                        },
-                        offset: pos,
-                    });
-                }
+                pattern_pairs[i] = Some(PatternPair {
+                    pattern: p,
+                    partial: PatternSimple {
+                        sig: p.simple.sig[pos..].to_vec(),
+                        mask: p.simple.mask[pos..].to_vec(),
+                    },
+                    offset: pos,
+                });
             }
         }
 
@@ -557,33 +556,30 @@ pub fn scan_xref(patterns: &[&Xref], base_address: usize, data: &[u8]) -> Vec<Ve
                         i32::from_le_bytes(data[j..j + width].try_into().unwrap())
                             .try_into()
                             .unwrap(),
-                    ) {
-                        if let Ok(i) = patterns.binary_search_by_key(&address, |p| p.0) {
-                            // match found
-                            let addr = base_address + j;
-                            {
-                                // walk backwards until unequal
-                                let mut i = i;
-                                while let Some(prev) =
-                                    (i > 0).then(|| patterns.get(i - 1)).flatten()
-                                {
-                                    if prev.0 != address {
-                                        break;
-                                    }
-                                    matches.push((i - 1, addr));
-                                    i -= 1;
+                    ) && let Ok(i) = patterns.binary_search_by_key(&address, |p| p.0)
+                    {
+                        // match found
+                        let addr = base_address + j;
+                        {
+                            // walk backwards until unequal
+                            let mut i = i;
+                            while let Some(prev) = (i > 0).then(|| patterns.get(i - 1)).flatten() {
+                                if prev.0 != address {
+                                    break;
                                 }
+                                matches.push((i - 1, addr));
+                                i -= 1;
                             }
-                            {
-                                // walk forwards until unequal
-                                let mut i = i;
-                                while let Some(next) = patterns.get(i) {
-                                    if next.0 != address {
-                                        break;
-                                    }
-                                    matches.push((i, addr));
-                                    i += 1;
+                        }
+                        {
+                            // walk forwards until unequal
+                            let mut i = i;
+                            while let Some(next) = patterns.get(i) {
+                                if next.0 != address {
+                                    break;
                                 }
+                                matches.push((i, addr));
+                                i += 1;
                             }
                         }
                     }
@@ -877,7 +873,7 @@ mod test {
         let patterns = [&Pattern::new("01 02").unwrap()];
 
         // obtuse generator to test every combination of chunk boundaries
-        let data: Vec<_> = std::iter::repeat([1, 2, 3]).take(32).flatten().collect();
+        let data: Vec<_> = std::iter::repeat_n([1, 2, 3], 32).flatten().collect();
         let matches: Vec<_> = (0..3)
             .map(|offset| {
                 (0..len / 3)

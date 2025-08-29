@@ -80,7 +80,7 @@ impl_resolver_singleton!(PEImage, GNativesPatterns, |ctx| async {
     ))?))
 });
 
-impl_resolver_singleton!(ElfImage, GNativesPatterns, |ctx| async {
+impl_resolver_singleton!(ElfImage, GNativesPatterns, |_ctx| async {
     bail_out!("GNativesPatterns not implemented for Linux");
 });
 

@@ -11,8 +11,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use itertools::Itertools;
 use minidump::format::MINIDUMP_MEMORY_DESCRIPTOR64;
 use minidump::{
-    Error, Minidump, MinidumpMemory64List, MinidumpMemoryBase, MinidumpModule, MinidumpModuleList,
-    Module,
+    Minidump, MinidumpMemory64List, MinidumpMemoryBase, MinidumpModule, MinidumpModuleList, Module,
 };
 use object::Object;
 
@@ -76,7 +75,7 @@ impl PEImage {
                     let unwind_code_count = section.section.index(unwind_addr + 2)?;
 
                     unwind_addr += 4 + 2 * unwind_code_count as usize;
-                    if unwind_addr % 4 != 0 {
+                    if !unwind_addr.is_multiple_of(4) {
                         // align
                         unwind_addr += 2;
                     }

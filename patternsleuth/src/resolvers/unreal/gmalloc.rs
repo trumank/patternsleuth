@@ -110,10 +110,9 @@ impl_resolver_singleton!(PEImage, GMallocString, |ctx| async {
             if inst.code() == Code::Test_rm64_r64
                 && inst.op0_register() == Register::RCX
                 && inst.op1_register() == Register::RCX
+                && let Some(mov_rcx) = mov_rcx
             {
-                if let Some(mov_rcx) = mov_rcx {
-                    possible_gmalloc.push(mov_rcx);
-                }
+                possible_gmalloc.push(mov_rcx);
             }
 
             if inst.code() == Code::Mov_r64_rm64

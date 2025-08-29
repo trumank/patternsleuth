@@ -21,7 +21,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use image::Image;
 use object::elf::SHF_ALLOC;
-use object::pe::{IMAGE_SCN_CNT_UNINITIALIZED_DATA, IMAGE_SCN_MEM_READ};
+use object::pe::IMAGE_SCN_MEM_READ;
 use object::{File, Object, ObjectSection, SectionFlags};
 
 pub struct ResolveContext<'data, 'pattern> {

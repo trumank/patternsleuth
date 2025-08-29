@@ -46,7 +46,7 @@ mod linux {
         if name.is_empty() {
             // find the main
             //eprintln!("Base addr from iter = {:08x}", (*info).dlpi_addr);
-            *image = *info;
+            unsafe { *image = *info };
         }
         0
     }

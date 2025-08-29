@@ -43,15 +43,15 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
                 "{:016x} - {:016x} = function\n",
                 range.start, range.end
             ));
-            if let Some(symbols) = &exe.symbols {
-                if let Some(symbol) = symbols.get(&range.start) {
-                    #[allow(clippy::unnecessary_to_owned)]
-                    output
-                        .buffer
-                        .push_str(&symbol.name.bright_yellow().to_string());
-                    output.buffer.push_str(&"".normal().to_string());
-                    output.buffer.push('\n');
-                }
+            if let Some(symbols) = &exe.symbols
+                && let Some(symbol) = symbols.get(&range.start)
+            {
+                #[allow(clippy::unnecessary_to_owned)]
+                output
+                    .buffer
+                    .push_str(&symbol.name.bright_yellow().to_string());
+                output.buffer.push_str(&"".normal().to_string());
+                output.buffer.push('\n');
             }
             let start_address = range.start as u64;
             let data = section.range(range).unwrap();
@@ -165,13 +165,13 @@ pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
                 "{:016x} - {:016x} = function\n",
                 f.range.start, f.range.end
             ));
-            if let Some(symbols) = &exe.symbols {
-                if let Some(symbol) = symbols.get(&f.range.start) {
-                    #[allow(clippy::unnecessary_to_owned)]
-                    output
-                        .buffer
-                        .push_str(&format!("{}\n", symbol.name).bright_yellow().to_string());
-                }
+            if let Some(symbols) = &exe.symbols
+                && let Some(symbol) = symbols.get(&f.range.start)
+            {
+                #[allow(clippy::unnecessary_to_owned)]
+                output
+                    .buffer
+                    .push_str(&format!("{}\n", symbol.name).bright_yellow().to_string());
             }
         } else {
             output.buffer.push_str("no function");
@@ -281,13 +281,13 @@ where
 
         formatter.format(&instruction, &mut output);
 
-        if instruction.op_kinds().any(|op| op == OpKind::NearBranch64) {
-            if let Some(symbol) = symbols(instruction.near_branch64() as usize) {
-                #[allow(clippy::unnecessary_to_owned)]
-                output
-                    .buffer
-                    .push_str(&format!(" {}", symbol.bright_yellow().to_owned()));
-            }
+        if instruction.op_kinds().any(|op| op == OpKind::NearBranch64)
+            && let Some(symbol) = symbols(instruction.near_branch64() as usize)
+        {
+            #[allow(clippy::unnecessary_to_owned)]
+            output
+                .buffer
+                .push_str(&format!(" {}", symbol.bright_yellow().to_owned()));
         }
         output.buffer.push('\n');
     }
