@@ -5,10 +5,10 @@ pub use linux::*;
 mod linux {
     use std::ops::Range;
 
-    use anyhow::{bail, Context, Result};
+    use anyhow::{Context, Result, bail};
     use object::{Object, ObjectSection};
 
-    use crate::{image, Image, Memory};
+    use crate::{Image, Memory, image};
 
     fn read_process_mem(pid: i32, address: usize, buffer: &mut [u8]) -> Result<usize> {
         unsafe {
@@ -42,7 +42,14 @@ mod linux {
             .with_context(|| format!("could not read process maps (PID={pid})"))?;
         for line in maps.lines() {
             let mut split = line.splitn(6, |c: char| c.is_whitespace());
-            if let [Some(range), Some(_permissions), Some(_offset), Some(_device), Some(_inode), Some(path)] = [
+            if let [
+                Some(range),
+                Some(_permissions),
+                Some(_offset),
+                Some(_device),
+                Some(_inode),
+                Some(path),
+            ] = [
                 split.next(),
                 split.next(),
                 split.next(),
@@ -112,7 +119,7 @@ pub use windows::*;
 
 #[cfg(windows)]
 mod windows {
-    use anyhow::{bail, Result};
+    use anyhow::{Result, bail};
     use object::{Object, ObjectSection};
 
     use crate::image::pe::PEImage;

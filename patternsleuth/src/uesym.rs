@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use object::{from_bytes, slice_from_bytes, Pod};
+use anyhow::{Result, anyhow};
+use object::{Pod, from_bytes, slice_from_bytes};
 use std::{collections::HashMap, path::Path};
 
 use crate::symbols::Symbol;

@@ -4,11 +4,11 @@ use crate::{Image, MemoryAccessError};
 use futures::{
     channel::oneshot,
     executor::LocalPool,
-    future::{join_all, BoxFuture},
+    future::{BoxFuture, join_all},
 };
 use futures_scopes::{
-    relay::{new_relay_scope, RelayScopeLocalSpawning},
     ScopedSpawnExt, SpawnScope,
+    relay::{RelayScopeLocalSpawning, new_relay_scope},
 };
 use patternsleuth_scanner::Pattern;
 use std::{

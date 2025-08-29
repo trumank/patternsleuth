@@ -6,13 +6,13 @@ use std::{
 
 use anyhow::Result;
 use itertools::Itertools;
-use patternsleuth::{image::Image, scanner::Pattern, PatternConfig};
+use patternsleuth::{PatternConfig, image::Image, scanner::Pattern};
 use prettytable::{Cell, Row, Table};
 use rayon::prelude::*;
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::{
-    disassemble, get_games, CommandAutoGen, CommandBuildIndex, CommandViewSymbol, GameFileEntry,
+    CommandAutoGen, CommandBuildIndex, CommandViewSymbol, GameFileEntry, disassemble, get_games,
 };
 
 fn generate_patterns_for_symbol(symbol: &str) -> Result<Vec<Pattern>> {

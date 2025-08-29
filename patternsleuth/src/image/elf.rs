@@ -7,10 +7,10 @@ use gimli::{BaseAddresses, CieOrFde, EhFrame, EhFrameHdr, NativeEndian, UnwindSe
 
 #[cfg(feature = "symbols")]
 use crate::uesym;
-use anyhow::{bail, Context, Error, Result};
+use anyhow::{Context, Error, Result, bail};
 use object::{
-    elf::ProgramHeader64, read::elf::ElfFile64, read::elf::ProgramHeader, Endianness, File, Object,
-    ObjectSection, SectionKind,
+    Endianness, File, Object, ObjectSection, SectionKind, elf::ProgramHeader64,
+    read::elf::ElfFile64, read::elf::ProgramHeader,
 };
 
 pub struct ElfImage {

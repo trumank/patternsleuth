@@ -1,16 +1,19 @@
-use std::cmp::min;
 use object::{File, ObjectSection};
+use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
-use anyhow::{anyhow, bail, Context, Result};
-use itertools::Itertools;
-use minidump::{Minidump, MinidumpMemory64List, MinidumpModuleList, Module, Error, MinidumpModule, MinidumpMemoryBase};
-use minidump::format::MINIDUMP_MEMORY_DESCRIPTOR64;
 use super::{Image, ImageType};
 #[cfg(feature = "symbols")]
 use crate::symbols;
 use crate::{Memory, MemoryAccessError, MemoryTrait, RuntimeFunction};
+use anyhow::{Context, Result, anyhow, bail};
+use itertools::Itertools;
+use minidump::format::MINIDUMP_MEMORY_DESCRIPTOR64;
+use minidump::{
+    Error, Minidump, MinidumpMemory64List, MinidumpMemoryBase, MinidumpModule, MinidumpModuleList,
+    Module,
+};
 use object::Object;
 
 pub struct PEImage {
@@ -258,9 +261,9 @@ impl PEImage {
         let get_imports = || -> Result<_> {
             Ok(match object {
                 object::File::Pe64(ref inner) => {
+                    use object::LittleEndian as LE;
                     use object::pe::ImageNtHeaders64;
                     use object::read::pe::ImageThunkData;
-                    use object::LittleEndian as LE;
 
                     let mut imports: HashMap<String, HashMap<String, usize>> = Default::default();
 
@@ -321,15 +324,23 @@ impl PEImage {
     }
 }
 
-pub fn read_image_from_minidump<'a>(minidump: Minidump<'_, &[u8]>) -> Result<Image<'a>, anyhow::Error> {
+pub fn read_image_from_minidump<'a>(
+    minidump: Minidump<'_, &[u8]>,
+) -> Result<Image<'a>, anyhow::Error> {
     let minidump_module_list: MinidumpModuleList = minidump.get_stream::<MinidumpModuleList>()?;
     let memory_list: MinidumpMemory64List = minidump.get_stream::<MinidumpMemory64List>()?;
 
-    let main_module: &MinidumpModule = minidump_module_list.main_module().ok_or_else(|| anyhow!("Main module not found in minidump module list"))?;
-    let image_memory_region: &MinidumpMemoryBase<MINIDUMP_MEMORY_DESCRIPTOR64> = memory_list.memory_at_address(main_module.base_address())
+    let main_module: &MinidumpModule = minidump_module_list
+        .main_module()
+        .ok_or_else(|| anyhow!("Main module not found in minidump module list"))?;
+    let image_memory_region: &MinidumpMemoryBase<MINIDUMP_MEMORY_DESCRIPTOR64> = memory_list
+        .memory_at_address(main_module.base_address())
         .ok_or_else(|| anyhow!("Main module not found in minidump module list"))?;
 
-    let object: File = File::parse(&image_memory_region.bytes[(main_module.base_address() - image_memory_region.base_address) as usize..])?;
+    let object: File = File::parse(
+        &image_memory_region.bytes
+            [(main_module.base_address() - image_memory_region.base_address) as usize..],
+    )?;
     let image_base_address = object.relative_address_base();
 
     let mut sections = vec![];
@@ -338,10 +349,16 @@ pub fn read_image_from_minidump<'a>(minidump: Minidump<'_, &[u8]>) -> Result<Ima
         let section_absolute_address = main_module.base_address() + section_relative_address;
         let section_size = section.size();
 
-        if let Some(section_memory_region) = memory_list.memory_at_address(section_absolute_address) {
-            let section_start_offset = section_absolute_address - section_memory_region.base_address;
-            let section_end_offset = min(section_memory_region.size, section_start_offset + section_size);
-            let section_data = &section_memory_region.bytes[section_start_offset as usize..section_end_offset as usize];
+        if let Some(section_memory_region) = memory_list.memory_at_address(section_absolute_address)
+        {
+            let section_start_offset =
+                section_absolute_address - section_memory_region.base_address;
+            let section_end_offset = min(
+                section_memory_region.size,
+                section_start_offset + section_size,
+            );
+            let section_data = &section_memory_region.bytes
+                [section_start_offset as usize..section_end_offset as usize];
             sections.push((section, Vec::from(section_data)));
         }
     }

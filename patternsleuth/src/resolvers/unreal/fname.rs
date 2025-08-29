@@ -5,8 +5,8 @@ use futures::future::join_all;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util, Result},
     MemoryTrait,
+    resolvers::{Result, ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util},
 };
 
 /// public: __cdecl FName::FName(wchar_t const *, enum EFindName)
@@ -116,7 +116,7 @@ impl_resolver_singleton!(ElfImage, FNameCtorWchar, |ctx| async {
 });
 
 impl_resolver_singleton!(PEImage, FNameCtorWchar, |ctx| async {
-    use crate::{resolvers::Context, MemoryTrait};
+    use crate::{MemoryTrait, resolvers::Context};
     use futures::join;
     use iced_x86::{Code, Decoder, DecoderOptions};
 
@@ -219,7 +219,7 @@ impl_resolver_singleton!(ElfImage, FNameToString, |ctx| async {
 });
 
 impl_resolver_singleton!(PEImage, FNameToString, |ctx| async {
-    use crate::{resolvers::Context, MemoryTrait};
+    use crate::{MemoryTrait, resolvers::Context};
     use futures::join;
     use iced_x86::{Code, Decoder, DecoderOptions};
 

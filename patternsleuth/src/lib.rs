@@ -18,11 +18,11 @@ use std::{
     path::Path,
 };
 
-use anyhow::{bail, Context, Result};
-use object::{File, Object, ObjectSection, SectionFlags};
+use anyhow::{Context, Result, bail};
+use image::Image;
 use object::elf::SHF_ALLOC;
 use object::pe::{IMAGE_SCN_CNT_UNINITIALIZED_DATA, IMAGE_SCN_MEM_READ};
-use image::Image;
+use object::{File, Object, ObjectSection, SectionFlags};
 
 pub struct ResolveContext<'data, 'pattern> {
     pub exe: &'data Image<'data>,
@@ -392,12 +392,8 @@ pub struct Memory<'data> {
 impl<'data> Memory<'data> {
     fn is_section_scannable(section_flags: SectionFlags) -> bool {
         match section_flags {
-            SectionFlags::Coff { characteristics } => {
-                (characteristics & IMAGE_SCN_MEM_READ) != 0
-            }
-            SectionFlags::Elf { sh_flags } => {
-                (sh_flags & SHF_ALLOC as u64) != 0
-            }
+            SectionFlags::Coff { characteristics } => (characteristics & IMAGE_SCN_MEM_READ) != 0,
+            SectionFlags::Elf { sh_flags } => (sh_flags & SHF_ALLOC as u64) != 0,
             _ => true,
         }
     }

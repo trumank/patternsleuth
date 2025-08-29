@@ -6,10 +6,10 @@ pub mod pe;
 
 use crate::*;
 use anyhow::Error;
-#[cfg(feature = "image-pe")]
-use minidump::Minidump;
 #[cfg(feature = "image-elf")]
 use elf::ElfImage;
+#[cfg(feature = "image-pe")]
+use minidump::Minidump;
 #[cfg(feature = "image-pe")]
 use pe::PEImage;
 
@@ -33,9 +33,9 @@ image_type_dispatch! {
     }
 }
 
-pub use _image_type_reflection as image_type_reflection;
 #[cfg(feature = "image-pe")]
 use crate::image::pe::read_image_from_minidump;
+pub use _image_type_reflection as image_type_reflection;
 
 pub struct Image<'data> {
     pub base_address: usize,
@@ -65,11 +65,11 @@ impl<'data> Image<'data> {
                     PEImage::read_inner(base_addr, exe_path, cache_functions, object)
                 }
                 _ => Err(Error::msg("Unsupported object file format")),
-            }
+            };
         }
         #[cfg(feature = "image-pe")]
         if let Ok(minidump) = Minidump::read(data) {
-            return read_image_from_minidump(minidump)
+            return read_image_from_minidump(minidump);
         }
         Err(Error::msg("Unsupported file format"))
     }

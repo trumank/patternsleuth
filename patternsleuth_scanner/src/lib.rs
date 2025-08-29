@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Error, Result};
+use anyhow::{Context, Error, Result, bail};
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct PatternSimple {

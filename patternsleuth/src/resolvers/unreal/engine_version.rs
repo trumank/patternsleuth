@@ -6,8 +6,8 @@ use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{bail_out, impl_resolver, try_ensure_one},
     MemoryTrait,
+    resolvers::{bail_out, impl_resolver, try_ensure_one},
 };
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]

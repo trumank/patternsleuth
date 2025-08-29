@@ -7,20 +7,20 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
+use clap::Parser;
 use clap::builder::{
     IntoResettable, PossibleValue, PossibleValuesParser, TypedValueParser, ValueParser,
 };
-use clap::Parser;
 use indicatif::ProgressBar;
 use itertools::Itertools;
 use patricia_tree::StringPatriciaMap;
 use patternsleuth::image::Image;
-use patternsleuth::resolvers::{resolvers, NamedResolver};
+use patternsleuth::resolvers::{NamedResolver, resolvers};
 
 use patternsleuth::scanner::Xref;
 use patternsleuth::symbols::Symbol;
-use patternsleuth::{scanner::Pattern, PatternConfig, Resolution};
+use patternsleuth::{PatternConfig, Resolution, scanner::Pattern};
 
 #[derive(Parser)]
 enum Commands {
@@ -217,7 +217,7 @@ fn find_ext<P: AsRef<Path>, E: AsRef<str>>(dir: P, ext: &[E]) -> Result<Option<P
 }
 
 fn main() -> Result<()> {
-    use tracing_subscriber::{fmt, fmt::format::FmtSpan, EnvFilter};
+    use tracing_subscriber::{EnvFilter, fmt, fmt::format::FmtSpan};
 
     fmt()
         .compact()
@@ -295,7 +295,7 @@ fn scan(command: CommandScan) -> Result<()> {
     use colored::Colorize;
     use indicatif::ProgressIterator;
     use itertools::join;
-    use prettytable::{format, row, Cell, Row, Table};
+    use prettytable::{Cell, Row, Table, format, row};
 
     enum Output {
         Stdout,
@@ -417,89 +417,98 @@ fn scan(command: CommandScan) -> Result<()> {
                     }
                     cells.push(Cell::new(&table.to_string()));
                 } else if command.disassemble_merged {
-                    cells.push(Cell::new({
-                        let cells = sig_scans
-                            .iter()
-                            .fold(
-                                HashMap::<&Resolution, HashMap<&str, usize>>::new(),
-                                |mut map, m| {
-                                    *map.entry(m.1).or_default().entry(&m.0.name).or_default() += 1;
-                                    map
-                                },
-                            )
-                            .iter()
-                            // sort by pattern name, then match address
-                            .sorted_by_key(|&data| data.0)
-                            .map(|(m, counts)| {
-                                let dis = disassemble::disassemble(&exe, m.address, None);
+                    cells.push(Cell::new(
+                        {
+                            let cells = sig_scans
+                                .iter()
+                                .fold(
+                                    HashMap::<&Resolution, HashMap<&str, usize>>::new(),
+                                    |mut map, m| {
+                                        *map.entry(m.1)
+                                            .or_default()
+                                            .entry(&m.0.name)
+                                            .or_default() += 1;
+                                        map
+                                    },
+                                )
+                                .iter()
+                                // sort by pattern name, then match address
+                                .sorted_by_key(|&data| data.0)
+                                .map(|(m, counts)| {
+                                    let dis = disassemble::disassemble(&exe, m.address, None);
 
-                                let mut lines = vec![];
-                                for (name, count) in counts.iter().sorted_by_key(|e| e.0) {
+                                    let mut lines = vec![];
+                                    for (name, count) in counts.iter().sorted_by_key(|e| e.0) {
+                                        let count = if *count > 1 {
+                                            format!(" (x{count})")
+                                        } else {
+                                            "".to_string()
+                                        };
+
+                                        lines.push(format!("{name:?}{count}").normal().to_string());
+                                    }
+                                    lines.push(dis);
+
+                                    Cell::new(&join(lines, "\n"))
+                                })
+                                .collect::<Vec<_>>();
+
+                            let mut table = Table::new();
+                            table.set_format(*format::consts::FORMAT_NO_BORDER);
+
+                            table.add_row(Row::new(cells));
+                            table.to_string()
+                        }
+                        .as_str(),
+                    ));
+                } else {
+                    cells.push(Cell::new(
+                        {
+                            let mut lines = sig_scans
+                                .iter()
+                                // group and count matches by (pattern name, address)
+                                .fold(
+                                    HashMap::<(&String, &Resolution), usize>::new(),
+                                    |mut map, m| {
+                                        *map.entry((&m.0.name, m.1)).or_default() += 1;
+                                        map
+                                    },
+                                )
+                                .iter()
+                                // sort by pattern name, then match address
+                                .sorted_by_key(|&data| data.0)
+                                .map(|(m, count)| {
+                                    // add count indicator if more than 1
                                     let count = if *count > 1 {
                                         format!(" (x{count})")
                                     } else {
                                         "".to_string()
                                     };
 
-                                    lines.push(format!("{name:?}{count}").normal().to_string());
+                                    (
+                                        format!("{:016x} {:?}{}", m.1.address, m.0, count)
+                                            .normal()
+                                            .to_string(),
+                                        exe.symbols
+                                            .as_ref()
+                                            .and_then(|symbols| symbols.get(&m.1.address)),
+                                    )
+                                })
+                                .collect::<Vec<_>>();
+                            let max_len = lines.iter().map(|(line, _)| line.len()).max();
+                            for (line, symbol) in &mut lines {
+                                if let Some(symbol) = symbol {
+                                    line.push_str(&format!(
+                                        "{}{}",
+                                        " ".repeat(1 + max_len.unwrap() - line.len()),
+                                        symbol.name.bright_yellow()
+                                    ));
                                 }
-                                lines.push(dis);
-
-                                Cell::new(&join(lines, "\n"))
-                            })
-                            .collect::<Vec<_>>();
-
-                        let mut table = Table::new();
-                        table.set_format(*format::consts::FORMAT_NO_BORDER);
-
-                        table.add_row(Row::new(cells));
-                        table.to_string()
-                    }.as_str()));
-                } else {
-                    cells.push(Cell::new({
-                        let mut lines = sig_scans
-                            .iter()
-                            // group and count matches by (pattern name, address)
-                            .fold(
-                                HashMap::<(&String, &Resolution), usize>::new(),
-                                |mut map, m| {
-                                    *map.entry((&m.0.name, m.1)).or_default() += 1;
-                                    map
-                                },
-                            )
-                            .iter()
-                            // sort by pattern name, then match address
-                            .sorted_by_key(|&data| data.0)
-                            .map(|(m, count)| {
-                                // add count indicator if more than 1
-                                let count = if *count > 1 {
-                                    format!(" (x{count})")
-                                } else {
-                                    "".to_string()
-                                };
-
-                                (
-                                    format!("{:016x} {:?}{}", m.1.address, m.0, count)
-                                        .normal()
-                                        .to_string(),
-                                    exe.symbols
-                                        .as_ref()
-                                        .and_then(|symbols| symbols.get(&m.1.address)),
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                        let max_len = lines.iter().map(|(line, _)| line.len()).max();
-                        for (line, symbol) in &mut lines {
-                            if let Some(symbol) = symbol {
-                                line.push_str(&format!(
-                                    "{}{}",
-                                    " ".repeat(1 + max_len.unwrap() - line.len()),
-                                    symbol.name.bright_yellow()
-                                ));
                             }
+                            join(lines.iter().map(|(line, _)| line), "\n").to_string()
                         }
-                        join(lines.iter().map(|(line, _)| line), "\n").to_string()
-                    }.as_str()));
+                        .as_str(),
+                    ));
                 }
             } else {
                 #[allow(clippy::unnecessary_to_owned)]

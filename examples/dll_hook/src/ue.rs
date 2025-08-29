@@ -6,7 +6,7 @@ use std::{
 };
 
 use windows::Win32::System::Threading::{
-    EnterCriticalSection, LeaveCriticalSection, CRITICAL_SECTION,
+    CRITICAL_SECTION, EnterCriticalSection, LeaveCriticalSection,
 };
 
 use crate::globals;

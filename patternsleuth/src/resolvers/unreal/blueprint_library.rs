@@ -5,8 +5,8 @@ use futures::{future::join_all, join};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    resolvers::{ensure_one, impl_resolver, impl_resolver_singleton, Context},
     Addressable, Matchable,
+    resolvers::{Context, ensure_one, impl_resolver, impl_resolver_singleton},
 };
 
 #[derive(Debug, PartialEq)]
