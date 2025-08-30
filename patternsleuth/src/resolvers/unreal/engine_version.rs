@@ -192,3 +192,33 @@ impl_resolver!(PEImage, EngineVersionStrings, |ctx| async {
 
     bail_out!("not found");
 });
+
+/// Detects the build configuration (DebugGame/Development vs Shipping)
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub enum BuildConfiguration {
+    Shipping,
+    Development, // Includes DebugGame, Test, Dev, Development
+}
+
+impl_resolver!(all, BuildConfiguration, |ctx| async {
+    use crate::resolvers::unreal::util;
+
+    // This debug string only appears in non-shipping builds
+    let debug_string =
+        "Size,Name,PSysSize,ModuleSize,ComponentSize,ComponentCount,CompResSize,CompTrueResSize\0";
+
+    let pattern = util::utf16_pattern(debug_string);
+    let results = ctx.scan(pattern).await;
+
+    if !results.is_empty() {
+        // Found the debug string - this is a development build
+        Ok(BuildConfiguration::Development)
+    } else {
+        // No debug string found - assume shipping build
+        Ok(BuildConfiguration::Shipping)
+    }
+});
