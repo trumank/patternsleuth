@@ -84,13 +84,13 @@ impl WrapRecord<'_, '_> {
 
 pub fn dump_ue_symbols<P: AsRef<Path>>(
     filename: P,
-    base_address: usize,
-) -> Result<HashMap<usize, Symbol>> {
+    base_address: u64,
+) -> Result<HashMap<u64, Symbol>> {
     let data = std::fs::read(filename)?;
     let symbols = RawUESymbols::new(data.as_slice())?;
     Ok(HashMap::from_iter(symbols.iter().map(|rec| {
         (
-            rec.record.address as usize + base_address,
+            rec.record.address + base_address,
             Symbol {
                 name: rec.symbol().to_string(),
             },

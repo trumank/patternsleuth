@@ -17,16 +17,16 @@ impl Symbol {
 }
 
 fn print_symbol(
-    symbols: &mut HashMap<usize, Symbol>,
+    symbols: &mut HashMap<u64, Symbol>,
     address_map: &pdb::AddressMap<'_>,
-    base_address: usize,
+    base_address: u64,
     symbol: &pdb::Symbol<'_>,
 ) -> pdb::Result<()> {
     #[allow(clippy::single_match)]
     match symbol.parse()? {
         pdb::SymbolData::Public(data) => {
             if let Some(rva) = data.offset.to_rva(address_map) {
-                let address = base_address + rva.0 as usize;
+                let address = base_address + rva.0 as u64;
                 symbols.insert(
                     address,
                     Symbol {
@@ -56,9 +56,9 @@ fn print_symbol(
 }
 
 fn walk_symbols(
-    symbols_map: &mut HashMap<usize, Symbol>,
+    symbols_map: &mut HashMap<u64, Symbol>,
     address_map: &pdb::AddressMap<'_>,
-    base_address: usize,
+    base_address: u64,
     mut symbols: pdb::SymbolIter<'_>,
 ) -> pdb::Result<()> {
     while let Some(symbol) = symbols.next()? {
@@ -69,8 +69,8 @@ fn walk_symbols(
 
 pub fn dump_pdb_symbols<P: AsRef<Path>>(
     filename: P,
-    base_address: usize,
-) -> Result<HashMap<usize, Symbol>> {
+    base_address: u64,
+) -> Result<HashMap<u64, Symbol>> {
     let mut symbols = HashMap::new();
 
     let file = std::fs::File::open(filename)?;

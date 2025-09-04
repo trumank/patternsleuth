@@ -25,11 +25,11 @@ image_type_dispatch! {
     }
 
     @fns {
-        fn get_function(address: usize) -> Result<Option<RuntimeFunction>, MemoryAccessError>;
-        fn get_root_function(address: usize) -> Result<Option<RuntimeFunction>, MemoryAccessError>;
-        fn get_root_function_range(address: usize) -> Result<Option<Range<usize>>, MemoryAccessError>;
-        fn get_child_functions(address: usize) -> Result<Vec<RuntimeFunction>, MemoryAccessError>;
-        fn get_root_functions() -> Result<Vec<Range<usize>>, MemoryAccessError>;
+        fn get_function(address: u64) -> Result<Option<RuntimeFunction>, MemoryAccessError>;
+        fn get_root_function(address: u64) -> Result<Option<RuntimeFunction>, MemoryAccessError>;
+        fn get_root_function_range(address: u64) -> Result<Option<Range<u64>>, MemoryAccessError>;
+        fn get_child_functions(address: u64) -> Result<Vec<RuntimeFunction>, MemoryAccessError>;
+        fn get_root_functions() -> Result<Vec<Range<u64>>, MemoryAccessError>;
     }
 }
 
@@ -38,18 +38,18 @@ use crate::image::pe::read_image_from_minidump;
 pub use _image_type_reflection as image_type_reflection;
 
 pub struct Image<'data> {
-    pub base_address: usize,
+    pub base_address: u64,
     pub memory: Memory<'data>,
     #[cfg(feature = "symbols")]
-    pub symbols: Option<HashMap<usize, symbols::Symbol>>,
-    pub imports: HashMap<String, HashMap<String, usize>>,
+    pub symbols: Option<HashMap<u64, symbols::Symbol>>,
+    pub imports: HashMap<String, HashMap<String, u64>>,
     pub image_type: ImageType,
 }
 
 // Type-independent
 impl<'data> Image<'data> {
     pub fn read<P: AsRef<Path>>(
-        base_addr: Option<usize>,
+        base_addr: Option<u64>,
         data: &'data [u8],
         exe_path: Option<P>,
         cache_functions: bool,
@@ -143,16 +143,18 @@ impl<'data> Image<'data> {
                 })
                 .unzip();
 
-            let scan_results = scanner::scan_pattern(&patterns, base_address, data)
+            let scan_results = scanner::scan_pattern(&patterns, base_address as usize, data)
                 .into_iter()
-                .chain(scanner::scan_xref(&xrefs, base_address, data))
+                .chain(scanner::scan_xref(&xrefs, base_address as usize, data))
                 .zip(pattern_scans.iter().chain(xref_scans.iter()));
 
             for (addresses, scan) in scan_results {
                 for address in addresses {
                     results.push((
                         &pattern_configs[scan.original_config_index],
-                        Resolution { address },
+                        Resolution {
+                            address: address as u64,
+                        },
                     ));
                 }
             }

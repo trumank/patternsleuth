@@ -9,7 +9,7 @@ use crate::resolvers::{ensure_one, impl_resolver_singleton, unreal::util};
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct Main(pub usize);
+pub struct Main(pub u64);
 impl_resolver_singleton!(collect, Main);
 impl_resolver_singleton!(PEImage, Main, |ctx| async {
     let strings = ctx.scan(util::utf16_pattern("UnrealEngine4\0")).await;
@@ -26,7 +26,7 @@ impl_resolver_singleton!(ElfImage, Main, |_ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FEngineLoopTick(pub usize);
+pub struct FEngineLoopTick(pub u64);
 impl_resolver_singleton!(collect, FEngineLoopTick);
 impl_resolver_singleton!(PEImage, FEngineLoopTick, |ctx| async {
     let strings = ["DeferredTickTime\0", "ConcurrentWithSlateTickTasks_Wait\0"];
@@ -48,7 +48,7 @@ impl_resolver_singleton!(ElfImage, FEngineLoopTick, |_ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct UGameEngineTick(pub usize);
+pub struct UGameEngineTick(pub u64);
 impl_resolver_singleton!(collect, UGameEngineTick);
 
 impl_resolver_singleton!(PEImage, UGameEngineTick, |ctx| async {
@@ -100,7 +100,7 @@ impl_resolver_singleton!(ElfImage, UGameEngineTick, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FEngineLoopInit(pub usize);
+pub struct FEngineLoopInit(pub u64);
 impl_resolver_singleton!(collect, FEngineLoopInit);
 
 impl_resolver_singleton!(PEImage, FEngineLoopInit, |ctx| async {

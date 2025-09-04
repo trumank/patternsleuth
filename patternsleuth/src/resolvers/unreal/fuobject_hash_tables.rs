@@ -15,7 +15,7 @@ use crate::{
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FUObjectHashTablesGet(pub usize);
+pub struct FUObjectHashTablesGet(pub u64);
 // try find u16"Hash efficiency statistics for the Outer Object Hash"
 // LogHashOuterStatistics(FOutputDevice& Ar, const bool bShowHashBucketCollisionInfo)
 // FHashTableLock HashLock(FUObjectHashTables::Get());
@@ -31,6 +31,6 @@ impl_resolver_singleton!(all, FUObjectHashTablesGet, |ctx| async {
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
     Ok(Self(try_ensure_one(res.iter().flatten().map(
-        |a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) },
+        |a| -> Result<_> { Ok(ctx.image().memory.rip4(*a)?) },
     ))?))
 });

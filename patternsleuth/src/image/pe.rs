@@ -16,30 +16,31 @@ use minidump::{
 use object::Object;
 
 pub struct PEImage {
-    pub exception_directory_range: Range<usize>,
-    pub exception_children_cache: HashMap<usize, Vec<RuntimeFunction>>,
+    pub exception_directory_range: Range<u64>,
+    pub exception_children_cache: HashMap<u64, Vec<RuntimeFunction>>,
 }
 
 impl PEImage {
     pub fn get_function(
         &self,
         image: &Image<'_>,
-        address: usize,
+        address: u64,
     ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
         // place holder only
         let size = 12;
         let mut min = 0;
-        let mut max = self.exception_directory_range.len() / size - 1;
+        let mut max =
+            (self.exception_directory_range.end - self.exception_directory_range.start) / size - 1;
 
         while min <= max {
             let i = (max + min) / 2;
             let addr = i * size + self.exception_directory_range.start;
 
-            let addr_begin = image.base_address + image.memory.u32_le(addr)? as usize;
+            let addr_begin = image.base_address + image.memory.u32_le(addr)? as u64;
             if addr_begin <= address {
-                let addr_end = image.base_address + image.memory.u32_le(addr + 4)? as usize;
+                let addr_end = image.base_address + image.memory.u32_le(addr + 4)? as u64;
                 if addr_end > address {
-                    let unwind = image.base_address + image.memory.u32_le(addr + 8)? as usize;
+                    let unwind = image.base_address + image.memory.u32_le(addr + 8)? as u64;
 
                     return Ok(Some(RuntimeFunction {
                         range: addr_begin..addr_end,
@@ -57,7 +58,7 @@ impl PEImage {
     pub fn get_root_function(
         &self,
         image: &Image<'_>,
-        address: usize,
+        address: u64,
     ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
         if let Some(f) = self.get_function(image, address)? {
             let mut f = RuntimeFunction {
@@ -74,13 +75,13 @@ impl PEImage {
                 if has_chain_info {
                     let unwind_code_count = section.u8(unwind_addr + 2)?;
 
-                    unwind_addr += 4 + 2 * unwind_code_count as usize;
+                    unwind_addr += 4 + 2 * unwind_code_count as u64;
                     if !unwind_addr.is_multiple_of(4) {
                         // align
                         unwind_addr += 2;
                     }
 
-                    if section.address() + section.data().len() > unwind_addr + 12 {
+                    if section.address() + section.data().len() as u64 > unwind_addr + 12 {
                         f = RuntimeFunction::read(section, image.base_address, unwind_addr)?;
                     } else {
                         todo!("not adding chain info {unwind_addr}");
@@ -97,8 +98,8 @@ impl PEImage {
     pub fn get_root_function_range(
         &self,
         image: &Image<'_>,
-        address: usize,
-    ) -> Result<Option<Range<usize>>, MemoryAccessError> {
+        address: u64,
+    ) -> Result<Option<Range<u64>>, MemoryAccessError> {
         let exception = self.get_root_function(image, address)?;
         if let Some(exception) = exception {
             let fns = self
@@ -123,7 +124,7 @@ impl PEImage {
     pub fn get_child_functions(
         &self,
         image: &Image<'_>,
-        address: usize,
+        address: u64,
     ) -> Result<Vec<RuntimeFunction>, MemoryAccessError> {
         let mut queue = vec![address];
         let mut all_children = vec![self.get_function(image, address)?.unwrap()];
@@ -141,7 +142,7 @@ impl PEImage {
     pub fn get_root_functions(
         &self,
         image: &Image<'_>,
-    ) -> Result<Vec<Range<usize>>, MemoryAccessError> {
+    ) -> Result<Vec<Range<u64>>, MemoryAccessError> {
         let mut functions = self.exception_children_cache.keys().collect::<HashSet<_>>();
         for e in self.exception_children_cache.values() {
             for c in e {
@@ -150,7 +151,7 @@ impl PEImage {
         }
         functions
             .iter()
-            .map(|function| -> Result<Range<usize>, MemoryAccessError> {
+            .map(|function| -> Result<Range<_>, MemoryAccessError> {
                 let fns = self
                     .get_child_functions(
                         image,
@@ -188,13 +189,13 @@ impl Image<'_> {
                 if has_chain_info {
                     let unwind_code_count = section.u8(unwind + 2)?;
 
-                    unwind += 4 + 2 * unwind_code_count as usize;
+                    unwind += 4 + 2 * unwind_code_count as u64;
                     if unwind % 4 != 0 {
                         // align
                         unwind += 2;
                     }
 
-                    if section.address() + section.data().len() > unwind + 12 {
+                    if section.address() + section.data().len() as u64 > unwind + 12 {
                         let chained = RuntimeFunction::read(section, self.base_address, unwind)?;
 
                         // TODO disabled because it spams the log too much
@@ -226,7 +227,7 @@ impl Image<'_> {
 impl PEImage {
     /// Read and parse ELF object, using data from memory
     pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
-        base_address: usize,
+        base_address: u64,
         #[allow(unused_variables)] exe_path: Option<P>,
         cache_functions: bool,
         memory: Memory<'data>,
@@ -243,7 +244,7 @@ impl PEImage {
             None
         };
 
-        let get_ex_dir = || -> Result<Range<usize>> {
+        let get_ex_dir = || -> Result<Range<_>> {
             Ok(match object {
                 object::File::Pe64(ref inner) => {
                     let exception_directory = inner
@@ -251,7 +252,7 @@ impl PEImage {
                         .context("no exception directory")?;
 
                     let (address, size) = exception_directory.address_range();
-                    base_address + address as usize..base_address + (address + size) as usize
+                    base_address + address as u64..base_address + (address + size) as u64
                 }
                 _ => bail!("not a PE file"),
             })
@@ -264,7 +265,7 @@ impl PEImage {
                     use object::pe::ImageNtHeaders64;
                     use object::read::pe::ImageThunkData;
 
-                    let mut imports: HashMap<String, HashMap<String, usize>> = Default::default();
+                    let mut imports: HashMap<String, HashMap<String, u64>> = Default::default();
 
                     let import_table = inner.import_table()?.unwrap();
                     let mut import_descs = import_table.descriptors()?;
@@ -278,7 +279,7 @@ impl PEImage {
                         let lib_name = std::str::from_utf8(lib_name)?.to_ascii_lowercase();
                         let mut thunks =
                             import_table.thunks(import_desc.original_first_thunk.get(LE))?;
-                        let mut address = base_address + import_desc.first_thunk.get(LE) as usize;
+                        let mut address = base_address + import_desc.first_thunk.get(LE) as u64;
                         while let Some(thunk) = thunks.next::<ImageNtHeaders64>()? {
                             if let Ok((_hint, name)) = import_table.hint_name(thunk.address()) {
                                 cur.insert(std::str::from_utf8(name)?.to_owned(), address);
@@ -312,12 +313,12 @@ impl PEImage {
     }
 
     pub fn read_inner<P: AsRef<std::path::Path>>(
-        base_addr: Option<usize>,
+        base_addr: Option<u64>,
         exe_path: Option<P>,
         cache_functions: bool,
         object: object::File<'_>,
     ) -> Result<Image<'_>, anyhow::Error> {
-        let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
+        let base_address = base_addr.unwrap_or(object.relative_address_base());
         let memory = Memory::new(&object)?;
         Self::read_inner_memory(base_address, exe_path, cache_functions, memory, object)
     }
@@ -362,5 +363,5 @@ pub fn read_image_from_minidump<'a>(
         }
     }
     let memory = Memory::new_external_data(sections)?;
-    PEImage::read_inner_memory::<String>(image_base_address as usize, None, false, memory, object)
+    PEImage::read_inner_memory::<String>(image_base_address, None, false, memory, object)
 }

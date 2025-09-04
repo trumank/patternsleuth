@@ -14,7 +14,7 @@ use crate::{
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct GUObjectArray(pub usize);
+pub struct GUObjectArray(pub u64);
 impl_resolver_singleton!(all, GUObjectArray, |ctx| async {
     let patterns = [
         "8B 05 ?? ?? ?? ?? 3B 05 ?? ?? ?? ?? 75 ?? 48 8D 15 ?? ?? ?? ?? 48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 05",
@@ -62,11 +62,11 @@ impl_resolver_singleton!(all, GUObjectArray, |ctx| async {
     let res1 = res1
         .iter()
         .flatten()
-        .map(|a| -> Result<usize> { Ok(ctx.image().memory.u32_le(*a)? as usize) });
-    Ok(GUObjectArray(try_ensure_one(
+        .map(|a| -> Result<_> { Ok(ctx.image().memory.u32_le(*a)? as u64) });
+    Ok(Self(try_ensure_one(
         res0.iter()
             .flatten()
-            .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) })
+            .map(|a| -> Result<_> { Ok(ctx.image().memory.rip4(*a)?) })
             .chain(res1),
     )?))
 });
@@ -77,7 +77,7 @@ impl_resolver_singleton!(all, GUObjectArray, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FUObjectArrayAllocateUObjectIndex(pub usize);
+pub struct FUObjectArrayAllocateUObjectIndex(pub u64);
 impl_resolver_singleton!(all, FUObjectArrayAllocateUObjectIndex, |ctx| async {
     let strings = ctx
         .scan(util::utf16_pattern(
@@ -95,7 +95,7 @@ impl_resolver_singleton!(all, FUObjectArrayAllocateUObjectIndex, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FUObjectArrayFreeUObjectIndex(pub usize);
+pub struct FUObjectArrayFreeUObjectIndex(pub u64);
 impl_resolver_singleton!(all, FUObjectArrayFreeUObjectIndex, |ctx| async {
     let refs_future = async {
         let search_strings = [
@@ -138,7 +138,7 @@ impl_resolver_singleton!(all, FUObjectArrayFreeUObjectIndex, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct UObjectBaseShutdown(pub usize);
+pub struct UObjectBaseShutdown(pub u64);
 impl_resolver_singleton!(collect, UObjectBaseShutdown);
 
 impl_resolver_singleton!(PEImage, UObjectBaseShutdown, |ctx| async {

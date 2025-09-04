@@ -17,7 +17,7 @@ use crate::{
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct UObjectSkipFunction(pub usize);
+pub struct UObjectSkipFunction(pub u64);
 impl_resolver_singleton!(all, UObjectSkipFunction, |ctx| async {
     let patterns = [
         "40 55 41 54 41 55 41 56 41 57 48 83 EC 30 48 8D 6C 24 20 48 89 5D 40 48 89 75 48 48 89 7D 50 48 8B 05 ?? ?? ?? ?? 48 33 C5 48 89 45 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 4D 8B ?? ?? 8B ?? 85 ?? 75 05 41 8B FC EB ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 ?? E0",
@@ -36,7 +36,7 @@ impl_resolver_singleton!(all, UObjectSkipFunction, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct GNatives(pub usize);
+pub struct GNatives(pub u64);
 impl_resolver_singleton!(collect, GNatives);
 
 impl_resolver_singleton!(PEImage, GNatives, |ctx| async {
@@ -65,7 +65,7 @@ impl_resolver_singleton!(ElfImage, GNatives, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct GNativesPatterns(pub usize);
+pub struct GNativesPatterns(pub u64);
 impl_resolver_singleton!(collect, GNativesPatterns);
 
 impl_resolver_singleton!(PEImage, GNativesPatterns, |ctx| async {
@@ -76,7 +76,7 @@ impl_resolver_singleton!(PEImage, GNativesPatterns, |ctx| async {
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
     Ok(Self(try_ensure_one(res.iter().flatten().map(
-        |a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) },
+        |a| -> Result<_> { Ok(ctx.image().memory.rip4(*a)?) },
     ))?))
 });
 
@@ -90,7 +90,7 @@ impl_resolver_singleton!(ElfImage, GNativesPatterns, |_ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct GNativesViaSkipFunction(pub usize);
+pub struct GNativesViaSkipFunction(pub u64);
 impl_resolver_singleton!(collect, GNativesViaSkipFunction);
 
 impl_resolver_singleton!(PEImage, GNativesViaSkipFunction, |ctx| async {
@@ -111,9 +111,7 @@ impl_resolver_singleton!(PEImage, GNativesViaSkipFunction, |ctx| async {
     while decoder.can_decode() {
         decoder.decode_out(&mut instruction);
         if instruction.code() == Code::Lea_r64_m && instruction.memory_base() == Register::RIP {
-            return Ok(GNativesViaSkipFunction(
-                instruction.memory_displacement64() as usize
-            ));
+            return Ok(Self(instruction.memory_displacement64()));
         }
     }
 
@@ -135,9 +133,7 @@ impl_resolver_singleton!(ElfImage, GNativesViaSkipFunction, |ctx| async {
     while decoder.can_decode() {
         decoder.decode_out(&mut instruction);
         if instruction.is_call_near_indirect() && instruction.memory_index_scale() == 8 {
-            return Ok(GNativesViaSkipFunction(
-                instruction.memory_displacement32() as usize
-            ));
+            return Ok(Self(instruction.memory_displacement64()));
         }
     }
 
@@ -150,7 +146,7 @@ impl_resolver_singleton!(ElfImage, GNativesViaSkipFunction, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FFrameStep(pub usize);
+pub struct FFrameStep(pub u64);
 impl_resolver_singleton!(all, FFrameStep, |ctx| async {
     let patterns = [
         "48 8B 41 20 4C 8B D2 48 8B D1 44 0F B6 08 48 FF C0 48 89 41 20 41 8B C1 4C 8D 0D ?? ?? ?? ?? 49 8B CA 49 FF 24 C1",
@@ -170,7 +166,7 @@ impl_resolver_singleton!(all, FFrameStep, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FFrameStepExplicitProperty(pub usize);
+pub struct FFrameStepExplicitProperty(pub u64);
 impl_resolver_singleton!(all, FFrameStepExplicitProperty, |ctx| async {
     let patterns = [
         "41 8B 40 40 4D 8B C8 4C 8B D1 48 0F BA E0 08 73 ?? 48 8B ?? ?? ?? ?? 00 ?? ?? ?? ?? ?? ?? ?? 00 48 8B 40 10 4C 39 08 75 F7 48 8B 48 08 49 89 4A 38 ?? ?? ?? 40 ?? ?? ?? ?? ?? 4C ?? 41 ?? 49",
@@ -194,8 +190,8 @@ impl_resolver_singleton!(all, FFrameStepExplicitProperty, |ctx| async {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct FFrameStepViaExec {
-    pub step: usize,
-    pub step_explicit_property: usize,
+    pub step: u64,
+    pub step_explicit_property: u64,
 }
 impl_resolver!(all, FFrameStepViaExec, |ctx| async {
     let patterns = [

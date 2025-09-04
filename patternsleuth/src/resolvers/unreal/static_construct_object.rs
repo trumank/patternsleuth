@@ -15,7 +15,7 @@ use crate::{
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct StaticConstructObjectInternal(pub usize);
+pub struct StaticConstructObjectInternal(pub u64);
 impl_resolver_singleton!(all, StaticConstructObjectInternal, |ctx| async {
     let any = join!(
         ctx.resolve(StaticConstructObjectInternalPatterns::resolver()),
@@ -34,7 +34,7 @@ impl_resolver_singleton!(all, StaticConstructObjectInternal, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct StaticConstructObjectInternalPatterns(pub usize);
+pub struct StaticConstructObjectInternalPatterns(pub u64);
 impl_resolver_singleton!(all, StaticConstructObjectInternalPatterns, |ctx| async {
     let patterns = [
         "48 89 44 24 28 C7 44 24 20 00 00 00 00 E8 | ?? ?? ?? ?? 48 8B 5C 24 ?? 48 8B ?? 24",
@@ -58,7 +58,7 @@ impl_resolver_singleton!(all, StaticConstructObjectInternalPatterns, |ctx| async
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
     Ok(Self(try_ensure_one(res.iter().flatten().map(
-        |a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) },
+        |a| -> Result<_> { Ok(ctx.image().memory.rip4(*a)?) },
     ))?))
 });
 
@@ -67,10 +67,8 @@ impl_resolver_singleton!(all, StaticConstructObjectInternalPatterns, |ctx| async
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct StaticConstructObjectInternalString(pub usize);
-
+pub struct StaticConstructObjectInternalString(pub u64);
 impl_resolver_singleton!(collect, StaticConstructObjectInternalString);
-
 impl_resolver_singleton!(ElfImage, StaticConstructObjectInternalString, |ctx| async {
     let strings = ctx
         .scan(util::utf16_pattern(
@@ -81,18 +79,18 @@ impl_resolver_singleton!(ElfImage, StaticConstructObjectInternalString, |ctx| as
     let target_addr = refs
         .iter()
         .take(6)
-        .flat_map(|&addr| -> Option<Vec<(usize, usize)>> {
+        .flat_map(|&addr| -> Option<Vec<(u64, u64)>> {
             // find e8 call
             let mut callsites = Vec::default();
             // ...06f83ff0 is the real one?
             disassemble(ctx.image(), addr, |inst| {
-                let cur = inst.ip() as usize;
+                let cur = inst.ip();
                 if !(addr..addr + 130).contains(&cur) {
                     return Ok(Control::Break);
                 }
                 if !inst.is_call_near_indirect() && inst.is_call_near() {
                     // eprintln!("Found call to @ {:08x}", inst.ip_rel_memory_address());
-                    callsites.push(inst.ip_rel_memory_address() as usize);
+                    callsites.push(inst.ip_rel_memory_address());
                 }
                 Ok(Control::Continue)
             })
@@ -110,8 +108,8 @@ impl_resolver_singleton!(ElfImage, StaticConstructObjectInternalString, |ctx| as
             Some(callsites)
         })
         .reduce(|x, y| {
-            let x: HashSet<(usize, usize)> = HashSet::from_iter(x);
-            let y: HashSet<(usize, usize)> = HashSet::from_iter(y);
+            let x: HashSet<(u64, u64)> = HashSet::from_iter(x);
+            let y: HashSet<(u64, u64)> = HashSet::from_iter(y);
             let z = x.intersection(&y);
             z.cloned().collect()
         })
@@ -148,7 +146,7 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
         strings
             .iter()
             .flatten()
-            .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
+            .map(|s| ctx.scan(Pattern::from_bytes(u64::to_le_bytes(*s).into()).unwrap())),
     )
     .await;
 
@@ -176,7 +174,7 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
         .into_iter()
         .flatten();
 
-    fn check_is_new_object(img: &Image<'_>, f: usize) -> Result<bool> {
+    fn check_is_new_object(img: &Image<'_>, f: u64) -> Result<bool> {
         let cmp = "NewObject with empty name can't"
             .encode_utf16()
             .flat_map(u16::to_le_bytes)
@@ -185,7 +183,7 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
         let check = |f| -> Result<bool> {
             let mut is = false;
             disassemble(img, f, |inst| {
-                let cur = inst.ip() as usize;
+                let cur = inst.ip();
                 if Some(f) != img.get_root_function(cur)?.map(|f| f.range.start) {
                     return Ok(Control::Break);
                 }
@@ -195,10 +193,10 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
                     && inst.op0_kind() == OpKind::Register
                     && inst.op1_kind() == OpKind::Memory
                 {
-                    let ptr = inst.ip_rel_memory_address() as usize;
+                    let ptr = inst.ip_rel_memory_address();
                     if img
                         .memory
-                        .range(ptr..ptr + cmp.len())
+                        .range(ptr..ptr + cmp.len() as u64)
                         .map(|data| data == cmp)
                         .unwrap_or(false)
                     {
@@ -222,7 +220,7 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
                 if let Some(inst) = disassemble_single(img, f)?
                     && inst.flow_control() == FlowControl::UnconditionalBranch
                 {
-                    f = inst.near_branch_target() as usize;
+                    f = inst.near_branch_target();
                 }
 
                 if check(f)? {
@@ -233,10 +231,10 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
         Ok(false)
     }
 
-    fn check_is_static_construct(img: &Image<'_>, f: usize) -> Result<bool> {
+    fn check_is_static_construct(img: &Image<'_>, f: u64) -> Result<bool> {
         let mut is = false;
         disassemble(img, f, |inst| {
-            let cur = inst.ip() as usize;
+            let cur = inst.ip();
             if Some(f) != img.get_root_function(cur)?.map(|f| f.range.start) {
                 return Ok(Control::Break);
             }
@@ -321,7 +319,7 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
             if let Some(inst) = disassemble_single(ctx.image(), f)?
                 && inst.flow_control() == FlowControl::UnconditionalBranch
             {
-                f = inst.near_branch_target() as usize;
+                f = inst.near_branch_target();
             }
 
             if check_is_static_construct(ctx.image(), f)? {

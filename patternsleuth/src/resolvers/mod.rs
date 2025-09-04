@@ -224,7 +224,7 @@ macro_rules! _impl_resolver {
         $crate::_impl_resolver_inner!($name, |$ctx| async $x);
 
         impl $crate::resolvers::Singleton for $name {
-            fn get(&self) -> Option<usize> {
+            fn get(&self) -> Option<u64> {
                 None
             }
         }
@@ -245,7 +245,7 @@ macro_rules! _impl_resolver {
         });
 
         impl $crate::resolvers::Singleton for $name {
-            fn get(&self) -> Option<usize> {
+            fn get(&self) -> Option<u64> {
                 None
             }
         }
@@ -265,14 +265,14 @@ macro_rules! _impl_resolver {
 macro_rules! _impl_resolver_singleton {
     (all, $name:ident, |$ctx:ident| async $x:block ) => {
         $crate::_impl_resolver_inner!($name, |$ctx| async {
-            if let Some(a) = std::env::var(concat!("PATTERNSLEUTH_RES_", stringify!($name))).ok().and_then(|s| (s.strip_prefix("0x").map(|s| usize::from_str_radix(s, 16).ok()).unwrap_or_else(|| s.parse().ok()))) {
+            if let Some(a) = std::env::var(concat!("PATTERNSLEUTH_RES_", stringify!($name))).ok().and_then(|s| (s.strip_prefix("0x").map(|s| u64::from_str_radix(s, 16).ok()).unwrap_or_else(|| s.parse().ok()))) {
                 return Ok($name(a));
             }
             $x
         });
 
         impl $crate::resolvers::Singleton for $name {
-            fn get(&self) -> Option<usize> {
+            fn get(&self) -> Option<u64> {
                 Some(self.0)
             }
         }
@@ -289,14 +289,14 @@ macro_rules! _impl_resolver_singleton {
 
     (collect, $name:ident) => {
         $crate::_impl_resolver_inner!($name, |ctx| async {
-            if let Some(a) = std::env::var(concat!("PATTERNSLEUTH_RES_", stringify!($name))).ok().and_then(|s| (s.strip_prefix("0x").map(|s| usize::from_str_radix(s, 16).ok()).unwrap_or_else(|| s.parse().ok()))) {
+            if let Some(a) = std::env::var(concat!("PATTERNSLEUTH_RES_", stringify!($name))).ok().and_then(|s| (s.strip_prefix("0x").map(|s| u64::from_str_radix(s, 16).ok()).unwrap_or_else(|| s.parse().ok()))) {
                 return Ok($name(a));
             }
             $crate::image::image_type_reflection!(all, impl_resolver_singleton; generate; {ctx, $name})
         });
 
         impl $crate::resolvers::Singleton for $name {
-            fn get(&self) -> Option<usize> {
+            fn get(&self) -> Option<u64> {
                 Some(self.0)
             }
         }
@@ -449,7 +449,7 @@ pub mod cfg_image {
 }
 
 pub trait Singleton {
-    fn get(&self) -> Option<usize>;
+    fn get(&self) -> Option<u64>;
 }
 
 type AnyValue = Result<Arc<dyn Any + Send + Sync>>;
@@ -457,7 +457,7 @@ type AnyValue = Result<Arc<dyn Any + Send + Sync>>;
 #[derive(Debug)]
 struct PatternMatches {
     pattern: Pattern,
-    matches: Vec<usize>,
+    matches: Vec<u64>,
 }
 
 #[derive(Default)]
@@ -489,10 +489,10 @@ impl<'data> AsyncContext<'data> {
     pub fn image(&self) -> &Image<'_> {
         self.read.image
     }
-    pub async fn scan(&self, pattern: Pattern) -> Vec<usize> {
+    pub async fn scan(&self, pattern: Pattern) -> Vec<u64> {
         self.scan_tagged((), pattern).await.2
     }
-    pub async fn scan_tagged2<T: Copy>(&self, tag: T, pattern: Pattern) -> Vec<(T, usize)> {
+    pub async fn scan_tagged2<T: Copy>(&self, tag: T, pattern: Pattern) -> Vec<(T, u64)> {
         self.scan_tagged(tag, pattern)
             .await
             .2
@@ -500,7 +500,7 @@ impl<'data> AsyncContext<'data> {
             .map(|a| (tag, a))
             .collect()
     }
-    pub async fn scan_tagged<T>(&self, tag: T, pattern: Pattern) -> (T, Pattern, Vec<usize>) {
+    pub async fn scan_tagged<T>(&self, tag: T, pattern: Pattern) -> (T, Pattern, Vec<u64>) {
         let (tx, rx) = oneshot::channel::<PatternMatches>();
         {
             let mut lock = self.read.write.lock().unwrap();
@@ -626,13 +626,13 @@ where
                     let data = section.data();
 
                     let scan_results =
-                        patternsleuth_scanner::scan_pattern(&setup, base_address, data);
+                        patternsleuth_scanner::scan_pattern(&setup, base_address as usize, data);
 
                     let mut total = 0;
 
                     for (i, res) in scan_results.iter().enumerate() {
                         total += res.len();
-                        all_results[i].1.extend(res)
+                        all_results[i].1.extend(res.iter().map(|a| *a as u64))
                     }
 
                     span.record("results", total);

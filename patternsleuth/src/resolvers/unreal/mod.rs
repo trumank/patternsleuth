@@ -41,8 +41,8 @@ pub mod util {
     #[derive(Debug, Clone, Copy)]
     pub struct Call {
         pub index: usize,
-        pub ip: usize,
-        pub callee: usize,
+        pub ip: u64,
+        pub callee: u64,
     }
 
     pub fn utf16(string: &str) -> Vec<u8> {
@@ -56,12 +56,12 @@ pub mod util {
     }
     pub async fn scan_xrefs(
         ctx: &AsyncContext<'_>,
-        addresses: impl IntoIterator<Item = &usize> + Copy,
-    ) -> Vec<usize> {
+        addresses: impl IntoIterator<Item = &u64> + Copy,
+    ) -> Vec<u64> {
         let refs_indirect = join_all(
             addresses
                 .into_iter()
-                .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
+                .map(|s| ctx.scan(Pattern::from_bytes(u64::to_le_bytes(*s).into()).unwrap())),
         )
         .await;
 
@@ -97,12 +97,12 @@ pub mod util {
 
     pub async fn scan_xcalls(
         ctx: &AsyncContext<'_>,
-        addresses: impl IntoIterator<Item = &usize> + Copy,
-    ) -> Vec<usize> {
+        addresses: impl IntoIterator<Item = &u64> + Copy,
+    ) -> Vec<u64> {
         let refs_indirect = join_all(
             addresses
                 .into_iter()
-                .map(|s| ctx.scan(Pattern::from_bytes(usize::to_le_bytes(*s).into()).unwrap())),
+                .map(|s| ctx.scan(Pattern::from_bytes(u64::to_le_bytes(*s).into()).unwrap())),
         )
         .await;
 
@@ -124,9 +124,9 @@ pub mod util {
         refs.into_iter().flatten().collect()
     }
 
-    pub fn root_functions<'a, I>(ctx: &AsyncContext<'_>, addresses: I) -> Result<Vec<usize>>
+    pub fn root_functions<'a, I>(ctx: &AsyncContext<'_>, addresses: I) -> Result<Vec<u64>>
     where
-        I: IntoIterator<Item = &'a usize> + Copy,
+        I: IntoIterator<Item = &'a u64> + Copy,
     {
         Ok(addresses
             .into_iter()
@@ -137,11 +137,11 @@ pub mod util {
             .collect())
     }
 
-    pub fn find_calls(img: &Image<'_>, f: usize) -> Result<Vec<Call>> {
+    pub fn find_calls(img: &Image<'_>, f: u64) -> Result<Vec<Call>> {
         let mut calls = vec![];
 
         disassemble(img, f, |inst| {
-            let cur = inst.ip() as usize;
+            let cur = inst.ip();
             if Some(f) != img.get_root_function(cur)?.map(|f| f.range.start) {
                 return Ok(Control::Break);
             }
@@ -150,11 +150,11 @@ pub mod util {
                 FlowControl::Call
                 | FlowControl::ConditionalBranch
                 | FlowControl::UnconditionalBranch => {
-                    let call = inst.near_branch_target() as usize;
+                    let call = inst.near_branch_target();
                     if Some(f) != img.get_root_function(call)?.map(|f| f.range.start) {
                         calls.push(Call {
                             index: 0,
-                            ip: inst.ip() as usize,
+                            ip: inst.ip(),
                             callee: call,
                         });
                     }
@@ -174,11 +174,11 @@ pub mod util {
 
     pub fn find_path(
         img: &Image<'_>,
-        f: usize,
+        f: u64,
         depth: usize,
-        searched: &mut HashSet<usize>,
+        searched: &mut HashSet<u64>,
         path: &mut Vec<Call>,
-        needle: usize,
+        needle: u64,
     ) -> Result<Vec<String>> {
         searched.insert(f);
 
@@ -186,7 +186,7 @@ pub mod util {
         let mut calls = vec![];
 
         disassemble(img, f, |inst| {
-            let cur = inst.ip() as usize;
+            let cur = inst.ip();
             if !(f..f + 1000).contains(&cur)
                 && Some(f) != img.get_root_function(cur)?.map(|f| f.range.start)
             {
@@ -198,7 +198,7 @@ pub mod util {
                 FlowControl::Call
                 | FlowControl::ConditionalBranch
                 | FlowControl::UnconditionalBranch => {
-                    let call = inst.near_branch_target() as usize;
+                    let call = inst.near_branch_target();
                     println!("{:x} {:x}", inst.ip(), call);
                     if Some(f) != img.get_root_function(call)?.map(|f| f.range.start) {
                         calls.push(Call {
@@ -244,7 +244,7 @@ pub mod util {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct KismetSystemLibrary(pub HashMap<String, usize>);
+pub struct KismetSystemLibrary(pub HashMap<String, u64>);
 
 impl_resolver!(all, KismetSystemLibrary, |ctx| async {
     let mem = &ctx.image().memory;
@@ -287,7 +287,7 @@ impl_resolver!(all, KismetSystemLibrary, |ctx| async {
         let mut res = HashMap::new();
 
         let ptr = data.rip();
-        for i in 0..(num.u32() as usize) {
+        for i in 0..(num.u32() as u64) {
             let a = ptr + i * 0x10;
             res.insert(mem.read_string(mem.ptr(a)?)?, mem.ptr(a + 8)?);
         }
@@ -302,7 +302,7 @@ impl_resolver!(all, KismetSystemLibrary, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct ConsoleManagerSingleton(pub usize);
+pub struct ConsoleManagerSingleton(pub u64);
 
 impl_resolver_singleton!(all, ConsoleManagerSingleton, |ctx| async {
     let strings = join_all([
@@ -352,7 +352,7 @@ impl_resolver_singleton!(all, ConsoleManagerSingleton, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct UObjectBaseUtilityGetPathName(pub usize);
+pub struct UObjectBaseUtilityGetPathName(pub u64);
 impl_resolver_singleton!(all, UObjectBaseUtilityGetPathName, |ctx| async {
     let patterns = [
         "40 53 48 81 EC 50 02 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 48 8D 44 24",
@@ -395,7 +395,7 @@ impl_resolver!(all, UtilStringExtractor, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct A(pub HashSet<usize>);
+pub struct A(pub HashSet<u64>);
 impl_resolver!(all, A, |ctx| async {
     let strings = ctx
         .scan(

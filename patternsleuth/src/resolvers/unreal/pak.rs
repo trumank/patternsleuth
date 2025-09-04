@@ -9,7 +9,7 @@ use crate::resolvers::{ensure_one, impl_resolver_singleton, unreal::util};
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FPakPlatformFileInitialize(pub usize);
+pub struct FPakPlatformFileInitialize(pub u64);
 impl_resolver_singleton!(collect, FPakPlatformFileInitialize);
 impl_resolver_singleton!(PEImage, FPakPlatformFileInitialize, |ctx| async {
     let string_xrefs = |strings: &'static [&'static str]| async {

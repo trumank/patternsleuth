@@ -14,7 +14,7 @@ use object::{
 };
 
 pub struct ElfImage {
-    pub functions: Option<Vec<Range<usize>>>,
+    pub functions: Option<Vec<Range<u64>>>,
 }
 
 #[allow(dead_code)]
@@ -33,14 +33,14 @@ impl ElfImage {
     pub fn get_function(
         &self,
         image: &Image<'_>,
-        address: usize,
+        address: u64,
     ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
         self.get_root_function(image, address)
     }
     pub fn get_root_function(
         &self,
         _image: &Image<'_>,
-        address: usize,
+        address: u64,
     ) -> Result<Option<RuntimeFunction>, MemoryAccessError> {
         self.get_root_function_range(_image, address).map(|range| {
             range.map(|r| RuntimeFunction {
@@ -52,15 +52,15 @@ impl ElfImage {
     pub fn get_root_function_range(
         &self,
         _image: &Image<'_>,
-        address: usize,
-    ) -> Result<Option<Range<usize>>, MemoryAccessError> {
+        address: u64,
+    ) -> Result<Option<Range<u64>>, MemoryAccessError> {
         let x = self.functions.as_ref().unwrap();
         Ok(x.iter().find(|p| p.contains(&address)).cloned())
     }
     pub fn get_child_functions(
         &self,
         image: &Image<'_>,
-        address: usize,
+        address: u64,
     ) -> Result<Vec<RuntimeFunction>, MemoryAccessError> {
         match self.get_function(image, address) {
             Ok(Some(f)) => Ok(vec![f]),
@@ -68,10 +68,7 @@ impl ElfImage {
             Err(e) => Err(e),
         }
     }
-    pub fn get_root_functions(
-        &self,
-        _: &Image<'_>,
-    ) -> Result<Vec<Range<usize>>, MemoryAccessError> {
+    pub fn get_root_functions(&self, _: &Image<'_>) -> Result<Vec<Range<u64>>, MemoryAccessError> {
         Ok(self.functions.as_ref().unwrap().to_vec())
     }
 }
@@ -80,7 +77,7 @@ impl ElfImage {
 impl ElfImage {
     /// Read and parse ELF object, using data from memory
     pub fn read_inner_memory<'data, P: AsRef<std::path::Path>>(
-        base_address: usize,
+        base_address: u64,
         #[allow(unused_variables)] exe_path: Option<P>,
         linked: bool,
         memory: Memory<'data>,
@@ -103,11 +100,10 @@ impl ElfImage {
         let get_offset = |segment: &Elf64Phdr| {
             if linked {
                 // for Elf loaded in memory, the map starts from smallest p_vaddr
-                (segment.p_vaddr as usize + base_address)
-                    ..(segment.p_vaddr as usize + segment.p_memsz as usize + base_address)
+                (segment.p_vaddr + base_address)..(segment.p_vaddr + segment.p_memsz + base_address)
             } else {
                 // for Elf file loaded as file, the map starts from 0
-                segment.p_offset as usize..(segment.p_offset + segment.p_filesz) as usize
+                segment.p_offset..(segment.p_offset + segment.p_filesz)
             }
         };
 
@@ -126,7 +122,7 @@ impl ElfImage {
                 .context("Cannot find PT_GNU_EH_FRAME phdr");
 
             eh_frame_hdr
-                .map(|p| -> Result<Vec<Range<usize>>, Error> {
+                .map(|p| -> Result<Vec<Range<u64>>, Error> {
                     //eprintln!("Found GNU_EH_FRAME");
                     let text_vaddr = memory
                         .sections()
@@ -134,7 +130,7 @@ impl ElfImage {
                         .find(|s| s.name == ".text")
                         .context("Cannot find .text section")?
                         .address();
-                    let ehframe_hdr_start = base_address + p.p_vaddr as usize;
+                    let ehframe_hdr_start = base_address + p.p_vaddr;
                     let bases = BaseAddresses::default()
                         .set_eh_frame_hdr(ehframe_hdr_start as _)
                         .set_text((text_vaddr + base_address) as _);
@@ -143,11 +139,11 @@ impl ElfImage {
                     let ehframe_hdr: gimli::ParsedEhFrameHdr<
                         gimli::EndianSlice<'_, gimli::LittleEndian>,
                     > = EhFrameHdr::new(memory.range(ehframe_hdr_range)?, NativeEndian)
-                        .parse(&bases, mem::size_of::<usize>() as _)
+                        .parse(&bases, mem::size_of::<u64>() as _)
                         .context("Failed to parse eh_frame_hdr")?;
 
                     let ehframe_realaddr = match ehframe_hdr.eh_frame_ptr() {
-                        gimli::Pointer::Direct(ptr) => ptr as usize,
+                        gimli::Pointer::Direct(ptr) => ptr,
                         // should I subtract base_address?
                         gimli::Pointer::Indirect(ptr) => memory.u64_le(ptr as _)? as _,
                     };
@@ -158,7 +154,7 @@ impl ElfImage {
 
                     let mut entries = eh_frame.entries(&bases);
 
-                    let mut result = Vec::<Range<usize>>::new();
+                    let mut result = Vec::<Range<u64>>::new();
                     while let Some(entry) = entries.next().context("Iter over entry failed")? {
                         match entry {
                             CieOrFde::Fde(partial) => {
@@ -166,8 +162,8 @@ impl ElfImage {
                                     .parse(&mut EhFrame::cie_from_offset)
                                     .context("Failed parse fde item")?;
                                 // right now it's real address
-                                let start = fde.initial_address() as usize;
-                                let len = fde.len() as usize;
+                                let start = fde.initial_address();
+                                let len = fde.len();
                                 result.push(start..(start + len));
                             }
                             CieOrFde::Cie(_) => {}
@@ -192,7 +188,7 @@ impl ElfImage {
             let eh_frameparsed = EhFrame::new(eh_frame.data().unwrap(), NativeEndian);
             let mut entries = eh_frameparsed.entries(&bases);
 
-            let mut result = Vec::<Range<usize>>::new();
+            let mut result = Vec::<Range<u64>>::new();
 
             while let Some(entry) = entries.next().context("Iter over entry failed")? {
                 match entry {
@@ -201,8 +197,8 @@ impl ElfImage {
                             .parse(&mut EhFrame::cie_from_offset)
                             .context("Failed parse fde item")?;
                         // right now it's real address
-                        let start = fde.initial_address() as usize;
-                        let len = fde.len() as usize;
+                        let start = fde.initial_address();
+                        let len = fde.len();
                         result.push(start..(start + len));
                     }
                     CieOrFde::Cie(_) => {}
@@ -220,11 +216,11 @@ impl ElfImage {
                 .exists()
                 .then(|| -> Result<HashMap<_, _>> {
                     let syms = uesym::dump_ue_symbols(sym_path, base_address)?;
-                    Ok((functions.iter().flat_map(
-                        |f| -> Option<(usize, crate::symbols::Symbol)> {
+                    Ok((functions
+                        .iter()
+                        .flat_map(|f| -> Option<(u64, crate::symbols::Symbol)> {
                             Some((f.start, syms.get(&f.start)?.clone()))
-                        },
-                    ))
+                        }))
                     .collect())
                 })
                 .transpose()?
@@ -245,12 +241,12 @@ impl ElfImage {
 
     /// Read and parse ELF object, using data from object.data()
     pub fn read_inner<P: AsRef<std::path::Path>>(
-        base_addr: Option<usize>,
+        base_addr: Option<u64>,
         exe_path: Option<P>,
         _cache_functions: bool,
         object: object::File<'_>,
     ) -> Result<Image<'_>, anyhow::Error> {
-        let base_address = base_addr.unwrap_or(object.relative_address_base() as usize);
+        let base_address = base_addr.unwrap_or(object.relative_address_base());
         let linked = base_addr.is_some();
         let calc_kind = |flag: u32| {
             if flag & object::elf::PF_X == object::elf::PF_X {
@@ -316,7 +312,7 @@ impl ElfImage {
                     };
                     NamedMemorySection::new(
                         section_name,
-                        base_address + segment.p_vaddr as usize,
+                        base_address + segment.p_vaddr,
                         calc_kind(segment.p_flags),
                         &object.data()[offset_range],
                     )

@@ -34,7 +34,7 @@ pub struct ResolveContext<'data, 'pattern> {
 
 #[derive(Debug, Hash, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Resolution {
-    pub address: usize,
+    pub address: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -111,7 +111,7 @@ pub struct ScanResult<'a, S> {
     pub results: Vec<(&'a PatternConfig<S>, Resolution)>,
 }
 impl<S: std::fmt::Debug + PartialEq> ScanResult<'_, S> {
-    pub fn get_unique_sig_address(&self, sig: S) -> Result<usize> {
+    pub fn get_unique_sig_address(&self, sig: S) -> Result<u64> {
         let mut address = None;
         for (config, res) in &self.results {
             if config.sig == sig {
@@ -130,18 +130,18 @@ impl<S: std::fmt::Debug + PartialEq> ScanResult<'_, S> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeFunction {
-    pub range: Range<usize>,
-    pub unwind: usize,
+    pub range: Range<u64>,
+    pub unwind: u64,
 }
 impl RuntimeFunction {
     pub fn read<'data>(
         memory: &impl MemoryTrait<'data>,
-        base_address: usize,
-        address: usize,
+        base_address: u64,
+        address: u64,
     ) -> Result<Self, MemoryAccessError> {
-        let addr_begin = base_address + memory.u32_le(address)? as usize;
-        let addr_end = base_address + memory.u32_le(address + 4)? as usize;
-        let unwind = base_address + memory.u32_le(address + 8)? as usize;
+        let addr_begin = base_address + memory.u32_le(address)? as u64;
+        let addr_end = base_address + memory.u32_le(address + 4)? as u64;
+        let unwind = base_address + memory.u32_le(address + 8)? as u64;
 
         Ok(RuntimeFunction {
             range: addr_begin..addr_end,
@@ -150,7 +150,7 @@ impl RuntimeFunction {
     }
 }
 impl RuntimeFunction {
-    pub fn range(&self) -> Range<usize> {
+    pub fn range(&self) -> Range<u64> {
         self.range.clone()
     }
 }
@@ -164,7 +164,7 @@ pub enum MemoryAccessError {
     MemoryOutOfBoundsError,
     Utf8Error,
     Utf16Error,
-    MisalginedAddress(usize, usize),
+    MisalginedAddress(u64, u64),
 }
 impl std::error::Error for MemoryAccessError {}
 impl std::fmt::Display for MemoryAccessError {
@@ -193,9 +193,9 @@ impl From<std::string::FromUtf16Error> for MemoryAccessError {
 /// Potentially sparse section of memory
 pub trait MemoryTrait<'data> {
     /// Return slice of u8 at `range`
-    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryAccessError> {
+    fn range(&self, range: Range<u64>) -> Result<&[u8], MemoryAccessError> {
         let slice = self.range_from(range.start..)?;
-        let len = range.len();
+        let len = (range.end - range.start) as usize;
         if len <= slice.len() {
             Ok(&slice[0..len])
         } else {
@@ -203,49 +203,49 @@ pub trait MemoryTrait<'data> {
         }
     }
     /// Return slice of u8 from start of `range` to end of block
-    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryAccessError>;
+    fn range_from(&self, range: RangeFrom<u64>) -> Result<&[u8], MemoryAccessError>;
 
-    fn array<const T: usize>(&self, address: usize) -> Result<[u8; T], MemoryAccessError> {
-        Ok(self.range(address..address + T)?.try_into().unwrap())
+    fn array<const T: usize>(&self, address: u64) -> Result<[u8; T], MemoryAccessError> {
+        Ok(self.range(address..address + T as u64)?.try_into().unwrap())
     }
 
     /// Return u8 at `address`
-    fn u8(&self, address: usize) -> Result<u8, MemoryAccessError> {
+    fn u8(&self, address: u64) -> Result<u8, MemoryAccessError> {
         Ok(self.array::<1>(address)?[0])
     }
     /// Return i16 at `address`
-    fn i16_le(&self, address: usize) -> Result<i16, MemoryAccessError> {
+    fn i16_le(&self, address: u64) -> Result<i16, MemoryAccessError> {
         Ok(i16::from_le_bytes(self.array(address)?))
     }
     /// Return u16 at `address`
-    fn u16_le(&self, address: usize) -> Result<u16, MemoryAccessError> {
+    fn u16_le(&self, address: u64) -> Result<u16, MemoryAccessError> {
         Ok(u16::from_le_bytes(self.array(address)?))
     }
     /// Return i32 at `address`
-    fn i32_le(&self, address: usize) -> Result<i32, MemoryAccessError> {
+    fn i32_le(&self, address: u64) -> Result<i32, MemoryAccessError> {
         Ok(i32::from_le_bytes(self.array(address)?))
     }
     /// Return u32 at `address`
-    fn u32_le(&self, address: usize) -> Result<u32, MemoryAccessError> {
+    fn u32_le(&self, address: u64) -> Result<u32, MemoryAccessError> {
         Ok(u32::from_le_bytes(self.array(address)?))
     }
     /// Return u64 at `address`
-    fn u64_le(&self, address: usize) -> Result<u64, MemoryAccessError> {
+    fn u64_le(&self, address: u64) -> Result<u64, MemoryAccessError> {
         Ok(u64::from_le_bytes(self.array(address)?))
     }
-    /// Return ptr (usize) at `address`
-    fn ptr(&self, address: usize) -> Result<usize, MemoryAccessError> {
-        Ok(self.u64_le(address)? as usize)
+    /// Return ptr (u64) at `address`
+    fn ptr(&self, address: u64) -> Result<u64, MemoryAccessError> {
+        self.u64_le(address)
     }
     /// Return instruction relative address at `address`
-    fn rip4(&self, address: usize) -> Result<usize, MemoryAccessError> {
+    fn rip4(&self, address: u64) -> Result<u64, MemoryAccessError> {
         Ok((address + 4)
-            .checked_add_signed(self.i32_le(address)? as isize)
+            .checked_add_signed(self.i32_le(address)? as i64)
             .unwrap())
     }
 
     /// Read null terminated string from `address`
-    fn read_string(&self, address: usize) -> Result<String, MemoryAccessError> {
+    fn read_string(&self, address: u64) -> Result<String, MemoryAccessError> {
         let data = &self
             .range_from(address..)?
             .iter()
@@ -257,7 +257,7 @@ pub trait MemoryTrait<'data> {
     }
 
     /// Read null terminated wide string from `address`
-    fn read_wstring(&self, address: usize) -> Result<String, MemoryAccessError> {
+    fn read_wstring(&self, address: u64) -> Result<String, MemoryAccessError> {
         let data = &self
             .range_from(address..)?
             .chunks(2)
@@ -270,9 +270,9 @@ pub trait MemoryTrait<'data> {
 }
 
 impl<'data> MemoryTrait<'data> for NamedMemorySection<'data> {
-    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryAccessError> {
-        if (self.address()..self.address() + self.len()).contains(&range.start) {
-            Ok(&self.data()[range.start - self.address()..])
+    fn range_from(&self, range: RangeFrom<u64>) -> Result<&[u8], MemoryAccessError> {
+        if (self.address()..self.address() + self.len() as u64).contains(&range.start) {
+            Ok(&self.data()[(range.start - self.address()) as usize..])
         } else {
             Err(MemoryAccessError::MemoryOutOfBoundsError)
         }
@@ -280,7 +280,7 @@ impl<'data> MemoryTrait<'data> for NamedMemorySection<'data> {
 }
 
 impl<'data> MemoryTrait<'data> for Memory<'data> {
-    fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryAccessError> {
+    fn range_from(&self, range: RangeFrom<u64>) -> Result<&[u8], MemoryAccessError> {
         self.get_section_containing(range.start)?.range_from(range)
     }
 }
@@ -288,14 +288,14 @@ impl<'data> MemoryTrait<'data> for Memory<'data> {
 pub struct NamedMemorySection<'data> {
     name: String,
     kind: object::SectionKind,
-    address: usize,
+    address: u64,
     data: Cow<'data, [u8]>,
 }
 
 impl<'data> NamedMemorySection<'data> {
     fn new<T: Into<Cow<'data, [u8]>>>(
         name: String,
-        address: usize,
+        address: u64,
         kind: object::SectionKind,
         data: T,
     ) -> Self {
@@ -314,7 +314,7 @@ impl NamedMemorySection<'_> {
     pub fn kind(&self) -> object::SectionKind {
         self.kind
     }
-    pub fn address(&self) -> usize {
+    pub fn address(&self) -> u64 {
         self.address
     }
     pub fn data(&self) -> &[u8] {
@@ -348,7 +348,7 @@ impl<'data> Memory<'data> {
                 .map(|s| {
                     Ok(NamedMemorySection::new(
                         s.name()?.to_string(),
-                        s.address() as usize,
+                        s.address(),
                         s.kind(),
                         s.data()?,
                     ))
@@ -364,7 +364,7 @@ impl<'data> Memory<'data> {
                 .map(|(s, d)| {
                     Ok(NamedMemorySection::new(
                         s.name()?.to_string(),
-                        s.address() as usize,
+                        s.address(),
                         s.kind(),
                         d,
                     ))
@@ -382,7 +382,7 @@ impl<'data> Memory<'data> {
                 .map(|(s, d)| {
                     Ok(NamedMemorySection::new(
                         s.name()?.to_string(),
-                        s.address() as usize,
+                        s.address(),
                         s.kind(),
                         d,
                     ))
@@ -395,12 +395,12 @@ impl<'data> Memory<'data> {
     }
     pub fn get_section_containing(
         &self,
-        address: usize,
+        address: u64,
     ) -> Result<&NamedMemorySection<'data>, MemoryAccessError> {
         self.sections
             .iter()
             .find(|section| {
-                address >= section.address && address < section.address + section.data.len()
+                address >= section.address && address < section.address + section.len() as u64
             })
             .ok_or(MemoryAccessError::MemoryOutOfBoundsError)
     }
@@ -408,27 +408,31 @@ impl<'data> Memory<'data> {
     pub fn captures(
         &'data self,
         pattern: &Pattern,
-        address: usize,
+        address: u64,
     ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'data>>>, MemoryAccessError> {
         let s = self.get_section_containing(address)?;
         // TODO bounds check data passed to captures
-        Ok(pattern.captures(s.data(), s.address(), address - s.address()))
+        Ok(pattern.captures(
+            s.data(),
+            s.address() as usize,
+            (address - s.address()) as usize,
+        ))
     }
 }
 
 pub trait Addressable {
-    fn rip(&self) -> usize;
-    fn ptr(&self) -> usize;
+    fn rip(&self) -> u64;
+    fn ptr(&self) -> u64;
     fn u32(&self) -> u32;
 }
 impl Addressable for patternsleuth_scanner::Capture<'_> {
-    fn rip(&self) -> usize {
-        (self.address + 4)
-            .checked_add_signed(i32::from_le_bytes(self.data.try_into().unwrap()) as isize)
+    fn rip(&self) -> u64 {
+        (self.address as u64 + 4)
+            .checked_add_signed(i32::from_le_bytes(self.data.try_into().unwrap()) as i64)
             .unwrap()
     }
-    fn ptr(&self) -> usize {
-        usize::from_le_bytes(self.data.try_into().unwrap())
+    fn ptr(&self) -> u64 {
+        u64::from_le_bytes(self.data.try_into().unwrap())
     }
     fn u32(&self) -> u32 {
         u32::from_le_bytes(self.data.try_into().unwrap())
@@ -442,18 +446,15 @@ pub mod disassemble {
 
     use crate::{Image, MemoryAccessError, MemoryTrait};
 
-    pub fn function_range(
-        exe: &Image<'_>,
-        address: usize,
-    ) -> Result<Range<usize>, MemoryAccessError> {
+    pub fn function_range(exe: &Image<'_>, address: u64) -> Result<Range<u64>, MemoryAccessError> {
         let min = address;
         let mut max = min;
         disassemble(exe, address, |inst| {
-            let cur = inst.ip() as usize;
+            let cur = inst.ip();
             if Some(address) != exe.get_root_function(cur)?.map(|f| f.range.start) {
                 return Ok(Control::Break);
             }
-            max = max.max(cur + inst.len());
+            max = max.max(cur + inst.len() as u64);
             Ok(Control::Continue)
         })?;
         Ok(min..max)
@@ -461,12 +462,12 @@ pub mod disassemble {
 
     pub fn disassemble_single<'mem, 'img: 'mem>(
         exe: &'img Image<'mem>,
-        address: usize,
+        address: u64,
     ) -> Result<Option<Instruction>, MemoryAccessError> {
         Ok(Decoder::with_ip(
             64,
             exe.memory.range_from(address..)?,
-            address as u64,
+            address,
             DecoderOptions::NONE,
         )
         .iter()
@@ -481,7 +482,7 @@ pub mod disassemble {
 
     pub fn disassemble<'mem, 'img: 'mem, F>(
         exe: &'img Image<'mem>,
-        address: usize,
+        address: u64,
         mut visitor: F,
     ) -> Result<(), MemoryAccessError>
     where
@@ -489,9 +490,9 @@ pub mod disassemble {
     {
         struct Ctx<'mem, 'img: 'mem> {
             exe: &'img Image<'mem>,
-            queue: Vec<usize>,
-            visited: HashSet<usize>,
-            address: usize,
+            queue: Vec<u64>,
+            visited: HashSet<u64>,
+            address: u64,
             block: &'mem [u8],
             decoder: Decoder<'mem>,
             instruction: Instruction,
@@ -504,7 +505,7 @@ pub mod disassemble {
             visited: Default::default(),
             address,
             block,
-            decoder: Decoder::with_ip(64, block, address as u64, DecoderOptions::NONE),
+            decoder: Decoder::with_ip(64, block, address, DecoderOptions::NONE),
             instruction: Default::default(),
         };
 
@@ -520,8 +521,9 @@ pub mod disassemble {
 
                 // Eg. "00007FFAC46ACDB2 488DAC2400FFFFFF     lea       rbp,[rsp-100h]"
                 print!("{:016X} ", self.instruction.ip());
-                let start_index = self.instruction.ip() as usize - self.address;
-                let instr_bytes = &self.block[start_index..start_index + self.instruction.len()];
+                let start_index = self.instruction.ip() - self.address;
+                let instr_bytes = &self.block
+                    [start_index as usize..start_index as usize + self.instruction.len()];
                 for b in instr_bytes.iter() {
                     print!("{b:02X}");
                 }
@@ -532,12 +534,11 @@ pub mod disassemble {
                 }
                 println!(" {output}");
             }
-            fn start(&mut self, address: usize) -> Result<(), MemoryAccessError> {
+            fn start(&mut self, address: u64) -> Result<(), MemoryAccessError> {
                 //println!("starting at {address:x}");
                 self.address = address;
                 self.block = self.exe.memory.range_from(self.address..)?;
-                self.decoder =
-                    Decoder::with_ip(64, self.block, self.address as u64, DecoderOptions::NONE);
+                self.decoder = Decoder::with_ip(64, self.block, self.address, DecoderOptions::NONE);
                 Ok(())
             }
             /// Returns true if pop was successful
@@ -554,7 +555,7 @@ pub mod disassemble {
         while ctx.decoder.can_decode() {
             ctx.decoder.decode_out(&mut ctx.instruction);
 
-            let addr = ctx.instruction.ip() as usize;
+            let addr = ctx.instruction.ip();
 
             if ctx.visited.contains(&addr) {
                 if ctx.pop()? {
@@ -593,12 +594,11 @@ pub mod disassemble {
                 FlowControl::Next => {}
                 FlowControl::UnconditionalBranch => {
                     // TODO figure out how to handle tail calls
-                    ctx.start(ctx.instruction.near_branch_target() as usize)?;
+                    ctx.start(ctx.instruction.near_branch_target())?;
                 }
                 //FlowControl::IndirectBranch => todo!(),
                 FlowControl::ConditionalBranch => {
-                    ctx.queue
-                        .push(ctx.instruction.near_branch_target() as usize);
+                    ctx.queue.push(ctx.instruction.near_branch_target());
                 }
                 FlowControl::Return => {
                     if !ctx.pop()? {

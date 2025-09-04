@@ -10,7 +10,7 @@ use crate::resolvers::{ensure_one, impl_resolver_singleton, unreal::util};
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct StaticFindObjectFast(pub usize);
+pub struct StaticFindObjectFast(pub u64);
 impl_resolver_singleton!(all, StaticFindObjectFast, |ctx| async {
     let strings = ctx.scan(util::utf16_pattern("Illegal call to StaticFindObjectFast() while serializing object data or garbage collecting!\0")).await;
 

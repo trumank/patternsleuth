@@ -33,9 +33,9 @@ enum Commands {
     AutoGen(CommandAutoGen),
 }
 
-fn parse_maybe_hex(s: &str) -> Result<usize> {
+fn parse_maybe_hex(s: &str) -> Result<u64> {
     Ok(s.strip_prefix("0x")
-        .map(|s| usize::from_str_radix(s, 16))
+        .map(|s| u64::from_str_radix(s, 16))
         .unwrap_or_else(|| s.parse())?)
 }
 
@@ -88,7 +88,7 @@ struct CommandScan {
     pattern_config: Option<PathBuf>,
 
     /// An xref to scan for (can be specified multiple times)
-    #[arg(short, long, value_parser(|s: &str| parse_maybe_hex(s).map(Xref)))]
+    #[arg(short, long, value_parser(|s: &str| parse_maybe_hex(s).map(|a| Xref(a as usize))))]
     xref: Vec<Xref>,
 
     /// Load and display symbols from PDBs when available (can be slow)
@@ -160,8 +160,8 @@ struct CommandSearchIndex {
 #[derive(Debug, Clone)]
 struct FunctionSpec {
     path: String,
-    start: usize,
-    end: usize,
+    start: u64,
+    end: u64,
 }
 impl FromStr for FunctionSpec {
     type Err = anyhow::Error;

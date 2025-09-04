@@ -91,7 +91,7 @@ mod linux {
         let memory = Memory::new_external_data(sections)?;
 
         image::pe::PEImage::read_inner_memory::<String>(
-            object.relative_address_base() as usize,
+            object.relative_address_base(),
             None,
             false,
             memory,

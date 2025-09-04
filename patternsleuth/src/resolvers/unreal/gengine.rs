@@ -14,13 +14,13 @@ use crate::{
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct GEngine(pub usize);
+pub struct GEngine(pub u64);
 impl_resolver_singleton!(collect, GEngine);
 impl_resolver_singleton!(PEImage, GEngine, |ctx| async {
     let strings = ctx.scan(util::utf16_pattern("rhi.DumpMemory\0")).await;
     let refs = util::scan_xrefs(ctx, &strings).await;
 
-    fn for_each(img: &Image<'_>, addr: usize) -> Result<Option<usize>> {
+    fn for_each(img: &Image<'_>, addr: u64) -> Result<Option<u64>> {
         let Some(root) = img.get_root_function(addr)? else {
             return Ok(None);
         };
@@ -30,7 +30,7 @@ impl_resolver_singleton!(PEImage, GEngine, |ctx| async {
         let mut rcx = None;
 
         disassemble(img, f, |inst| {
-            let cur = inst.ip() as usize;
+            let cur = inst.ip();
             if !(f..=addr).contains(&cur) {
                 return Ok(Control::Break);
             }
@@ -40,7 +40,7 @@ impl_resolver_singleton!(PEImage, GEngine, |ctx| async {
             }
 
             if inst.op0_register() == Register::RCX && inst.is_ip_rel_memory_operand() {
-                rcx = Some(inst.ip_rel_memory_address() as usize);
+                rcx = Some(inst.ip_rel_memory_address());
             }
 
             Ok(Control::Continue)

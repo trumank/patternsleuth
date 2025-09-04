@@ -15,7 +15,7 @@ use crate::{
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FNameCtorWchar(pub usize);
+pub struct FNameCtorWchar(pub u64);
 impl_resolver_singleton!(collect, FNameCtorWchar);
 
 // for linux we find a function caontains following strings
@@ -61,8 +61,8 @@ impl_resolver_singleton!(ElfImage, FNameCtorWchar, |ctx| async {
     let fns = fns
         .into_iter()
         .reduce(|x, y| {
-            let x: HashSet<usize> = HashSet::from_iter(x.into_iter());
-            let y: HashSet<usize> = HashSet::from_iter(y.into_iter());
+            let x: HashSet<u64> = HashSet::from_iter(x.into_iter());
+            let y: HashSet<u64> = HashSet::from_iter(y.into_iter());
             x.intersection(&y).cloned().collect::<Vec<_>>()
         })
         .unwrap();
@@ -96,11 +96,11 @@ impl_resolver_singleton!(ElfImage, FNameCtorWchar, |ctx| async {
     let index = fnLoadPreInitModules - mem.address();
     let mut result = None;
     for i in 0..48 {
-        if pattern.is_match(mem.data(), mem.address(), index + i) {
+        if pattern.is_match(mem.data(), mem.address() as usize, (index + i) as usize) {
             result = ctx
                 .image()
                 .memory
-                .rip4(fnLoadPreInitModules + i + pattern.custom_offset)
+                .rip4(fnLoadPreInitModules + i + pattern.custom_offset as u64)
                 .ok();
         }
     }
@@ -134,7 +134,7 @@ impl_resolver_singleton!(PEImage, FNameCtorWchar, |ctx| async {
         return Ok(Self(try_ensure_one(
             patterns
                 .iter()
-                .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) }),
+                .map(|a| -> Result<_> { Ok(ctx.image().memory.rip4(*a)?) }),
         )?));
     }
 
@@ -173,13 +173,12 @@ impl_resolver_singleton!(PEImage, FNameCtorWchar, |ctx| async {
                 Tag::Direct => Ok(f),
                 Tag::FirstCall => {
                     let bytes = ctx.image().memory.range(f..f + 0x200)?;
-                    let mut decoder = Decoder::with_ip(64, bytes, f as u64, DecoderOptions::NONE);
+                    let mut decoder = Decoder::with_ip(64, bytes, f, DecoderOptions::NONE);
 
                     decoder
                         .iter()
                         .find_map(|i| {
-                            (i.code() == Code::Call_rel32_64)
-                                .then_some(i.memory_displacement64() as usize)
+                            (i.code() == Code::Call_rel32_64).then_some(i.memory_displacement64())
                         })
                         .context("did not find CALL instruction")
                 }
@@ -202,7 +201,7 @@ impl_resolver_singleton!(PEImage, FNameCtorWchar, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FNameToString(pub usize);
+pub struct FNameToString(pub u64);
 impl_resolver_singleton!(collect, FNameToString);
 
 impl_resolver_singleton!(ElfImage, FNameToString, |ctx| async {
@@ -274,13 +273,11 @@ impl_resolver_singleton!(PEImage, FNameToString, |ctx| async {
 
         let addr = decoder
             .iter()
-            .filter_map(|i| {
-                (i.code() == Code::Call_rel32_64).then_some(i.memory_displacement64() as usize)
-            })
+            .filter_map(|i| (i.code() == Code::Call_rel32_64).then_some(i.memory_displacement64()))
             .last()
             .context("did not find CALL instruction")?;
 
-        let res: Result<usize> = Ok(addr);
+        let res: Result<u64> = Ok(addr);
 
         res
     };
@@ -297,9 +294,7 @@ impl_resolver_singleton!(PEImage, FNameToString, |ctx| async {
         return Ok(Self(ensure_one(any.3)?));
     }
 
-    Ok(FNameToString(
-        any.0.map(|r| r.0).or(any.1.map(|r| r.0)).or(any.2)?,
-    ))
+    Ok(Self(any.0.map(|r| r.0).or(any.1.map(|r| r.0)).or(any.2)?))
 });
 
 /// public: class FString __cdecl FName::ToString(void) const
@@ -308,7 +303,7 @@ impl_resolver_singleton!(PEImage, FNameToString, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FNameToStringVoid(pub usize);
+pub struct FNameToStringVoid(pub u64);
 impl_resolver_singleton!(all, FNameToStringVoid, |ctx| async {
     let patterns = [
         "E8 | ?? ?? ?? ?? ?? 01 00 00 00 ?? 39 ?? 48 0F 8E",
@@ -321,7 +316,7 @@ impl_resolver_singleton!(all, FNameToStringVoid, |ctx| async {
     Ok(FNameToStringVoid(try_ensure_one(
         res.iter()
             .flatten()
-            .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) }),
+            .map(|a| -> Result<_> { Ok(ctx.image().memory.rip4(*a)?) }),
     )?))
 });
 
@@ -331,7 +326,7 @@ impl_resolver_singleton!(all, FNameToStringVoid, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FNameToStringFString(pub usize);
+pub struct FNameToStringFString(pub u64);
 impl_resolver_singleton!(all, FNameToStringFString, |ctx| async {
     let patterns =
         ["48 8b 48 ?? 48 89 4c 24 ?? 48 8d 4c 24 ?? e8 | ?? ?? ?? ?? 83 7c 24 ?? 00 48 8d"];
@@ -341,7 +336,7 @@ impl_resolver_singleton!(all, FNameToStringFString, |ctx| async {
     Ok(FNameToStringFString(try_ensure_one(
         res.iter()
             .flatten()
-            .map(|a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) }),
+            .map(|a| -> Result<_> { Ok(ctx.image().memory.rip4(*a)?) }),
     )?))
 });
 
@@ -351,7 +346,7 @@ impl_resolver_singleton!(all, FNameToStringFString, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FNamePool(pub usize);
+pub struct FNamePool(pub u64);
 impl_resolver_singleton!(all, FNamePool, |ctx| async {
     let patterns = [
         "74 09 4C 8D 05 | ?? ?? ?? ?? EB ?? 48 8D 0D ?? ?? ?? ?? E8",
@@ -361,6 +356,6 @@ impl_resolver_singleton!(all, FNamePool, |ctx| async {
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
     Ok(Self(try_ensure_one(res.iter().flatten().map(
-        |a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) },
+        |a| -> Result<_> { Ok(ctx.image().memory.rip4(*a)?) },
     ))?))
 });

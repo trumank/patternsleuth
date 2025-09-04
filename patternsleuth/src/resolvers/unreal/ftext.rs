@@ -15,7 +15,7 @@ use crate::{
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct FTextFString(pub usize);
+pub struct FTextFString(pub u64);
 impl_resolver_singleton!(all, FTextFString, |ctx| async {
     #[derive(Debug)]
     enum Directness {
@@ -89,7 +89,7 @@ impl_resolver_singleton!(all, FTextFString, |ctx| async {
 
     let mem = &ctx.image().memory;
 
-    Ok(FTextFString(try_ensure_one(res.iter().flat_map(
+    Ok(Self(try_ensure_one(res.iter().flat_map(
         |(directness, _, a)| match directness {
             Directness::Direct => itertools::Either::Right(a.iter().map(|a| Ok(*a))),
             Directness::Indirect => itertools::Either::Left(a.iter().map(|a| Ok(mem.rip4(*a)?))),

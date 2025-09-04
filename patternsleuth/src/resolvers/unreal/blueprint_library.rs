@@ -15,12 +15,12 @@ use crate::{
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct BlueprintLibraryInit {
-    pub uclass_compiled_in_defer: usize,
-    pub uobject_compiled_in_defer: usize,
-    pub construct_uclass: usize,
-    pub get_private_static_class_body: usize,
-    pub uobject_static_class: usize,
-    pub ublueprint_function_library_static_class: usize,
+    pub uclass_compiled_in_defer: u64,
+    pub uobject_compiled_in_defer: u64,
+    pub construct_uclass: u64,
+    pub get_private_static_class_body: u64,
+    pub uobject_static_class: u64,
+    pub ublueprint_function_library_static_class: u64,
 }
 
 impl_resolver!(all, BlueprintLibraryInit, |ctx| async {
@@ -36,10 +36,10 @@ impl_resolver!(all, BlueprintLibraryInit, |ctx| async {
 
     let class_str = ctx.scan(class_str).await;
 
-    let pattern_dyn_init_class = |s: usize| {
+    let pattern_dyn_init_class = |s: u64| {
         Pattern::new(format!("41 b9 ?? ?? ?? ?? 48 8d 15 X0x{s:x} 41 b8 28 00 00 00 48 8d 0d [ ?? ?? ?? ?? ] e9 [ ?? ?? ?? ?? ]")).unwrap()
     };
-    let pattern_dyn_init_object = |s: usize| {
+    let pattern_dyn_init_object = |s: u64| {
         Pattern::new(format!(
             "
                 48 83 ec 48
@@ -177,7 +177,7 @@ impl_resolver!(all, BlueprintLibraryInit, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct UFunctionBind(pub usize);
+pub struct UFunctionBind(pub u64);
 impl_resolver_singleton!(collect, UFunctionBind);
 impl_resolver_singleton!(PEImage, UFunctionBind, |ctx| async {
     use crate::resolvers::unreal::util;

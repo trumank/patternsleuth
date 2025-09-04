@@ -75,7 +75,7 @@ impl_resolver!(PEImage, AESKeys, |ctx| async {
 
     let mem = &ctx.image().memory;
 
-    let extract_key = |key_type: KeyType, addresses: Vec<usize>| {
+    let extract_key = |key_type: KeyType, addresses: Vec<u64>| {
         addresses.into_iter().map(move |addr| -> Result<_> {
             let mut key = [0; 32];
             match key_type {

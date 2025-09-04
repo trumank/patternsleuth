@@ -16,7 +16,7 @@ use crate::{
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct GMalloc(pub usize);
+pub struct GMalloc(pub u64);
 impl_resolver_singleton!(all, GMalloc, |ctx| async {
     //eprintln!("GMalloc Scan Start!");
     let (patterns, strings) = join!(
@@ -31,7 +31,7 @@ impl_resolver_singleton!(all, GMalloc, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct GMallocPatterns(pub usize);
+pub struct GMallocPatterns(pub u64);
 impl_resolver_singleton!(all, GMallocPatterns, |ctx| async {
     let patterns = [
         "48 ?? ?? f0 ?? 0f b1 ?? | ?? ?? ?? ?? 74 ?? ?? 85 ?? 74 ?? ?? 8b", // Purgatory
@@ -53,7 +53,7 @@ impl_resolver_singleton!(all, GMallocPatterns, |ctx| async {
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 
     Ok(Self(try_ensure_one(res.iter().flatten().map(
-        |a| -> Result<usize> { Ok(ctx.image().memory.rip4(*a)?) },
+        |a| -> Result<_> { Ok(ctx.image().memory.rip4(*a)?) },
     ))?))
 });
 
@@ -62,7 +62,7 @@ impl_resolver_singleton!(all, GMallocPatterns, |ctx| async {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct GMallocString(pub usize);
+pub struct GMallocString(pub u64);
 impl_resolver_singleton!(collect, GMallocString);
 
 impl_resolver_singleton!(PEImage, GMallocString, |ctx| async {
@@ -77,10 +77,10 @@ impl_resolver_singleton!(PEImage, GMallocString, |ctx| async {
 
     fn find_global(
         img: &Image<'_>,
-        f: usize,
+        f: u64,
         depth: usize,
-        searched: &mut HashSet<usize>,
-    ) -> Result<Option<usize>> {
+        searched: &mut HashSet<u64>,
+    ) -> Result<Option<u64>> {
         searched.insert(f);
 
         //println!("searching {f:x?}");
@@ -90,7 +90,7 @@ impl_resolver_singleton!(PEImage, GMallocString, |ctx| async {
         let mut calls = vec![];
 
         disassemble(img, f, |inst| {
-            let cur = inst.ip() as usize;
+            let cur = inst.ip();
             if !(f..f + 1000).contains(&cur)
                 && Some(f) != img.get_root_function(cur)?.map(|f| f.range.start)
             {
@@ -104,7 +104,7 @@ impl_resolver_singleton!(PEImage, GMallocString, |ctx| async {
                 && inst.op1_kind() == OpKind::Immediate8to64
                 && inst.immediate8() == 0
             {
-                possible_gmalloc.push(inst.ip_rel_memory_address() as usize);
+                possible_gmalloc.push(inst.ip_rel_memory_address());
             }
 
             if inst.code() == Code::Test_rm64_r64
@@ -127,7 +127,7 @@ impl_resolver_singleton!(PEImage, GMallocString, |ctx| async {
                     inst
                 );
                 */
-                mov_rcx = Some(inst.ip_rel_memory_address() as usize);
+                mov_rcx = Some(inst.ip_rel_memory_address());
             } else {
                 mov_rcx = None;
             }
@@ -136,7 +136,7 @@ impl_resolver_singleton!(PEImage, GMallocString, |ctx| async {
                 FlowControl::Call
                 | FlowControl::ConditionalBranch
                 | FlowControl::UnconditionalBranch => {
-                    let call = inst.near_branch_target() as usize;
+                    let call = inst.near_branch_target();
                     //println!("{:x} {:x}", inst.ip(), call);
                     if Some(f) != img.get_root_function(call)?.map(|f| f.range.start) {
                         calls.push(call);
@@ -187,7 +187,7 @@ impl_resolver_singleton!(ElfImage, GMallocString, |ctx| async {
         let fns = util::root_functions(ctx, &refs)?;
         //eprintln!("Found related functions @ {:?}", fns);
 
-        Result::<Vec<usize>>::Ok(util::scan_xcalls(ctx, &fns).await)
+        Result::<Vec<_>>::Ok(util::scan_xcalls(ctx, &fns).await)
     };
 
     let find_string_pattern1 = || async { string_xref_used_by("/proc/meminfo\0").await };
@@ -197,7 +197,7 @@ impl_resolver_singleton!(ElfImage, GMallocString, |ctx| async {
         //eprintln!("Found {} xcall fns2 @ {:?}", fns2.len(), fns2);
         let fns2 = fns2.iter().map(|&x| x..(x + 24)).collect_vec();
         // another possible address for FMemory::GCreateMalloc
-        Result::<Vec<Range<usize>>>::Ok(fns2)
+        Result::<Vec<Range<_>>>::Ok(fns2)
     };
 
     let (fns, fns2) = try_join!(find_string_pattern1(), find_string_pattern2())?;
@@ -205,11 +205,11 @@ impl_resolver_singleton!(ElfImage, GMallocString, |ctx| async {
     let fns = fns
         .into_iter()
         .filter(|x| fns2.iter().any(|y| y.contains(x)))
-        .map(|f| -> Result<Option<usize>> {
+        .map(|f| -> Result<Option<u64>> {
             let mut possible_gmalloc = vec![];
             // eprintln!("disassemble @ {}", f);
             disassemble(ctx.image(), f, |inst| {
-                let cur = inst.ip() as usize;
+                let cur = inst.ip();
                 if !(f..f + 20).contains(&cur) {
                     return Ok(Control::Break);
                 }
@@ -221,7 +221,7 @@ impl_resolver_singleton!(ElfImage, GMallocString, |ctx| async {
                     && inst.op1_kind() == OpKind::Memory
                 {
                     // eprintln!("Found one possible gmlaaoc @ {:#08X}", inst.ip_rel_memory_address() as usize);
-                    possible_gmalloc.push(inst.ip_rel_memory_address() as usize);
+                    possible_gmalloc.push(inst.ip_rel_memory_address());
                 }
                 Ok(Control::Continue)
             })?;

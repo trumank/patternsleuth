@@ -18,9 +18,9 @@ impl FormatterOutput for Output {
     }
 }
 
-pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>) -> String {
-    let context = 20; // number of instructions before and after
-    let max_inst = 16; // max size of x86 instruction in bytes
+pub(crate) fn disassemble(exe: &Image, address: u64, pattern: Option<&Pattern>) -> String {
+    let context: usize = 20; // number of instructions before and after
+    let max_inst: usize = 16; // max size of x86 instruction in bytes
 
     let mut output = Output::default();
 
@@ -29,7 +29,7 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
             "{:016x}\n{:016x} - {:016x} = {}\n",
             address,
             section.address(),
-            section.address() + section.data().len(),
+            section.address() + section.data().len() as u64,
             section.name(),
         ));
 
@@ -53,16 +53,20 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
                 output.buffer.push_str(&"".normal().to_string());
                 output.buffer.push('\n');
             }
-            let start_address = range.start as u64;
+            let start_address = range.start;
             let data = section.range(range).unwrap();
             (true, data, start_address)
         } else {
             output.buffer.push_str("no function");
 
-            let data = &section.data()[(address - context * max_inst)
-                .saturating_sub(section.address())
-                ..(address + context * max_inst).saturating_sub(section.address())];
-            let start_address = (address - context * max_inst) as u64;
+            let delta = context * max_inst;
+
+            let start_address = address - delta as u64;
+
+            let ctx_start = (address as usize - delta).saturating_sub(section.address() as usize);
+            let ctx_end = (address as usize + delta).saturating_sub(section.address() as usize);
+            let data = &section.data()[ctx_start..ctx_end];
+
             (false, data, start_address)
         };
 
@@ -76,7 +80,7 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
                 instructions
                     .iter()
                     .enumerate()
-                    .find(|(_, inst)| inst.ip() >= address as u64)
+                    .find(|(_, inst)| inst.ip() >= address)
             })
             .flatten()
         {
@@ -94,7 +98,7 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
         for instruction in instructions {
             let ip = format!("{:016x}", instruction.ip());
             if (instruction.ip()..instruction.ip() + instruction.len() as u64)
-                .contains(&(address as u64))
+                .contains(&{ address })
             {
                 #[allow(clippy::unnecessary_to_owned)]
                 output.buffer.push_str(&ip.reversed().to_string());
@@ -107,7 +111,7 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
             for (i, b) in data[index..index + instruction.len()].iter().enumerate() {
                 let highlight = pattern
                     .and_then(|p| -> Option<bool> {
-                        let offset = (instruction.ip() as usize) - address + i + p.custom_offset;
+                        let offset = (instruction.ip() - address) as usize + i + p.custom_offset;
                         Some(*p.simple.mask.get(offset)? != 0)
                     })
                     .unwrap_or_default();
@@ -120,7 +124,7 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
                 if instruction
                     .ip()
                     .checked_add(i as u64)
-                    .map(|a| a == address as u64)
+                    .map(|a| a == address)
                     .unwrap_or_default()
                 {
                     colored = colored.reversed();
@@ -145,7 +149,7 @@ pub(crate) fn disassemble(exe: &Image, address: usize, pattern: Option<&Pattern>
     output.buffer
 }
 
-pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
+pub(crate) fn disassemble_range(exe: &Image, range: Range<u64>) -> String {
     let address = range.start;
     let mut output = Output::default();
 
@@ -156,7 +160,7 @@ pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
             "{:016x}\n{:016x} - {:016x} = {}\n",
             address,
             section.address(),
-            section.address() + section.data().len(),
+            section.address() + section.data().len() as u64,
             section.name(),
         ));
 
@@ -179,7 +183,7 @@ pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
 
         output.buffer.push('\n');
 
-        let mut decoder = Decoder::with_ip(64, data, address as u64, DecoderOptions::NONE);
+        let mut decoder = Decoder::with_ip(64, data, address, DecoderOptions::NONE);
 
         let instructions = decoder.iter().collect::<Vec<_>>();
 
@@ -190,7 +194,7 @@ pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
             output.buffer.push_str(&ip);
             output.buffer.push_str(":  ");
 
-            let index = instruction.ip() as usize - address;
+            let index = (instruction.ip() - address) as usize;
             for b in data[index..index + instruction.len()].iter() {
                 let s = format!("{b:02x}");
                 #[allow(clippy::unnecessary_to_owned)]
@@ -214,20 +218,20 @@ pub(crate) fn disassemble_range(exe: &Image, range: Range<usize>) -> String {
 }
 
 pub(crate) fn disassemble_bytes_with_symbols<F>(
-    address: usize,
+    address: u64,
     data: &[u8],
     pattern: Option<&Pattern>,
     symbols: F,
 ) -> String
 where
-    F: Fn(usize) -> Option<String>,
+    F: Fn(u64) -> Option<String>,
 {
     let mut output = Output::default();
 
     output.buffer.push_str(&format!(
         "{:016x} - {:016x}\n",
         address,
-        address + data.len()
+        address + data.len() as u64
     ));
 
     if let Some(symbol) = symbols(address) {
@@ -241,16 +245,16 @@ where
 
     let mut formatter = IntelFormatter::new();
     formatter.options_mut().set_first_operand_char_index(8);
-    for instruction in Decoder::with_ip(64, data, address as u64, DecoderOptions::NONE) {
+    for instruction in Decoder::with_ip(64, data, address, DecoderOptions::NONE) {
         let ip = format!("{:016x}", instruction.ip());
         output.buffer.push_str(&ip);
         output.buffer.push_str(":  ");
 
-        let index = instruction.ip() as usize - address;
+        let index = (instruction.ip() - address) as usize;
         for (i, b) in data[index..index + instruction.len()].iter().enumerate() {
             let highlight = pattern
                 .and_then(|p| -> Option<bool> {
-                    let offset = (instruction.ip() as usize) - address + i + p.custom_offset;
+                    let offset = (instruction.ip() - address) as usize + i + p.custom_offset;
                     Some(*p.simple.mask.get(offset)? != 0)
                 })
                 .unwrap_or_default();
@@ -265,7 +269,7 @@ where
             if instruction
                 .ip()
                 .checked_add(i as u64)
-                .map(|a| a == address as u64)
+                .map(|a| a == address)
                 .unwrap_or_default()
             {
                 colored = colored.reversed();
@@ -282,7 +286,7 @@ where
         formatter.format(&instruction, &mut output);
 
         if instruction.op_kinds().any(|op| op == OpKind::NearBranch64)
-            && let Some(symbol) = symbols(instruction.near_branch64() as usize)
+            && let Some(symbol) = symbols(instruction.near_branch64())
         {
             #[allow(clippy::unnecessary_to_owned)]
             output
@@ -294,14 +298,11 @@ where
     output.buffer
 }
 
-pub(crate) fn get_xrefs(address: usize, data: &[u8]) -> Vec<(usize, usize)> {
+pub(crate) fn get_xrefs(address: u64, data: &[u8]) -> Vec<(u64, u64)> {
     let mut xrefs = vec![];
-    for instruction in Decoder::with_ip(64, data, address as u64, DecoderOptions::NONE) {
+    for instruction in Decoder::with_ip(64, data, address, DecoderOptions::NONE) {
         if instruction.op_kinds().any(|op| op == OpKind::NearBranch64) {
-            xrefs.push((
-                instruction.ip() as usize,
-                instruction.near_branch64() as usize,
-            ));
+            xrefs.push((instruction.ip(), instruction.near_branch64()));
         }
     }
     xrefs

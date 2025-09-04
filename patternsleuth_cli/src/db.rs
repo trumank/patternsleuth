@@ -234,7 +234,7 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
 
     struct Function {
         game: String,
-        address: usize,
+        address: u64,
         data: Vec<u8>,
     }
 
@@ -484,14 +484,14 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
 
     #[derive(Debug)]
     enum Insert {
-        Function((String, usize, Vec<u8>)),
+        Function((String, u64, Vec<u8>)),
         Symbol {
             game: String,
-            address: usize,
+            address: u64,
             symbol: String,
             demangled: String,
         },
-        Xref((String, usize, usize, usize)),
+        Xref((String, u64, u64, u64)),
     }
 
     let mut conn = Connection::open("data.db")?;
