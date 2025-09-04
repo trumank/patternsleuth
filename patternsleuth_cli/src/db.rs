@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::Result;
 use itertools::Itertools;
-use patternsleuth::{PatternConfig, image::Image, scanner::Pattern};
+use patternsleuth::{MemoryTrait as _, PatternConfig, image::Image, scanner::Pattern};
 use prettytable::{Cell, Row, Table};
 use rayon::prelude::*;
 use rusqlite::{Connection, OptionalExtension};
@@ -263,7 +263,7 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
         functions.push(Function {
             game: function.path,
             address: function.start,
-            data: img.memory[function.start..function.end].to_vec(),
+            data: img.memory.range(function.start..function.end)?.to_vec(),
         });
     }
 
@@ -305,7 +305,7 @@ pub(crate) fn view(command: CommandViewSymbol) -> Result<()> {
                 functions.push(Function {
                     game: exe_path.to_string_lossy().to_string(),
                     address: start,
-                    data: exe.memory[bounds].to_vec(),
+                    data: exe.memory.range(bounds)?.to_vec(),
                 });
             }
         }
@@ -648,7 +648,7 @@ pub(crate) fn build(command: CommandBuildIndex) -> Result<()> {
                     |function| -> Result<()> {
                         let range = function;
 
-                        let bytes = &exe.memory[range.clone()];
+                        let bytes = exe.memory.range(range.clone())?;
 
                         tx.send(Insert::Function((
                             exe_path.to_string_lossy().to_string(),

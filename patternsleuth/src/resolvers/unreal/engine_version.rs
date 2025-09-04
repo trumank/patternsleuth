@@ -148,7 +148,7 @@ impl_resolver!(ElfImage, EngineVersionStrings, |ctx| async {
 });
 
 impl_resolver!(PEImage, EngineVersionStrings, |ctx| async {
-    use crate::{Addressable, Matchable, MemoryTrait};
+    use crate::{Addressable, MemoryTrait};
     use std::collections::HashSet;
 
     let patterns = [

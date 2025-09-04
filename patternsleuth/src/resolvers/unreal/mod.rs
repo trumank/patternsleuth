@@ -25,7 +25,7 @@ use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    Addressable, Image, Matchable, MemoryTrait,
+    Addressable, Image, MemoryTrait,
     disassemble::{Control, disassemble},
     resolvers::{
         Result, bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one,

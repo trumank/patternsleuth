@@ -5,7 +5,7 @@ use iced_x86::{Decoder, DecoderOptions, Instruction};
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    Addressable, Matchable, MemoryTrait,
+    Addressable, MemoryTrait,
     resolvers::{
         Result, bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one,
     },

@@ -70,9 +70,9 @@ impl PEImage {
 
                 let section = image.memory.get_section_containing(unwind_addr)?;
 
-                let has_chain_info = section.section.index(unwind_addr)? >> 3 == 0x4;
+                let has_chain_info = section.u8(unwind_addr)? >> 3 == 0x4;
                 if has_chain_info {
-                    let unwind_code_count = section.section.index(unwind_addr + 2)?;
+                    let unwind_code_count = section.u8(unwind_addr + 2)?;
 
                     unwind_addr += 4 + 2 * unwind_code_count as usize;
                     if !unwind_addr.is_multiple_of(4) {
@@ -184,9 +184,9 @@ impl Image<'_> {
                 };
 
                 let mut unwind = f.unwind;
-                let has_chain_info = section.section.index(unwind)? >> 3 == 0x4;
+                let has_chain_info = section.u8(unwind)? >> 3 == 0x4;
                 if has_chain_info {
-                    let unwind_code_count = section.section.index(unwind + 2)?;
+                    let unwind_code_count = section.u8(unwind + 2)?;
 
                     unwind += 4 + 2 * unwind_code_count as usize;
                     if unwind % 4 != 0 {

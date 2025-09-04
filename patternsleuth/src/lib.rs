@@ -14,7 +14,7 @@ use scanner::{Pattern, Xref};
 use std::{
     borrow::Cow,
     collections::HashMap,
-    ops::{Index, Range, RangeFrom, RangeTo},
+    ops::{Range, RangeFrom},
     path::Path,
 };
 
@@ -190,65 +190,48 @@ impl From<std::string::FromUtf16Error> for MemoryAccessError {
     }
 }
 
-/// Continuous section of memory
-pub trait MemoryBlockTrait<'data> {
-    /// Return starting address of block
-    fn address(&self) -> usize;
-    /// Returned contained memory
-    fn data(&self) -> &[u8];
-}
-
 /// Potentially sparse section of memory
 pub trait MemoryTrait<'data> {
-    /// Return u8 at `address`
-    fn index(&self, address: usize) -> Result<u8, MemoryAccessError>;
     /// Return slice of u8 at `range`
-    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryAccessError>;
+    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryAccessError> {
+        let slice = self.range_from(range.start..)?;
+        let len = range.len();
+        if len <= slice.len() {
+            Ok(&slice[0..len])
+        } else {
+            Err(MemoryAccessError::MemoryOutOfBoundsError)
+        }
+    }
     /// Return slice of u8 from start of `range` to end of block
     fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryAccessError>;
-    /// Return slice of u8 from end of `range` to start of block (not useful because start of block
-    /// is unknown to caller)
-    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryAccessError>;
 
+    fn array<const T: usize>(&self, address: usize) -> Result<[u8; T], MemoryAccessError> {
+        Ok(self.range(address..address + T)?.try_into().unwrap())
+    }
+
+    /// Return u8 at `address`
+    fn u8(&self, address: usize) -> Result<u8, MemoryAccessError> {
+        Ok(self.array::<1>(address)?[0])
+    }
     /// Return i16 at `address`
     fn i16_le(&self, address: usize) -> Result<i16, MemoryAccessError> {
-        Ok(i16::from_le_bytes(
-            self.range(address..address + std::mem::size_of::<i16>())?
-                .try_into()
-                .unwrap(),
-        ))
+        Ok(i16::from_le_bytes(self.array(address)?))
     }
     /// Return u16 at `address`
     fn u16_le(&self, address: usize) -> Result<u16, MemoryAccessError> {
-        Ok(u16::from_le_bytes(
-            self.range(address..address + std::mem::size_of::<u16>())?
-                .try_into()
-                .unwrap(),
-        ))
+        Ok(u16::from_le_bytes(self.array(address)?))
     }
     /// Return i32 at `address`
     fn i32_le(&self, address: usize) -> Result<i32, MemoryAccessError> {
-        Ok(i32::from_le_bytes(
-            self.range(address..address + std::mem::size_of::<i32>())?
-                .try_into()
-                .unwrap(),
-        ))
+        Ok(i32::from_le_bytes(self.array(address)?))
     }
     /// Return u32 at `address`
     fn u32_le(&self, address: usize) -> Result<u32, MemoryAccessError> {
-        Ok(u32::from_le_bytes(
-            self.range(address..address + std::mem::size_of::<u32>())?
-                .try_into()
-                .unwrap(),
-        ))
+        Ok(u32::from_le_bytes(self.array(address)?))
     }
     /// Return u64 at `address`
     fn u64_le(&self, address: usize) -> Result<u64, MemoryAccessError> {
-        Ok(u64::from_le_bytes(
-            self.range(address..address + std::mem::size_of::<u64>())?
-                .try_into()
-                .unwrap(),
-        ))
+        Ok(u64::from_le_bytes(self.array(address)?))
     }
     /// Return ptr (usize) at `address`
     fn ptr(&self, address: usize) -> Result<usize, MemoryAccessError> {
@@ -286,57 +269,27 @@ pub trait MemoryTrait<'data> {
     }
 }
 
-impl<'data, T: MemoryBlockTrait<'data>> MemoryTrait<'data> for T {
-    fn index(&self, address: usize) -> Result<u8, MemoryAccessError> {
-        // TODO bounds
-        Ok(self.data()[address - self.address()])
-    }
-    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryAccessError> {
-        // TODO bounds
-        Ok(&self.data()[range.start - self.address()..range.end - self.address()])
-    }
+impl<'data> MemoryTrait<'data> for NamedMemorySection<'data> {
     fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryAccessError> {
-        // TODO bounds
-        Ok(&self.data()[range.start - self.address()..])
-    }
-    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryAccessError> {
-        // TODO bounds
-        Ok(&self.data()[..range.end - self.address()])
+        if (self.address()..self.address() + self.len()).contains(&range.start) {
+            Ok(&self.data()[range.start - self.address()..])
+        } else {
+            Err(MemoryAccessError::MemoryOutOfBoundsError)
+        }
     }
 }
 
 impl<'data> MemoryTrait<'data> for Memory<'data> {
-    fn index(&self, address: usize) -> Result<u8, MemoryAccessError> {
-        self.get_section_containing(address)?.index(address)
-    }
-    fn range(&self, range: Range<usize>) -> Result<&[u8], MemoryAccessError> {
-        self.get_section_containing(range.start)?.range(range)
-    }
     fn range_from(&self, range: RangeFrom<usize>) -> Result<&[u8], MemoryAccessError> {
         self.get_section_containing(range.start)?.range_from(range)
-    }
-    fn range_to(&self, range: RangeTo<usize>) -> Result<&[u8], MemoryAccessError> {
-        self.get_section_containing(range.end)?.range_to(range)
-    }
-}
-
-pub struct MemorySection<'data> {
-    address: usize,
-    data: Cow<'data, [u8]>,
-}
-impl<'data> MemoryBlockTrait<'data> for MemorySection<'data> {
-    fn address(&self) -> usize {
-        self.address
-    }
-    fn data(&self) -> &[u8] {
-        &self.data
     }
 }
 
 pub struct NamedMemorySection<'data> {
     name: String,
     kind: object::SectionKind,
-    section: MemorySection<'data>,
+    address: usize,
+    data: Cow<'data, [u8]>,
 }
 
 impl<'data> NamedMemorySection<'data> {
@@ -349,10 +302,8 @@ impl<'data> NamedMemorySection<'data> {
         Self {
             name,
             kind,
-            section: MemorySection {
-                address,
-                data: data.into(),
-            },
+            address,
+            data: data.into(),
         }
     }
 }
@@ -364,24 +315,16 @@ impl NamedMemorySection<'_> {
         self.kind
     }
     pub fn address(&self) -> usize {
-        self.section.address()
+        self.address
     }
     pub fn data(&self) -> &[u8] {
-        self.section.data()
+        &self.data
     }
     pub fn len(&self) -> usize {
-        self.section.data.len()
+        self.data.len()
     }
     pub fn is_empty(&self) -> bool {
-        self.section.data.is_empty()
-    }
-}
-impl<'data> MemoryBlockTrait<'data> for NamedMemorySection<'data> {
-    fn address(&self) -> usize {
-        self.section.address()
-    }
-    fn data(&self) -> &[u8] {
-        self.section.data()
+        self.data.is_empty()
     }
 }
 
@@ -457,58 +400,19 @@ impl<'data> Memory<'data> {
         self.sections
             .iter()
             .find(|section| {
-                address >= section.section.address
-                    && address < section.section.address + section.section.data.len()
+                address >= section.address && address < section.address + section.data.len()
             })
             .ok_or(MemoryAccessError::MemoryOutOfBoundsError)
     }
-    pub fn find<F>(&self, kind: object::SectionKind, filter: F) -> Option<usize>
-    where
-        F: Fn(usize, &[u8]) -> bool,
-    {
-        self.sections.iter().find_map(|section| {
-            if section.kind == kind {
-                section
-                    .section
-                    .data
-                    .windows(4)
-                    .enumerate()
-                    .find_map(|(i, slice)| {
-                        filter(section.section.address + i, slice)
-                            .then_some(section.section.address + i)
-                    })
-            } else {
-                None
-            }
-        })
-    }
-}
-impl Index<usize> for Memory<'_> {
-    type Output = u8;
-    fn index(&self, index: usize) -> &Self::Output {
-        self.sections
-            .iter()
-            .find_map(|section| section.section.data.get(index - section.section.address))
-            .unwrap()
-    }
-}
-impl Index<Range<usize>> for Memory<'_> {
-    type Output = [u8];
-    fn index(&self, index: Range<usize>) -> &Self::Output {
-        self.sections
-            .iter()
-            .find_map(|section| {
-                if index.start >= section.section.address
-                    && index.end <= section.section.address + section.section.data.len()
-                {
-                    let relative_range =
-                        index.start - section.section.address..index.end - section.section.address;
-                    Some(&section.section.data[relative_range])
-                } else {
-                    None
-                }
-            })
-            .unwrap()
+
+    pub fn captures(
+        &'data self,
+        pattern: &Pattern,
+        address: usize,
+    ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'data>>>, MemoryAccessError> {
+        let s = self.get_section_containing(address)?;
+        // TODO bounds check data passed to captures
+        Ok(pattern.captures(s.data(), s.address(), address - s.address()))
     }
 }
 
@@ -528,26 +432,6 @@ impl Addressable for patternsleuth_scanner::Capture<'_> {
     }
     fn u32(&self) -> u32 {
         u32::from_le_bytes(self.data.try_into().unwrap())
-    }
-}
-
-pub trait Matchable<'data> {
-    fn captures(
-        &'data self,
-        pattern: &Pattern,
-        address: usize,
-    ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'data>>>, MemoryAccessError>;
-}
-
-impl<'data> Matchable<'data> for Memory<'data> {
-    fn captures(
-        &'data self,
-        pattern: &Pattern,
-        address: usize,
-    ) -> Result<Option<Vec<patternsleuth_scanner::Capture<'data>>>, MemoryAccessError> {
-        let s = self.get_section_containing(address)?;
-        // TODO bounds check data passed to captures
-        Ok(pattern.captures(s.data(), s.address(), address - s.address()))
     }
 }
 
