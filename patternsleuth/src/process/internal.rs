@@ -69,7 +69,7 @@ mod linux {
             );
 
             // base addr is the offset to the real map from the vaddr in elf
-            let base_addr = (info).dlpi_addr as usize;
+            let base_addr = (info).dlpi_addr;
             //eprintln!("Base addr {} (should be zero)", base_addr);
 
             //eprintln!("ph num = {}", info.dlpi_phnum);
@@ -87,17 +87,17 @@ mod linux {
                 .filter(|p| p.p_type == PT_LOAD)
                 .map(|p| p.p_vaddr + p.p_memsz)
                 .max()
-                .unwrap_or_default() as usize;
+                .unwrap_or_default();
             let map_start = phdr_slice
                 .iter()
                 .filter(|p| p.p_type == PT_LOAD)
                 .map(|p| p.p_vaddr)
                 .min()
-                .unwrap_or_default() as usize;
+                .unwrap_or_default();
 
             let data = std::slice::from_raw_parts(
                 (base_addr + map_start) as *const u8,
-                map_end - map_start,
+                (map_end - map_start) as usize,
             );
             #[cfg(feature = "symbols")]
             let exe_path = std::fs::read_link("/proc/self/exe").ok();
@@ -149,11 +149,11 @@ mod windows {
 
         let object = object::File::parse(memory)?;
 
-        let image_base_address = object.relative_address_base() as usize;
+        let image_base_address = object.relative_address_base();
 
         let mut sections = vec![];
         for section in object.sections() {
-            let addr = section.address() as usize - image_base_address;
+            let addr = (section.address() - image_base_address) as usize;
             let size = section.size() as usize;
             sections.push((section, &memory[addr..addr + size]));
         }

@@ -172,7 +172,7 @@ mod windows {
                 None,
             )?;
 
-            (mem, info.lpBaseOfDll as usize)
+            (mem, info.lpBaseOfDll as u64)
         };
 
         let object = object::File::parse(memory.as_slice())?;
