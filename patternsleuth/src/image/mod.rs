@@ -69,7 +69,7 @@ impl<'data> Image<'data> {
         }
         #[cfg(feature = "image-pe")]
         if let Ok(minidump) = Minidump::read(data) {
-            return read_image_from_minidump(minidump);
+            return read_image_from_minidump(&minidump);
         }
         Err(Error::msg("Unsupported file format"))
     }

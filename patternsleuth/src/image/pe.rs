@@ -324,8 +324,8 @@ impl PEImage {
     }
 }
 
-pub fn read_image_from_minidump<'a>(
-    minidump: Minidump<'_, &[u8]>,
+pub fn read_image_from_minidump<'a, D: std::ops::Deref<Target = [u8]>>(
+    minidump: &Minidump<'_, D>,
 ) -> Result<Image<'a>, anyhow::Error> {
     let minidump_module_list: MinidumpModuleList = minidump.get_stream::<MinidumpModuleList>()?;
     let memory_list: MinidumpMemory64List = minidump.get_stream::<MinidumpMemory64List>()?;
