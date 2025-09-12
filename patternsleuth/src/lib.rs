@@ -335,7 +335,23 @@ pub struct Memory<'data> {
 impl<'data> Memory<'data> {
     fn is_section_scannable(section_flags: SectionFlags) -> bool {
         match section_flags {
-            SectionFlags::Coff { characteristics } => (characteristics & IMAGE_SCN_MEM_READ) != 0,
+            SectionFlags::Coff { characteristics } => {
+                // Must have MEM_READ
+                if (characteristics & IMAGE_SCN_MEM_READ) == 0 {
+                    return false;
+                }
+                
+                // Exclude uninitialized data sections
+                if (characteristics & 0x00000080) != 0 {
+                    return false;
+                }
+                
+                if (characteristics & 0xE0000000) == 0xE0000000 {
+                    return false;  // Only if ALL three top bits are set
+                }
+                
+                true
+            },
             SectionFlags::Elf { sh_flags } => (sh_flags & SHF_ALLOC as u64) != 0,
             _ => true,
         }
