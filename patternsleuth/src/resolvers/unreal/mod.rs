@@ -14,10 +14,7 @@ pub mod save_game;
 pub mod static_construct_object;
 pub mod static_find_object;
 
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-};
+use std::{collections::HashSet, fmt::Debug};
 
 use futures::future::join_all;
 use iced_x86::FlowControl;
@@ -25,11 +22,9 @@ use itertools::Itertools;
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    Addressable, Image, MemoryTrait,
+    Image,
     disassemble::{Control, disassemble},
-    resolvers::{
-        Result, bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one,
-    },
+    resolvers::{Result, bail_out, ensure_one, impl_resolver_singleton},
 };
 
 #[allow(unused)]
@@ -244,64 +239,6 @@ pub mod util {
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub struct KismetSystemLibrary(pub HashMap<String, u64>);
-
-impl_resolver!(all, KismetSystemLibrary, |ctx| async {
-    let mem = &ctx.image().memory;
-
-    let s = Pattern::from_bytes(
-        "KismetSystemLibrary\x00"
-            .encode_utf16()
-            .flat_map(u16::to_le_bytes)
-            .collect(),
-    )
-    .unwrap();
-    let strings = ctx.scan(s).await;
-
-    let refs = join_all(strings.iter().map(|s| {
-        ctx.scan(
-            Pattern::new(format!(
-        // fragile (only 4.25-4.27 most likely)
-        "4c 8d 0d [ ?? ?? ?? ?? ] 88 4c 24 70 4c 8d 05 ?? ?? ?? ?? 49 89 43 e0 48 8d 15 X0x{s:x}"
-    ))
-            .unwrap(),
-        )
-    }))
-    .await;
-
-    let cap = Pattern::new("4c 8d 0d [ ?? ?? ?? ?? ]").unwrap();
-
-    let register_natives_addr =
-        try_ensure_one(refs.iter().flatten().map(|a| -> Result<_> {
-            Ok(ctx.image().memory.captures(&cap, *a)?.unwrap()[0].rip())
-        }))?;
-
-    let register_natives = Pattern::new("48 83 ec 28 e8 ?? ?? ?? ?? 41 b8 [ ?? ?? ?? ?? ] 48 8d 15 [ ?? ?? ?? ?? ] 48 8b c8 48 83 c4 28 e9 ?? ?? ?? ??").unwrap();
-
-    let captures = ctx
-        .image()
-        .memory
-        .captures(&register_natives, register_natives_addr);
-
-    if let Some([num, data]) = captures?.as_deref() {
-        let mut res = HashMap::new();
-
-        let ptr = data.rip();
-        for i in 0..(num.u32() as u64) {
-            let a = ptr + i * 0x10;
-            res.insert(mem.read_string(mem.ptr(a)?)?, mem.ptr(a + 8)?);
-        }
-        Ok(KismetSystemLibrary(res))
-    } else {
-        bail_out!("did not match");
-    }
-});
-
-#[derive(Debug, PartialEq)]
-#[cfg_attr(
-    feature = "serde-resolvers",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 pub struct ConsoleManagerSingleton(pub u64);
 
 impl_resolver_singleton!(all, ConsoleManagerSingleton, |ctx| async {
@@ -359,57 +296,4 @@ impl_resolver_singleton!(all, UObjectBaseUtilityGetPathName, |ctx| async {
     ];
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
     Ok(Self(ensure_one(res.into_iter().flatten())?))
-});
-
-/// useful for extracting strings from common patterns for analysis
-#[derive(Debug, PartialEq)]
-#[cfg_attr(
-    feature = "serde-resolvers",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct UtilStringExtractor(pub HashSet<String>);
-impl_resolver!(all, UtilStringExtractor, |ctx| async {
-    let strings = ctx
-        .scan(
-            Pattern::new(
-                "48 8d 55 f8 49 8b c8 e8 | ?? ?? ?? ?? 0f 28 45 f0 48 8d 55 f0 44 8b c8 66 0f 7f 45 f0 41 b8 01 00 00 00 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ??",
-            )
-            .unwrap(),
-        )
-        .await;
-
-    let mem = &ctx.image().memory;
-
-    Ok(UtilStringExtractor(
-        strings
-            .into_iter()
-            .map(|a| -> Result<_> { Ok(mem.read_wstring(mem.rip4(a)?)?) })
-            .filter_map(|s| s.ok())
-            .collect::<HashSet<String>>(),
-    ))
-});
-
-/// useful for extracting strings from common patterns for analysis
-#[derive(Debug, PartialEq)]
-#[cfg_attr(
-    feature = "serde-resolvers",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct A(pub HashSet<u64>);
-impl_resolver!(all, A, |ctx| async {
-    let strings = ctx
-        .scan(
-            Pattern::new(
-                "48 8d 55 f8 49 8b c8 e8 ?? ?? ?? ?? 0f 28 45 f0 48 8d 55 f0 44 8b c8 66 0f 7f 45 f0 41 b8 01 00 00 00 48 8d 0d ?? ?? ?? ?? e8 | ?? ?? ?? ??",
-            )
-            .unwrap(),
-        )
-        .await;
-
-    let mem = &ctx.image().memory;
-
-    Ok(A(strings
-        .into_iter()
-        .map(|a| Ok(mem.rip4(a)?))
-        .collect::<Result<HashSet<_>>>()?))
 });

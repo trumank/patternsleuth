@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, str::FromStr};
 
 use futures::{future::join_all, join};
 use iced_x86::{Decoder, DecoderOptions, Instruction};
@@ -7,7 +7,8 @@ use patternsleuth_scanner::Pattern;
 use crate::{
     Addressable, MemoryTrait,
     resolvers::{
-        Result, bail_out, ensure_one, impl_resolver, impl_resolver_singleton, try_ensure_one,
+        ResolveError, Result, bail_out, ensure_one, impl_resolver, impl_resolver_singleton,
+        try_ensure_one,
     },
 };
 
@@ -192,6 +193,12 @@ impl_resolver_singleton!(all, FFrameStepExplicitProperty, |ctx| async {
 pub struct FFrameStepViaExec {
     pub step: u64,
     pub step_explicit_property: u64,
+}
+impl FromStr for FFrameStepViaExec {
+    type Err = ResolveError;
+    fn from_str(_s: &str) -> std::result::Result<Self, Self::Err> {
+        Err(ResolveError::new_msg("unimplemented"))
+    }
 }
 impl_resolver!(all, FFrameStepViaExec, |ctx| async {
     let patterns = [

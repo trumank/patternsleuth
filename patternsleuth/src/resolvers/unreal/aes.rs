@@ -1,4 +1,7 @@
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    str::FromStr,
+};
 
 use futures::future::join_all;
 
@@ -6,7 +9,7 @@ use patternsleuth_scanner::Pattern;
 
 use crate::{
     MemoryTrait,
-    resolvers::{Result, impl_resolver},
+    resolvers::{ResolveError, Result, impl_resolver},
 };
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -40,6 +43,12 @@ impl Display for AESKey {
 impl Debug for AESKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Display::fmt(&self, f)
+    }
+}
+impl FromStr for AESKeys {
+    type Err = ResolveError;
+    fn from_str(_s: &str) -> std::result::Result<Self, Self::Err> {
+        Err(ResolveError::new_msg("unimplemented"))
     }
 }
 

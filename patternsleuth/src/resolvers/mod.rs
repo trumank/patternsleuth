@@ -63,7 +63,7 @@ pub struct ResolveError {
     r#type: ResolveErrorType,
 }
 impl ResolveError {
-    fn new_msg(msg: impl Into<Cow<'static, str>>) -> Self {
+    pub fn new_msg(msg: impl Into<Cow<'static, str>>) -> Self {
         Self {
             context: vec![],
             r#type: ResolveErrorType::Msg(msg.into()),
@@ -288,16 +288,24 @@ macro_rules! _impl_resolver {
 #[macro_export]
 macro_rules! _impl_resolver_singleton {
     (all, $name:ident, |$ctx:ident| async $x:block ) => {
-        $crate::_impl_resolver_inner!($name, |$ctx| async {
-            if let Some(a) = std::env::var(concat!("PATTERNSLEUTH_RES_", stringify!($name))).ok().and_then(|s| (s.strip_prefix("0x").map(|s| u64::from_str_radix(s, 16).ok()).unwrap_or_else(|| s.parse().ok()))) {
-                return Ok($name(a));
-            }
-            $x
-        });
+        $crate::_impl_resolver_inner!($name, |$ctx| async $x);
 
         impl $crate::resolvers::Singleton for $name {
             fn get(&self) -> Option<u64> {
                 Some(self.0)
+            }
+        }
+
+        impl ::std::str::FromStr for $name {
+            type Err = $crate::resolvers::ResolveError;
+            fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
+                let value = if let Some(hex) = s.strip_prefix("0x") {
+                    u64::from_str_radix(hex, 16)
+                } else {
+                    s.parse()
+                }
+                .map_err(|_| Self::Err::new_msg(format!("failed to parse {s} as address")))?;
+                Ok(Self(value))
             }
         }
     };
@@ -313,15 +321,25 @@ macro_rules! _impl_resolver_singleton {
 
     (collect, $name:ident) => {
         $crate::_impl_resolver_inner!($name, |ctx| async {
-            if let Some(a) = std::env::var(concat!("PATTERNSLEUTH_RES_", stringify!($name))).ok().and_then(|s| (s.strip_prefix("0x").map(|s| u64::from_str_radix(s, 16).ok()).unwrap_or_else(|| s.parse().ok()))) {
-                return Ok($name(a));
-            }
             $crate::image::image_type_reflection!(all, impl_resolver_singleton; generate; {ctx, $name})
         });
 
         impl $crate::resolvers::Singleton for $name {
             fn get(&self) -> Option<u64> {
                 Some(self.0)
+            }
+        }
+
+        impl ::std::str::FromStr for $name {
+            type Err = $crate::resolvers::ResolveError;
+            fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
+                let value = if let Some(hex) = s.strip_prefix("0x") {
+                    u64::from_str_radix(hex, 16)
+                } else {
+                    s.parse()
+                }
+                .map_err(|_| Self::Err::new_msg(format!("failed to parse {s} as address")))?;
+                Ok(Self(value))
             }
         }
 
@@ -378,7 +396,12 @@ macro_rules! _impl_resolver_inner {
                 GLOBAL.get_or_init(|| &$crate::resolvers::ResolverFactory {
                     name: stringify!($name),
                     factory: |$ctx: &$crate::resolvers::AsyncContext| -> $crate::resolvers::futures::future::BoxFuture<$crate::resolvers::Result<$name>> {
-                        Box::pin(async $x)
+                        Box::pin(async {
+                            if let Ok(a) = std::env::var(concat!("PATTERNSLEUTH_RES_", stringify!($name))) {
+                                return ::std::str::FromStr::from_str(&a);
+                            }
+                            $x
+                        })
                     },
                 })
             }
@@ -417,6 +440,12 @@ macro_rules! _impl_try_collector {
                 $member_vis $member_name: ::std::sync::Arc<$resolver>,
             )*
         }
+        impl ::std::str::FromStr for $struct_name {
+            type Err = $crate::resolvers::ResolveError;
+            fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
+                Err(Self::Err::new_msg("unimplemented"))
+            }
+        }
         $crate::_impl_resolver!(all, $struct_name, |ctx| async {
             #[allow(non_snake_case)]
             let (
@@ -449,6 +478,12 @@ macro_rules! _impl_collector {
                 $(#[$inner $($args)*])*
                 $member_vis $member_name: $crate::resolvers::Result<::std::sync::Arc<$resolver>>,
             )*
+        }
+        impl ::std::str::FromStr for $struct_name {
+            type Err = $crate::resolvers::ResolveError;
+            fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
+                Err(Self::Err::new_msg("unimplemented"))
+            }
         }
         $crate::_impl_resolver!(all, $struct_name, |ctx| async {
             #[allow(non_snake_case)]

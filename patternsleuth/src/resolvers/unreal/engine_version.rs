@@ -1,4 +1,7 @@
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    str::FromStr,
+};
 
 use futures::future::join_all;
 
@@ -7,7 +10,7 @@ use patternsleuth_scanner::Pattern;
 
 use crate::{
     MemoryTrait,
-    resolvers::{bail_out, impl_resolver, try_ensure_one},
+    resolvers::{ResolveError, bail_out, impl_resolver, try_ensure_one},
 };
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -27,6 +30,21 @@ impl Display for EngineVersion {
 impl Debug for EngineVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "EngineVersion({}.{})", self.major, self.minor)
+    }
+}
+impl FromStr for EngineVersion {
+    type Err = ResolveError;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let (major, minor) = s
+            .split_once('.')
+            .ok_or(ResolveError::new_msg("expected <major>.<minor e.g.: 5.4"))?;
+        let major = major
+            .parse::<u16>()
+            .map_err(|e| ResolveError::new_msg(e.to_string()))?;
+        let minor = minor
+            .parse::<u16>()
+            .map_err(|e| ResolveError::new_msg(e.to_string()))?;
+        Ok(Self { major, minor })
     }
 }
 
@@ -93,6 +111,12 @@ pub struct EngineVersionStrings {
     pub branch_name: String,
     pub build_date: String,
     pub build_version: String,
+}
+impl FromStr for EngineVersionStrings {
+    type Err = ResolveError;
+    fn from_str(_s: &str) -> std::result::Result<Self, Self::Err> {
+        Err(ResolveError::new_msg("unimplemented"))
+    }
 }
 impl_resolver!(collect, EngineVersionStrings);
 // "++UE5+Release-{}.{}"
@@ -202,6 +226,12 @@ impl_resolver!(PEImage, EngineVersionStrings, |ctx| async {
 pub enum BuildConfiguration {
     Shipping,
     Development, // Includes DebugGame, Test, Dev, Development
+}
+impl FromStr for BuildConfiguration {
+    type Err = ResolveError;
+    fn from_str(_s: &str) -> std::result::Result<Self, Self::Err> {
+        Err(ResolveError::new_msg("unimplemented"))
+    }
 }
 
 impl_resolver!(all, BuildConfiguration, |ctx| async {

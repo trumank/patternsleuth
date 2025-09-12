@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, str::FromStr};
 
 use futures::{future::join_all, join};
 
@@ -6,7 +6,7 @@ use patternsleuth_scanner::Pattern;
 
 use crate::{
     Addressable,
-    resolvers::{Context, ensure_one, impl_resolver, impl_resolver_singleton},
+    resolvers::{Context, ResolveError, ensure_one, impl_resolver, impl_resolver_singleton},
 };
 
 #[derive(Debug, PartialEq)]
@@ -21,6 +21,12 @@ pub struct BlueprintLibraryInit {
     pub get_private_static_class_body: u64,
     pub uobject_static_class: u64,
     pub ublueprint_function_library_static_class: u64,
+}
+impl FromStr for BlueprintLibraryInit {
+    type Err = ResolveError;
+    fn from_str(_s: &str) -> std::result::Result<Self, Self::Err> {
+        Err(ResolveError::new_msg("unimplemented"))
+    }
 }
 
 impl_resolver!(all, BlueprintLibraryInit, |ctx| async {
