@@ -8,6 +8,7 @@ use crate::{
     MemoryTrait,
     resolvers::{Result, ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util},
 };
+use crate::resolvers::ResolveError;
 
 /// public: __cdecl FName::FName(wchar_t const *, enum EFindName)
 #[derive(Debug, PartialEq)]
@@ -358,4 +359,25 @@ impl_resolver_singleton!(all, FNamePool, |ctx| async {
     Ok(Self(try_ensure_one(res.iter().flatten().map(
         |a| -> Result<_> { Ok(ctx.image().memory.rip4(*a)?) },
     ))?))
+});
+
+/// StaticFNameConst
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct StaticFNameConst(pub u64);
+impl_resolver_singleton!(all, StaticFNameConst, |ctx| async {
+    let strings = ctx.scan(util::utf16_pattern("GLSL_ES3_1_ANDROID\0")).await;
+    let str_addr = ensure_one(strings)?;
+    let pattern = Pattern::new(format!(
+        "41 b8 01 00 00 00 48 8d 15 X0x{str_addr:08x} 48 8d 0d | ?? ?? ?? ?? e9"
+    ))
+    .unwrap();
+    let refs = ctx.scan(pattern).await;
+    match refs.len() {
+        0 => Err(ResolveError::new_msg("expected at least one value")),
+        _ => Ok(StaticFNameConst(ctx.image().memory.rip4(refs[0])?))
+    }
 });
