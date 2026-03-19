@@ -13,6 +13,8 @@ use crate::{
     Addressable as _, MemoryTrait,
     resolvers::{ResolveError, bail_out, impl_resolver, impl_resolver_singleton, try_ensure_one},
 };
+use crate::resolvers::ensure_one;
+use crate::resolvers::unreal::util;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(
@@ -569,3 +571,46 @@ impl_resolver!(all, BuildChangeList, |ctx| async {
 
     bail_out!("Build changelist not found");
 });
+
+/// InternalProjectName. GInternalProjectName in UE code, compiled_in_project_name will be unset if executable is a game agnostic executable
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct InternalProjectName {
+    pub internal_project_name: u64,
+    pub compiled_in_project_name: Option<String>,
+}
+impl_resolver!(all, InternalProjectName, |ctx| async {
+    let strings = join_all([
+        ctx.scan(util::utf16_pattern("UE4-%s\0")), // UE4
+        ctx.scan(util::utf16_pattern("UE-%s\0")) // UE5
+    ]).await.into_iter().flatten().collect_vec();
+
+    // Old UE4 games have UE4-%s literal in 2 places, once in FGenericCrashContext and once in legacy WER crash report handler
+    let patterns = strings.into_iter().flat_map(|str_addr| [
+        format!("4c 8d 05 | ?? ?? ?? ?? 48 8d 15 X0x{str_addr:08x} 48 8d 4c 24 ?? e8"), // no frame pointer
+        format!("4c 8d 05 | ?? ?? ?? ?? 48 8d 15 X0x{str_addr:08x} 48 8d 4d ?? e8"), // frame pointer
+        format!("4c 8d 05 | ?? ?? ?? ?? 88 05 ?? ?? ?? ?? 48 8d 15 X0x{str_addr:08x} 48 8d 4d ?? e8"), // frame pointer/legacy (has mov [rip+123], al in the middle of function register filling)
+        format!("4c 8d 0d | ?? ?? ?? ?? 4c 8d 05 X0x{str_addr:08x} 48 8d 4c 24 ?? ba 00 04 00 00"), // frame pointer/legacy WER crash reporter
+        format!("4c 8d 0d | ?? ?? ?? ?? ba 00 04 00 00 4c 8d 05 X0x{str_addr:08x} 48 8b d8 48 8d 4c 24"), // another variation of legacy WER crash reporter with slightly different argument ordering
+    ].into_iter()).collect_vec();
+    let internal_project_name_list = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap())))
+        .await
+        .into_iter()
+        .flatten()
+        .map(|a| Ok(ctx.image().memory.rip4(a)?))
+        .collect::<Result<Vec<u64>, ResolveError>>()?;
+
+    let internal_project_name = ensure_one(internal_project_name_list)?;
+    let is_bss_section = ctx.image().memory.get_section_containing(internal_project_name).map(|x| x.kind.is_bss()).unwrap_or(true);
+    let compiled_in_project_name = if !is_bss_section { Some(ctx.image().memory.read_wstring(internal_project_name)?) } else { None };
+    Ok(Self{internal_project_name, compiled_in_project_name})
+});
+impl FromStr for InternalProjectName {
+    type Err = ResolveError;
+    fn from_str(_s: &str) -> std::result::Result<Self, Self::Err> {
+        Err(ResolveError::new_msg("unimplemented"))
+    }
+}
