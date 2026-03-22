@@ -13,6 +13,7 @@ pub mod pak;
 pub mod save_game;
 pub mod static_construct_object;
 pub mod static_find_object;
+pub mod uobject_conditional_post_load;
 
 use std::{collections::HashSet, fmt::Debug};
 
