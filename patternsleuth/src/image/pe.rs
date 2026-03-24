@@ -1,4 +1,6 @@
+#[cfg(feature = "minidump")]
 use object::{File, ObjectSection};
+#[cfg(feature = "minidump")]
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -7,9 +9,13 @@ use super::{Image, ImageType};
 #[cfg(feature = "symbols")]
 use crate::symbols;
 use crate::{Memory, MemoryAccessError, MemoryTrait, RuntimeFunction};
-use anyhow::{Context, Result, anyhow, bail};
+#[cfg(feature = "minidump")]
+use anyhow::anyhow;
+use anyhow::{Context, Result, bail};
 use itertools::Itertools;
+#[cfg(feature = "minidump")]
 use minidump::format::MINIDUMP_MEMORY_DESCRIPTOR64;
+#[cfg(feature = "minidump")]
 use minidump::{
     Minidump, MinidumpMemory64List, MinidumpMemoryBase, MinidumpModule, MinidumpModuleList, Module,
 };
@@ -324,6 +330,7 @@ impl PEImage {
     }
 }
 
+#[cfg(feature = "minidump")]
 pub fn read_image_from_minidump<'a, D: std::ops::Deref<Target = [u8]>>(
     minidump: &Minidump<'_, D>,
 ) -> Result<Image<'a>, anyhow::Error> {

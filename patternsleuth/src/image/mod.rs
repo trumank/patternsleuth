@@ -8,7 +8,7 @@ use crate::*;
 use anyhow::Error;
 #[cfg(feature = "image-elf")]
 use elf::ElfImage;
-#[cfg(feature = "image-pe")]
+#[cfg(feature = "minidump")]
 use minidump::Minidump;
 #[cfg(feature = "image-pe")]
 use pe::PEImage;
@@ -33,7 +33,7 @@ image_type_dispatch! {
     }
 }
 
-#[cfg(feature = "image-pe")]
+#[cfg(feature = "minidump")]
 use crate::image::pe::read_image_from_minidump;
 pub use _image_type_reflection as image_type_reflection;
 
@@ -67,7 +67,7 @@ impl<'data> Image<'data> {
                 _ => Err(Error::msg("Unsupported object file format")),
             };
         }
-        #[cfg(feature = "image-pe")]
+        #[cfg(feature = "minidump")]
         if let Ok(minidump) = Minidump::read(data) {
             return read_image_from_minidump(&minidump);
         }
