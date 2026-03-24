@@ -65,10 +65,10 @@ impl_resolver_singleton!(collect, UGameEngineTick);
 impl_resolver_singleton!(PEImage, UGameEngineTick, |ctx| async {
     let strings = ["causeevent=\0", "CAUSEEVENT \0"];
     let strings: Vec<_> = join_all(strings.map(|s| ctx.scan(util::utf16_pattern(s))))
-    .await
-    .into_iter()
-    .flatten()
-    .collect();
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
 
     let refs = util::scan_xrefs(ctx, &strings).await;
 

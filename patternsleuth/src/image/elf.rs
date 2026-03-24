@@ -169,7 +169,7 @@ impl ElfImage {
                             CieOrFde::Cie(_) => {}
                         }
                     }
-                    result.sort_by(|a, b| a.start.cmp(&b.start));
+                    result.sort_by_key(|a| a.start);
                     Ok(result)
                 })
                 .context("Cannot find eh_frame")?
@@ -204,7 +204,7 @@ impl ElfImage {
                     CieOrFde::Cie(_) => {}
                 }
             }
-            result.sort_by(|a, b| a.start.cmp(&b.start));
+            result.sort_by_key(|a| a.start);
             // eprintln!("Found {} fde", result.len());
             Ok(result)
         }?;

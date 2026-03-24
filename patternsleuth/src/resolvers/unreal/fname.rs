@@ -4,11 +4,11 @@ use futures::future::join_all;
 
 use patternsleuth_scanner::Pattern;
 
+use crate::resolvers::ResolveError;
 use crate::{
     MemoryTrait,
     resolvers::{Result, ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util},
 };
-use crate::resolvers::ResolveError;
 
 /// public: __cdecl FName::FName(wchar_t const *, enum EFindName)
 #[derive(Debug, PartialEq)]
@@ -378,6 +378,6 @@ impl_resolver_singleton!(all, StaticFNameConst, |ctx| async {
     let refs = ctx.scan(pattern).await;
     match refs.len() {
         0 => Err(ResolveError::new_msg("expected at least one value")),
-        _ => Ok(StaticFNameConst(ctx.image().memory.rip4(refs[0])?))
+        _ => Ok(StaticFNameConst(ctx.image().memory.rip4(refs[0])?)),
     }
 });
