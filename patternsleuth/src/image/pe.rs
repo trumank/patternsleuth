@@ -1,7 +1,5 @@
 #[cfg(feature = "minidump")]
 use object::{File, ObjectSection};
-#[cfg(feature = "minidump")]
-use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
@@ -356,17 +354,26 @@ pub fn read_image_from_minidump<'a, D: std::ops::Deref<Target = [u8]>>(
         let section_absolute_address = main_module.base_address() + section_relative_address;
         let section_size = section.size();
 
-        if let Some(section_memory_region) = memory_list.memory_at_address(section_absolute_address)
-        {
-            let section_start_offset =
-                section_absolute_address - section_memory_region.base_address;
-            let section_end_offset = min(
-                section_memory_region.size,
-                section_start_offset + section_size,
-            );
-            let section_data = &section_memory_region.bytes
-                [section_start_offset as usize..section_end_offset as usize];
-            sections.push((section, Vec::from(section_data)));
+        let mut section_data = vec![0u8; section_size as usize];
+        let mut any_loaded = false;
+        let section_end = section_absolute_address + section_size;
+        for region in memory_list.iter() {
+            let r_base = region.base_address;
+            let r_end = r_base + region.size;
+            if r_end <= section_absolute_address || r_base >= section_end {
+                continue;
+            }
+            let lo = r_base.max(section_absolute_address);
+            let hi = r_end.min(section_end);
+            let src_off = (lo - r_base) as usize;
+            let dst_off = (lo - section_absolute_address) as usize;
+            let len = (hi - lo) as usize;
+            section_data[dst_off..dst_off + len]
+                .copy_from_slice(&region.bytes[src_off..src_off + len]);
+            any_loaded = true;
+        }
+        if any_loaded {
+            sections.push((section, section_data));
         }
     }
     let memory = Memory::new_external_data(sections)?;
