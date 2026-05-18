@@ -56,5 +56,5 @@ impl_resolver_singleton!(PEImage, GEngine, |ctx| async {
     )?))
 });
 impl_resolver_singleton!(ElfImage, GEngine, |_ctx| async {
-    super::bail_out!("ElfImage unimplemented");
+    crate::resolvers::bail_out!("ElfImage unimplemented");
 });

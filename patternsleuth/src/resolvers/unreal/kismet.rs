@@ -103,7 +103,7 @@ impl_resolver_singleton!(PEImage, GNativesViaSkipFunction, |ctx| async {
     let mut decoder = Decoder::with_ip(
         64,
         &bytes[0..bytes.len().min(500)],
-        skip_function.0 as u64,
+        skip_function.0,
         DecoderOptions::NONE,
     );
 
@@ -126,7 +126,7 @@ impl_resolver_singleton!(ElfImage, GNativesViaSkipFunction, |ctx| async {
     let mut decoder = Decoder::with_ip(
         64,
         &bytes[0..bytes.len().min(500)],
-        skip_function.0 as u64,
+        skip_function.0,
         DecoderOptions::NONE,
     );
 

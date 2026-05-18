@@ -34,5 +34,5 @@ impl_resolver_singleton!(PEImage, FPakPlatformFileInitialize, |ctx| async {
     Ok(Self(b.or(a)?))
 });
 impl_resolver_singleton!(ElfImage, FPakPlatformFileInitialize, |_ctx| async {
-    super::bail_out!("ElfImage unimplemented");
+    crate::resolvers::bail_out!("ElfImage unimplemented");
 });

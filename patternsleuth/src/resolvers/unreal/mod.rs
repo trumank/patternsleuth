@@ -25,7 +25,7 @@ use patternsleuth_scanner::Pattern;
 use crate::{
     Image,
     disassemble::{Control, disassemble},
-    resolvers::{Result, bail_out, ensure_one, impl_resolver_singleton},
+    resolvers::{Result, ensure_one, impl_resolver_singleton},
 };
 
 #[allow(unused)]
