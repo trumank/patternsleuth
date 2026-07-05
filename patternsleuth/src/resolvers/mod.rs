@@ -69,6 +69,13 @@ impl ResolveError {
             r#type: ResolveErrorType::Msg(msg.into()),
         }
     }
+    /// Combine multiple errors into a single one that reports all of them.
+    pub fn multi(errors: Vec<ResolveError>) -> Self {
+        Self {
+            context: vec![],
+            r#type: ResolveErrorType::Multi(errors),
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(
@@ -78,17 +85,23 @@ impl ResolveError {
 pub enum ResolveErrorType {
     Msg(Cow<'static, str>),
     MemoryAccessOutOfBounds(MemoryAccessError),
+    Multi(Vec<ResolveError>),
 }
 impl std::fmt::Display for ResolveError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        for ctx in self.context.iter().rev() {
+            write!(f, "{ctx}: ")?;
+        }
         match &self.r#type {
-            ResolveErrorType::Msg(msg) => {
-                for ctx in self.context.iter().rev() {
-                    write!(f, "{ctx}: ")?;
-                }
-                write!(f, "{msg}")
-            }
+            ResolveErrorType::Msg(msg) => write!(f, "{msg}"),
             ResolveErrorType::MemoryAccessOutOfBounds(err) => err.fmt(f),
+            ResolveErrorType::Multi(errors) => {
+                write!(f, "{} resolvers failed:", errors.len())?;
+                for err in errors {
+                    write!(f, "\n  - {err}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -447,15 +460,31 @@ macro_rules! _impl_try_collector {
             }
         }
         $crate::_impl_resolver!(all, $struct_name, |ctx| async {
+            // resolve every member concurrently and collect *all* failures rather
+            // than short-circuiting on the first one, so the caller can see them all
             #[allow(non_snake_case)]
             let (
                 $( $member_name, )*
-            ) = $crate::resolvers::futures::try_join!(
+            ) = $crate::resolvers::futures::join!(
                 $( ctx.resolve($resolver::resolver()), )*
-            )?;
-            Ok($struct_name {
-                $( $member_name, )*
-            })
+            );
+            let mut errors = ::std::vec::Vec::new();
+            $(
+                let $member_name = match $member_name {
+                    ::std::result::Result::Ok(v) => ::std::option::Option::Some(v),
+                    ::std::result::Result::Err(e) => {
+                        errors.push(e);
+                        ::std::option::Option::None
+                    }
+                };
+            )*
+            if errors.is_empty() {
+                Ok($struct_name {
+                    $( $member_name: $member_name.unwrap(), )*
+                })
+            } else {
+                Err($crate::resolvers::ResolveError::multi(errors))
+            }
         });
     };
 }
