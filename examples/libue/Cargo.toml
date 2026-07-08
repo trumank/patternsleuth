@@ -1,0 +1,22 @@
+[package]
+name = "libue"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bitflags = "2.4.1"
+cityhasher = "0.1.0"
+paste = "1.0.15"
+tracing = "0.1.41"
+widestring = "1.0.2"
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_Kernel",
+  "Win32_System_Threading",
+] }
