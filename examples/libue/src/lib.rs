@@ -2598,6 +2598,12 @@ ue_struct! {
     /// rewrite a function body in place (e.g. bytecode patching); the writer
     /// must hold the owning struct exclusively.
     view_mut script as script: TArray<u8>,
+    /// `ScriptAndPropertyObjectReferences` — the `UObject`s the compiled
+    /// bytecode (and property defaults) reference, which GC keeps alive.
+    /// Mutable via `script_and_property_object_references_mut` for callers that
+    /// rewrite bytecode and must register the new instructions' object refs so
+    /// they survive GC; the writer must hold the owning struct exclusively.
+    view_mut script_and_property_object_references as script_and_property_object_references: TArray<*const UObject>,
 }
 
 impl UStruct {
@@ -3155,6 +3161,7 @@ pub mod kismet {
         excl locals: *const c_void,
         excl most_recent_property: *const FProperty,
         excl most_recent_property_address: *const c_void,
+        excl previous_frame: *const FFrame,
         excl out_parms: *const c_void,
         excl property_chain_for_compiled_in: *const FField,
         excl current_native_function: *const c_void,

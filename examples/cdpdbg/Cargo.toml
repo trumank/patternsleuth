@@ -1,0 +1,35 @@
+[package]
+name = "cdpdbg"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+backtrace = { git = "https://github.com/rust-lang/backtrace-rs", rev = "036d4909e1fb9c08c2bb0f59ac81994e39489b2f" }
+jmap-kismet-test = { path = "../../../jmap-kismet-test", default-features = false }
+libue = { path = "../libue" }
+patternsleuth = { path = "../../patternsleuth", features = ["process-internal", "image-pe"] }
+retour = { git = "https://github.com/Hpmason/retour-rs", features = ["static-detour"] }
+crossbeam-channel = "0.5"
+futures-util = "0.3"
+parking_lot = "0.12"
+serde = { workspace = true, features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "macros"] }
+tokio-tungstenite = "0.24"
+tracing = "0.1.41"
+tracing-appender = "0.2.3"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+] }

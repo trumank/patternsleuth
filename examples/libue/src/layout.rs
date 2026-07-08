@@ -21,6 +21,10 @@ pub struct FFrameLayout {
     pub locals: usize,
     pub most_recent_property: usize,
     pub most_recent_property_address: usize,
+    /// `PreviousFrame` — the caller's frame, for walking the Kismet call stack.
+    /// Sits right before `OutParms` (after the inline `FlowStack`), so it is
+    /// derived as the pointer slot preceding the verified `out_parms` offset.
+    pub previous_frame: usize,
     pub out_parms: usize,
     pub property_chain_for_compiled_in: usize,
     pub current_native_function: usize,
@@ -488,6 +492,11 @@ impl UeLayout {
             properties_size: 0x58,
             min_alignment: 0x5c, // 4.27 PDB: MinAlignment immediately after PropertiesSize; stable across versions
             script: 0x60,
+            // ScriptAndPropertyObjectReferences follows Script (0x60, 16B) and the
+            // four FProperty* links (PropertyLink/RefLink/DestructorLink/
+            // PostConstructLink), i.e. 0x70 + 0x20; stable across 4.25–5.7 (Script
+            // stays at 0x60). Derived from the verified `script` offset, verify.
+            script_and_property_object_references: 0x90,
         },
         ufunction: UFunctionLayout {
             function_flags: 0xb0,
@@ -584,6 +593,7 @@ impl UeLayout {
             locals: 0x28,
             most_recent_property: 0x30,
             most_recent_property_address: 0x38,
+            previous_frame: 0x70,
             out_parms: 0x78,
             property_chain_for_compiled_in: 0x80,
             current_native_function: 0x88,
@@ -690,6 +700,11 @@ impl UeLayout {
             properties_size: 0x58,
             min_alignment: 0x5c, // 4.27 PDB: MinAlignment immediately after PropertiesSize; stable across versions
             script: 0x60,
+            // ScriptAndPropertyObjectReferences follows Script (0x60, 16B) and the
+            // four FProperty* links (PropertyLink/RefLink/DestructorLink/
+            // PostConstructLink), i.e. 0x70 + 0x20; stable across 4.25–5.7 (Script
+            // stays at 0x60). Derived from the verified `script` offset, verify.
+            script_and_property_object_references: 0x90,
         },
         ufunction: UFunctionLayout {
             function_flags: 0xb0,
@@ -795,6 +810,7 @@ impl UeLayout {
             locals: 0x28,
             most_recent_property: 0x30,
             most_recent_property_address: 0x38,
+            previous_frame: 0x78,
             out_parms: 0x80,
             property_chain_for_compiled_in: 0x88,
             current_native_function: 0x90,
@@ -852,6 +868,11 @@ impl UeLayout {
             properties_size: 0x58,
             min_alignment: 0x5c, // 4.27 PDB: MinAlignment immediately after PropertiesSize; stable across versions
             script: 0x60,
+            // ScriptAndPropertyObjectReferences follows Script (0x60, 16B) and the
+            // four FProperty* links (PropertyLink/RefLink/DestructorLink/
+            // PostConstructLink), i.e. 0x70 + 0x20; stable across 4.25–5.7 (Script
+            // stays at 0x60). Derived from the verified `script` offset, verify.
+            script_and_property_object_references: 0x90,
         },
         ufunction: UFunctionLayout {
             function_flags: 0xb0,
@@ -958,6 +979,7 @@ impl UeLayout {
             locals: 0x28,
             most_recent_property: 0x30,
             most_recent_property_address: 0x38,
+            previous_frame: 0x78,
             out_parms: 0x80,
             property_chain_for_compiled_in: 0x88,
             current_native_function: 0x90,
@@ -1015,6 +1037,11 @@ impl UeLayout {
             properties_size: 0x58,
             min_alignment: 0x5c, // 4.27 PDB: MinAlignment immediately after PropertiesSize; stable across versions
             script: 0x60,
+            // ScriptAndPropertyObjectReferences follows Script (0x60, 16B) and the
+            // four FProperty* links (PropertyLink/RefLink/DestructorLink/
+            // PostConstructLink), i.e. 0x70 + 0x20; stable across 4.25–5.7 (Script
+            // stays at 0x60). Derived from the verified `script` offset, verify.
+            script_and_property_object_references: 0x90,
         },
         ufunction: UFunctionLayout {
             function_flags: 0xb0,
@@ -1115,6 +1142,7 @@ impl UeLayout {
             locals: 0x28,
             most_recent_property: 0x30,
             most_recent_property_address: 0x38,
+            previous_frame: 0x78,
             out_parms: 0x80,
             property_chain_for_compiled_in: 0x88,
             current_native_function: 0x90,
