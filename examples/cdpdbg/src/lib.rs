@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context, Result};
 use patternsleuth::resolvers::impl_try_collector;
 use patternsleuth::resolvers::unreal::{
+    engine_version::EngineVersion,
     fname::{FNameCtorWchar, FNameToString},
     fuobject_hash_tables::FUObjectHashTablesGet,
     game_loop::FEngineLoopTick,
@@ -38,7 +39,6 @@ retour::static_detour! {
 }
 
 static DEFERRED_INIT_DONE: AtomicBool = AtomicBool::new(false);
-static mut GNATIVES_ADDR: usize = 0;
 
 #[unsafe(no_mangle)]
 #[allow(non_snake_case, unused_variables)]
@@ -85,6 +85,7 @@ fn setup() -> Result<PathBuf> {
 impl_try_collector! {
     #[derive(Debug, PartialEq, Clone)]
     struct CdpDbgResolution {
+        engine_version: EngineVersion,
         gmalloc: GMalloc,
         guobject_array: GUObjectArray,
         fnametostring: FNameToString,
@@ -108,6 +109,17 @@ unsafe fn patch(_bin_dir: PathBuf) -> Result<()> {
 
         tracing::info!("results: {:?}", resolution);
 
+        let selected = ue::UeLayout::for_version(
+            resolution.engine_version.major,
+            resolution.engine_version.minor,
+        )
+        .with_context(|| format!("unsupported engine version {}", resolution.engine_version))?;
+        tracing::info!(
+            "engine version {} -> selected {} layout",
+            resolution.engine_version,
+            selected.name
+        );
+
         let guobject_array: &'static ue::FUObjectArray =
             &*(resolution.guobject_array.0 as *const ue::FUObjectArray);
 
@@ -120,13 +132,10 @@ unsafe fn patch(_bin_dir: PathBuf) -> Result<()> {
             static_load_object: std::mem::transmute(resolution.static_load_object.0),
             static_construct_object: std::mem::transmute(resolution.static_construct_object.0),
             gnatives: resolution.gnatives.0 as *mut ue::GNatives,
-            layout: ue::UeLayout::UE_4_27,
+            layout: selected.layout,
         });
 
         tracing::info!("libue initialized");
-
-        // Stash GNatives address for deferred init
-        GNATIVES_ADDR = resolution.gnatives.0.try_into().unwrap();
 
         // Hook engine tick — deferred init runs on first tick
         let tick_target: unsafe extern "system" fn(*mut c_void, f32, u8) =
@@ -235,9 +244,8 @@ fn deferred_init() -> Result<()> {
     let scripts = scripts::build_scripts(guobject_array);
     tracing::info!("Built {} script entries", scripts.len());
 
-    // Get GNatives as mutable reference
-    let gnatives: &'static mut ue::GNatives =
-        unsafe { &mut *std::ptr::with_exposed_provenance_mut::<ue::GNatives>(GNATIVES_ADDR) };
+    // Get GNatives as mutable reference — libue holds the resolved table pointer.
+    let gnatives: &'static mut ue::GNatives = unsafe { &mut *ue::globals().gnatives };
 
     // Initialize debugger (installs 0xFE handler, creates channels)
     let channels = unsafe { debugger::init(scripts, gnatives) };

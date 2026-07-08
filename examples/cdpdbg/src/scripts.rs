@@ -126,20 +126,12 @@ pub fn try_build_class_script(class_obj: &ue::UObjectBase) -> Option<Script> {
 }
 
 fn collect_class_functions(class: &ue::UObjectBase) -> Vec<&ue::UFunction> {
-    let mut out = Vec::new();
     let ustruct = unsafe { &*(class as *const _ as *const ue::UStruct) };
-    let mut child = ustruct.children();
-    while let Some(field) = unsafe { child.as_ref() } {
-        let base: &ue::UObjectBase =
-            unsafe { &*(field as *const ue::UField as *const ue::UObjectBase) };
-        if let Some(f) = base.cast::<ue::UFunction>() {
-            if !f.script().as_slice().is_empty() {
-                out.push(f);
-            }
-        }
-        child = field.next();
-    }
-    out
+    ustruct
+        .iter_children()
+        .filter_map(|field| field.cast::<ue::UFunction>())
+        .filter(|f| !f.script().as_slice().is_empty())
+        .collect()
 }
 
 fn build_class_script(class_obj: &ue::UObjectBase, funcs: &[&ue::UFunction]) -> Option<Script> {
@@ -226,22 +218,7 @@ fn build_class_script(class_obj: &ue::UObjectBase, funcs: &[&ue::UFunction]) -> 
 }
 
 fn collect_param_names(func: &ue::UFunction) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut prop_ptr = func.child_properties();
-    while let Some(field) = unsafe { prop_ptr.as_ref() } {
-        if let Some(fprop) =
-            unsafe { (field as *const ue::FField as *const ue::FProperty).as_ref() }
-        {
-            let flags = fprop.property_flags();
-            if flags.contains(ue::EPropertyFlags::CPF_Parm)
-                && !flags.contains(ue::EPropertyFlags::CPF_ReturnParm)
-            {
-                out.push(field.name().to_string());
-            }
-        }
-        prop_ptr = field.next();
-    }
-    out
+    func.params().map(|p| p.name().to_string()).collect()
 }
 
 /// Error from [`set_script_source`]. Carries an optional byte-offset span

@@ -19,6 +19,7 @@ use patternsleuth::resolvers::unreal::blueprint_library::UFunctionBind;
 use patternsleuth::resolvers::unreal::game_loop::Main;
 use patternsleuth::resolvers::unreal::kismet::GNatives;
 use patternsleuth::resolvers::unreal::{
+    engine_version::EngineVersion,
     fname::{FNameCtorWchar, FNameToString},
     fuobject_hash_tables::FUObjectHashTablesGet,
     game_loop::{FEngineLoopInit, FEngineLoopTick},
@@ -83,6 +84,7 @@ fn setup() -> Result<PathBuf> {
 impl_try_collector! {
     #[derive(Debug, PartialEq, Clone)]
     struct DllHookResolution {
+        engine_version: EngineVersion,
         gmalloc: GMalloc,
         guobject_array: GUObjectArray,
         fnametostring: FNameToString,
@@ -119,30 +121,11 @@ impl Globals {
         unsafe { *self.guobject_array.data_ptr() }
     }
     pub fn gnatives(&self) -> &'static ue::GNatives {
-        unsafe {
-            &*std::ptr::with_exposed_provenance::<
-                [std::option::Option<
-                    for<'a> unsafe extern "system" fn(
-                        *mut ue::UObject,
-                        &'a mut ue::kismet::FFrame,
-                        *mut std::ffi::c_void,
-                    ),
-                >; 255],
-            >(self.resolution.gnatives.0.try_into().unwrap())
-        }
+        // libue now holds the resolved `GNatives` table pointer in its globals.
+        unsafe { &*ue::globals().gnatives }
     }
     pub unsafe fn gnatives_mut(&self) -> &'static mut ue::GNatives {
-        unsafe {
-            &mut *std::ptr::with_exposed_provenance_mut::<
-                [std::option::Option<
-                    for<'a> unsafe extern "system" fn(
-                        *mut ue::UObject,
-                        &'a mut ue::kismet::FFrame,
-                        *mut std::ffi::c_void,
-                    ),
-                >; 255],
-            >(self.resolution.gnatives.0.try_into().unwrap())
-        }
+        unsafe { &mut *ue::globals().gnatives }
     }
 }
 
@@ -220,6 +203,17 @@ unsafe fn patch(_bin_dir: PathBuf) -> Result<()> {
 
         tracing::info!("results: {:?}", resolution);
 
+        let selected = ue::UeLayout::for_version(
+            resolution.engine_version.major,
+            resolution.engine_version.minor,
+        )
+        .with_context(|| format!("unsupported engine version {}", resolution.engine_version))?;
+        tracing::info!(
+            "engine version {} -> selected {} layout",
+            resolution.engine_version,
+            selected.name
+        );
+
         let guobject_array: &'static ue::FUObjectArray =
             &*(resolution.guobject_array.0 as *const ue::FUObjectArray);
 
@@ -232,7 +226,7 @@ unsafe fn patch(_bin_dir: PathBuf) -> Result<()> {
             static_load_object: std::mem::transmute(resolution.static_load_object.0),
             static_construct_object: std::mem::transmute(resolution.static_construct_object.0),
             gnatives: resolution.gnatives.0 as *mut ue::GNatives,
-            layout: ue::UeLayout::UE_4_27,
+            layout: selected.layout,
         });
 
         GLOBALS = Some(Globals {

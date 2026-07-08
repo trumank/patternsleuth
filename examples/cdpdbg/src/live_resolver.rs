@@ -53,20 +53,11 @@ fn find_property_in_struct(ustruct: &ue::UStruct, name: &str) -> Option<Address>
 /// including its super chain, looking for one whose FName matches `name`.
 fn find_child_in_hierarchy(start: &ue::UStruct, name: &str) -> Option<Address> {
     let target = ue::FName::from_string(name, 0);
-    let mut current: *const ue::UStruct = start;
-    while let Some(st) = unsafe { current.as_ref() } {
-        let mut child = st.children();
-        while let Some(c) = unsafe { child.as_ref() } {
-            let base: &ue::UObjectBase =
-                unsafe { &*(c as *const ue::UField as *const ue::UObjectBase) };
-            if base.name_private() == target {
-                return Some(Address(base as *const _ as u64));
-            }
-            child = c.next();
-        }
-        current = st.super_struct();
-    }
-    None
+    start
+        .iter_super()
+        .flat_map(|st| st.iter_children())
+        .find(|field| field.name_private() == target)
+        .map(|field| Address(field as *const ue::UField as u64))
 }
 
 /// Resolve a UE object path to a UObjectBase, loading the package from disk
