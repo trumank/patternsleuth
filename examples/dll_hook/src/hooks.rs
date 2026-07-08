@@ -1,13 +1,19 @@
 use std::{
+    collections::HashMap,
     ffi::c_void,
-    sync::{Arc, LazyLock, Mutex, Weak},
+    sync::{LazyLock, Mutex},
 };
 
 use anyhow::Result;
 
-use crate::{assert_main_thread, globals, object_cache, ue};
+use crate::{
+    assert_main_thread, globals,
+    object_cache::{ObjectEvent, ObjectRegistry},
+    ue,
+};
 
 retour::static_detour! {
+    static HookWinMain: unsafe extern "system" fn(*mut (), *mut (), *mut (), i32, *const ()) -> i32;
     static HookUGameEngineTick: unsafe extern "system" fn(*mut c_void, f32, u8);
     static HookFEngineLoopInit: unsafe extern "system" fn(*mut c_void);
     static HookAllocateUObject: unsafe extern "system" fn(*mut c_void, *const ue::UObjectBase, bool);
@@ -17,196 +23,179 @@ retour::static_detour! {
     static HookUFunctionBind: unsafe extern "system" fn(*mut ue::UFunction);
 }
 
-macro_rules! event {
-    ($name:ident ( $($($arg_name:ident: $arg_ty:ty)+$(,)?)* ) ) => {
-        pub mod $name {
-            use super::*;
-
-            pub type Listener = dyn Fn( $($($arg_ty,)*)* ) + Send + Sync;
-            fn get() -> &'static Mutex<Vec<Weak<Listener>>> {
-                static OBJECTS: LazyLock<Mutex<Vec<Weak<Listener>>>> = LazyLock::new(|| Default::default());
-                &*OBJECTS
-            }
-            pub fn register(listener: Arc<Listener>) -> Arc<Listener> {
-                get().lock().unwrap().push(Arc::downgrade(&listener));
-                listener
-            }
-            pub fn call( $($($arg_name: $arg_ty,)*)* ) {
-                get().lock().unwrap().retain(|f| {
-                    if let Some(f) = f.upgrade() {
-                        f( $($($arg_name,)*)* );
-                        true
-                    } else {
-                        false
-                    }
-                });
-            }
-        }
-    };
-}
-
-event!(create_uobject(/*uobject_array: &UObjectLock,*/ object: &ue::UObjectBase));
-event!(delete_uobject(/*uobject_array: &UObjectLock,*/ object: &ue::UObjectBase));
-event!(kismet_execution_message(message: &widestring::U16CStr, verbosity: u8, warning_id: ue::FName));
-event!(kismet_print_message(message: &str));
-
 pub type UObjectLock = parking_lot::FairMutexGuard<'static, &'static ue::FUObjectArray>;
 static mut GUOBJECT_LOCK: Option<UObjectLock> = None;
 
+/// Read the next parameter off a live Kismet execution frame into `output`,
+/// mirroring the engine's `Stack.Step(Stack.Object, &output)` for a native
+/// exec function argument.
+unsafe fn arg<T>(stack: &mut ue::kismet::FFrame, output: &mut T) {
+    unsafe {
+        let ctx = stack.object();
+        ue::kismet::step(stack, ctx, output as *mut T as *mut c_void);
+    }
+}
+
+/// Advance `stack.code` past the trailing `EX_EndFunctionParms` byte.
+unsafe fn skip_end_function_parms(stack: &mut ue::kismet::FFrame) {
+    unsafe {
+        let next = (stack.code() as *const u8).add(1) as *const c_void;
+        stack.code_mut().set(next);
+    }
+}
+
+pub struct GameTick(pub Vec<ObjectEvent>);
+pub struct CreateUObject<'a>(pub &'a ue::UObjectBase);
+pub struct DeleteUObject<'a>(pub &'a ue::UObjectBase);
+
 pub unsafe fn initialize() -> Result<()> {
-    assert_main_thread!();
+    unsafe {
+        assert_main_thread!();
 
-    GUOBJECT_LOCK = Some(globals().guobject_array());
+        GUOBJECT_LOCK = Some(globals().guobject_array());
 
-    HookFEngineLoopInit.initialize(
-        std::mem::transmute(globals().resolution.engine_loop_init.0),
-        move |engine_loop| {
-            assert_main_thread!();
+        HookWinMain.initialize(
+            std::mem::transmute(globals().resolution.main.0),
+            detour_main,
+        )?;
+        HookWinMain.enable()?;
 
-            HookFEngineLoopInit.call(engine_loop);
-            simple_log::info!("ENGINE LOOP INIT");
-        },
-    )?;
-    HookFEngineLoopInit.enable()?;
+        HookFEngineLoopInit.initialize(
+            std::mem::transmute(globals().resolution.engine_loop_init.0),
+            move |engine_loop| {
+                assert_main_thread!();
 
-    HookUGameEngineTick.initialize(
-        std::mem::transmute(globals().resolution.game_tick.0),
-        move |game_engine, delta_seconds, idle_mode| {
-            assert_main_thread!();
+                HookFEngineLoopInit.call(engine_loop);
+                tracing::info!("ENGINE LOOP INIT");
+            },
+        )?;
+        HookFEngineLoopInit.enable()?;
 
-            //info!("tick time={:0.5}", delta_seconds);
+        HookUGameEngineTick.initialize(
+            std::mem::transmute(globals().resolution.game_tick.0),
+            move |game_engine, delta_seconds, idle_mode| {
+                assert_main_thread!();
 
-            GUOBJECT_LOCK.take();
-            HookUGameEngineTick.call(game_engine, delta_seconds, idle_mode);
-            GUOBJECT_LOCK = Some(globals().guobject_array());
-        },
-    )?;
-    HookUGameEngineTick.enable()?;
+                // info!("tick time={:0.5}", delta_seconds);
 
-    HookAllocateUObject.initialize(
-        std::mem::transmute(globals().resolution.allocate_uobject.0),
-        |this, object, merging_threads| {
-            //assert_main_thread!();
+                HookUGameEngineTick.call(game_engine, delta_seconds, idle_mode);
+                let events = ObjectRegistry::drain_events();
+                crate::events::fire(GameTick(events));
+            },
+        )?;
+        HookUGameEngineTick.enable()?;
 
-            //info!("allocate uobject {:?}", object);
+        HookAllocateUObject.initialize(
+            std::mem::transmute(globals().resolution.allocate_uobject.0),
+            |this, object, merging_threads| {
+                // println!("alloc {this:p} {object:p}");
+                HookAllocateUObject.call(this, object, merging_threads);
+                ObjectRegistry::on_object_created(object as *mut _);
+            },
+        )?;
+        HookAllocateUObject.enable()?;
 
-            HookAllocateUObject.call(this, object, merging_threads);
+        HookFreeUObject.initialize(
+            std::mem::transmute(globals().resolution.free_uobject.0),
+            |this, object| {
+                // println!("free  {this:p} {object:p}");
+                ObjectRegistry::on_object_deleted(this as *mut _);
+                HookFreeUObject.call(this, object);
+            },
+        )?;
+        HookFreeUObject.enable()?;
 
-            object_cache::object_created(&*object);
-            create_uobject::call(/*GUOBJECT_LOCK.as_ref().unwrap(),*/ &*object);
-        },
-    )?;
-    HookAllocateUObject.enable()?;
+        // HookKismetPrintString.initialize(
+        //     std::mem::transmute(
+        //         *globals()
+        //             .resolution
+        //             .kismet_system_library
+        //             .0
+        //             .get("PrintString")
+        //             .unwrap(),
+        //     ),
+        //     |_context, stack, _result| {
+        //         let stack = &mut *stack;
 
-    HookFreeUObject.initialize(
-        std::mem::transmute(globals().resolution.free_uobject.0),
-        |this, object| {
-            //assert_main_thread!();
+        //         let mut ctx: Option<&ue::UObject> = None;
+        //         let mut string = ue::FString::default();
+        //         let mut print_to_screen = false;
+        //         let mut print_to_log = false;
+        //         let mut color = ue::FLinearColor::default();
+        //         let mut duration = 0f32;
 
-            //info!("delete uobject {:?}", object);
+        //         ue::kismet::arg(stack, &mut ctx);
+        //         ue::kismet::arg(stack, &mut string);
+        //         ue::kismet::arg(stack, &mut print_to_screen);
+        //         ue::kismet::arg(stack, &mut print_to_log);
+        //         ue::kismet::arg(stack, &mut color);
+        //         ue::kismet::arg(stack, &mut duration);
 
-            object_cache::object_deleted(&*this);
-            delete_uobject::call(/*GUOBJECT_LOCK.as_ref().unwrap(),*/ &*this);
+        //         //let s = string.to_string();
+        //         //info!("PrintString({s:?})");
+        //         kismet_print_message::call(&string.to_string());
 
-            HookFreeUObject.call(this, object);
-        },
-    )?;
-    HookFreeUObject.enable()?;
+        //         if !stack.code.is_null() {
+        //             stack.code = stack.code.add(1);
+        //         }
+        //     },
+        // )?;
+        // HookKismetPrintString.enable()?;
 
-    HookKismetPrintString.initialize(
-        std::mem::transmute(
-            *globals()
-                .resolution
-                .kismet_system_library
-                .0
-                .get("PrintString")
-                .unwrap(),
-        ),
-        |_context, stack, _result| {
-            let stack = &mut *stack;
+        // HookKismetExecutionMessage.initialize(
+        //     std::mem::transmute(globals().resolution.fframe_kismet_execution_message.0),
+        //     |message, verbosity, warning_id| {
+        //         kismet_execution_message::call(
+        //             widestring::U16CStr::from_ptr_str(message),
+        //             verbosity,
+        //             warning_id,
+        //         );
+        //         HookKismetExecutionMessage.call(message, verbosity, warning_id);
+        //     },
+        // )?;
+        // HookKismetExecutionMessage.enable()?;
 
-            let mut ctx: Option<&ue::UObject> = None;
-            let mut string = ue::FString::default();
-            let mut print_to_screen = false;
-            let mut print_to_log = false;
-            let mut color = ue::FLinearColor::default();
-            let mut duration = 0f32;
+        type ExecFn =
+            unsafe extern "system" fn(*mut ue::UObject, *mut ue::kismet::FFrame, *mut c_void);
 
-            ue::kismet::arg(stack, &mut ctx);
-            ue::kismet::arg(stack, &mut string);
-            ue::kismet::arg(stack, &mut print_to_screen);
-            ue::kismet::arg(stack, &mut print_to_log);
-            ue::kismet::arg(stack, &mut color);
-            ue::kismet::arg(stack, &mut duration);
+        let _hooks = [
+            (
+                "/Game/_AssemblyStorm/TestMod/BPL_NativeTest.BPL_NativeTest_C:Do Stuff",
+                do_stuff as ExecFn,
+            ),
+            (
+                "/Game/_AssemblyStorm/TestMod/BPL_NativeTest.BPL_NativeTest_C:Regex",
+                exec_regex as ExecFn,
+            ),
+        ]
+        .into_iter()
+        .collect::<std::collections::HashMap<_, ExecFn>>();
 
-            //let s = string.to_string();
-            //info!("PrintString({s:?})");
-            kismet_print_message::call(&string.to_string());
-
-            if !stack.code.is_null() {
-                stack.code = stack.code.add(1);
-            }
-        },
-    )?;
-    HookKismetPrintString.enable()?;
-
-    HookKismetExecutionMessage.initialize(
-        std::mem::transmute(globals().resolution.fframe_kismet_execution_message.0),
-        |message, verbosity, warning_id| {
-            kismet_execution_message::call(
-                widestring::U16CStr::from_ptr_str(message),
-                verbosity,
-                warning_id,
-            );
-            HookKismetExecutionMessage.call(message, verbosity, warning_id);
-        },
-    )?;
-    HookKismetExecutionMessage.enable()?;
-
-    type ExecFn = unsafe extern "system" fn(*mut ue::UObject, *mut ue::kismet::FFrame, *mut c_void);
-
-    let hooks = [
-        (
-            "/Game/_AssemblyStorm/TestMod/BPL_NativeTest.BPL_NativeTest_C:Do Stuff",
-            do_stuff as ExecFn,
-        ),
-        (
-            "/Game/_AssemblyStorm/TestMod/BPL_NativeTest.BPL_NativeTest_C:Regex",
-            exec_regex as ExecFn,
-        ),
-    ]
-    .into_iter()
-    .collect::<std::collections::HashMap<_, ExecFn>>();
-
-    HookUFunctionBind.initialize(
-        std::mem::transmute(globals().resolution.ufunction_bind.0),
-        move |function| {
-            HookUFunctionBind.call(function);
-            if let Some(function) = function.as_mut() {
-                let path = function
-                    .ustruct
-                    .ufield
-                    .uobject
-                    .uobject_base_utility
-                    .uobject_base
-                    .get_path_name(None);
-                if let Some(hook) = hooks.get(path.as_str()) {
-                    simple_log::info!(
-                        "UFunction::Bind({path}) func = {:?} flags = {:?}",
-                        function.func,
-                        function.function_flags
-                    );
-                    function
-                        .function_flags
-                        .insert(ue::EFunctionFlags::FUNC_Native | ue::EFunctionFlags::FUNC_Final);
-                    function.func = *hook;
+        HookUFunctionBind.initialize(
+            std::mem::transmute(globals().resolution.ufunction_bind.0),
+            move |function| {
+                HookUFunctionBind.call(function);
+                if let Some(_function) = function.as_mut() {
+                    // let path = function
+                    //     .get_path_name(None);
+                    // if let Some(hook) = hooks.get(path.as_str()) {
+                    //     tracing::info!(
+                    //         "UFunction::Bind({path}) func = {:?} flags = {:?}",
+                    //         function.func,
+                    //         function.function_flags
+                    //     );
+                    //     function
+                    //         .function_flags
+                    //         .insert(ue::EFunctionFlags::FUNC_Native | ue::EFunctionFlags::FUNC_Final);
+                    //     function.func = *hook;
+                    // }
                 }
-            }
-        },
-    )?;
-    HookUFunctionBind.enable()?;
+            },
+        )?;
+        HookUFunctionBind.enable()?;
 
-    Ok(())
+        Ok(())
+    }
 }
 
 unsafe extern "system" fn do_stuff(
@@ -214,13 +203,15 @@ unsafe extern "system" fn do_stuff(
     stack: *mut ue::kismet::FFrame,
     _result: *mut c_void,
 ) {
-    let stack = stack.as_mut().unwrap();
-    let mut ctx: Option<&ue::UObject> = None;
-    ue::kismet::arg(stack, &mut ctx);
+    unsafe {
+        let stack = stack.as_mut().unwrap();
+        let mut ctx: Option<&ue::UObject> = None;
+        arg(stack, &mut ctx);
 
-    simple_log::info!("doing stuff!!");
+        tracing::info!("doing stuff!!");
 
-    stack.code = stack.code.add(1);
+        skip_end_function_parms(stack);
+    }
 }
 
 unsafe extern "system" fn exec_regex(
@@ -228,38 +219,142 @@ unsafe extern "system" fn exec_regex(
     stack: *mut ue::kismet::FFrame,
     _result: *mut c_void,
 ) {
-    let stack = stack.as_mut().unwrap();
+    unsafe {
+        let stack = stack.as_mut().unwrap();
 
-    let mut ctx: Option<&ue::UObject> = None;
-    let mut regex = ue::FString::default();
-    let mut input = ue::FString::default();
-    let mut matches: ue::TArray<ue::FString> = Default::default();
+        let mut ctx: Option<&ue::UObject> = None;
+        let mut regex = ue::FString::default();
+        let mut input = ue::FString::default();
+        let mut matches: ue::TArray<ue::FString> = Default::default();
 
-    ue::kismet::arg(stack, &mut regex);
-    ue::kismet::arg(stack, &mut input);
-    ue::kismet::arg(stack, &mut ctx);
-    ue::kismet::arg(stack, &mut matches);
-    let matches_address = (stack.most_recent_property_address as *mut ue::TArray<ue::FString>)
-        .as_mut()
-        .unwrap();
+        arg(stack, &mut regex);
+        arg(stack, &mut input);
+        arg(stack, &mut ctx);
+        arg(stack, &mut matches);
+        let matches_address = (stack.most_recent_property_address() as *mut ue::TArray<ue::FString>)
+            .as_mut()
+            .unwrap();
 
-    matches_address.clear();
-    if let Ok(re) = regex::Regex::new(&regex.to_string()) {
-        for cap in re.captures(&input.to_string()).iter() {
-            for cap in cap.iter() {
-                let new_str = ue::FString::from(
-                    widestring::U16CString::from_str(
-                        cap.as_ref().map(|m| m.as_str()).unwrap_or_default(),
-                    )
-                    .unwrap()
-                    .as_slice_with_nul(),
-                );
-                matches_address.push(new_str);
+        matches_address.clear();
+        if let Ok(re) = regex::Regex::new(&regex.to_string()) {
+            for cap in re.captures(&input.to_string()).iter() {
+                for cap in cap.iter() {
+                    let new_str = ue::FString::from(
+                        widestring::U16CString::from_str(
+                            cap.as_ref().map(|m| m.as_str()).unwrap_or_default(),
+                        )
+                        .unwrap()
+                        .as_slice_with_nul(),
+                    );
+                    matches_address.push(new_str);
+                }
             }
         }
+
+        std::mem::forget(matches);
+
+        skip_end_function_parms(stack);
     }
+}
 
-    std::mem::forget(matches);
+fn detour_main(
+    h_instance: *mut (),
+    h_prev_instance: *mut (),
+    lp_cmd_line: *mut (),
+    n_cmd_show: i32,
+    cmd_line: *const (),
+) -> i32 {
+    unsafe {
+        static mut ERM: bool = true;
+        tracing::warn!("main hooked");
+        if ERM {
+            hook_gnatives(globals().gnatives_mut());
+            ERM = false
+        }
 
-    stack.code = stack.code.add(1);
+        HookWinMain.call(
+            h_instance,
+            h_prev_instance,
+            lp_cmd_line,
+            n_cmd_show,
+            cmd_line,
+        )
+    }
+}
+
+static KISMET_STATE: LazyLock<Mutex<KismetState>> = LazyLock::new(Default::default);
+
+struct KismetState {
+    gnatives_old: ue::GNatives,
+    function_name_cache: HashMap<usize, String>,
+}
+impl Default for KismetState {
+    fn default() -> Self {
+        Self {
+            gnatives_old: [None; 0xff],
+            function_name_cache: Default::default(),
+        }
+    }
+}
+
+unsafe fn hook_exec_inst(
+    ctx: *mut ue::UObject,
+    frame: &mut ue::kismet::FFrame,
+    ret: *mut c_void,
+    expr: usize,
+) {
+    unsafe {
+        // assert_main_thread!();
+
+        let mut state = KISMET_STATE.lock().unwrap();
+        let expr = state.gnatives_old[expr].unwrap();
+
+        {
+            let func = &*(frame.node() as *const ue::UFunction);
+
+            let index = (frame.code() as usize) - (func.script().as_ptr() as usize) - 1;
+
+            let mut graph = Default::default();
+            let mut cur = std::io::Cursor::new(func.script().as_slice());
+            cur.set_position(index as u64);
+            let expr = crate::kismet::read(&mut cur, &mut graph).unwrap();
+            let _expr = &graph[&expr];
+
+            let func_key = frame.node() as usize;
+            let _name = state
+                .function_name_cache
+                .entry(func_key)
+                .or_insert_with(|| func.path());
+
+            // tracing::warn!("{:?}", (index, &name, expr));
+            // Frame {
+            //     func: frame.node as usize,
+            //     index,
+            // }
+        };
+
+        drop(state);
+
+        // KISMET_STACK.push(frame_info);
+        (expr)(ctx, frame, ret);
+        // KISMET_STACK.pop();
+    }
+}
+
+unsafe extern "system" fn hook_exec<const N: usize>(
+    ctx: *mut ue::UObject,
+    frame: &mut ue::kismet::FFrame,
+    ret: *mut c_void,
+) {
+    unsafe {
+        hook_exec_inst(ctx, frame, ret, N);
+    }
+}
+
+unsafe fn hook_gnatives(_gnatives: &mut ue::GNatives) {
+    // let mut state = KISMET_STATE.lock().unwrap();
+    // state.gnatives_old.copy_from_slice(gnatives);
+    // seq_macro::seq!(N in 0..255 {
+    //     gnatives[N] = Some(hook_exec::<N>);
+    // });
 }

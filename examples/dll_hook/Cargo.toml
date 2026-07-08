@@ -12,23 +12,38 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = { workspace = true }
-backtrace = "0.3.69"
+backtrace = { git = "https://github.com/rust-lang/backtrace-rs", rev = "036d4909e1fb9c08c2bb0f59ac81994e39489b2f" } # good
+# backtrace = { git = "https://github.com/rust-lang/backtrace-rs", rev = "3c5ca12f14f491f591c9ab74145f84ca470ae224" } #bad
+# backtrace = "=0.3.69"
 bitflags = "2.4.1"
-eframe = "0.24.0"
-egui-winit = { version = "0.24.0", default-features = false }
+byteorder = "1.5.0"
+cityhasher = "0.1.0"
+crossbeam-channel = "0.5.15"
+egui = "0.32"
+egui-snarl = { path = "../../../../../src/third/egui-snarl", features = ["serde"] }
+egui_extras = "0.32.0"
+egui_wgpu_win32 = { git = "https://github.com/trumank/egui_wgpu_win32", version = "0.1.0" }
 indexmap = "2.1.0"
 itertools.workspace = true
 parking_lot = "0.12.1"
+libue = { path = "../libue" }
 patternsleuth = { path = "../../patternsleuth", features = ["process-internal", "image-pe"] }
 regex.workspace = true
 retour = { git = "https://github.com/Hpmason/retour-rs", features = ["static-detour"] }
-simple-log = "1.6.0"
+seq-macro = "0.3.6"
+serde = { workspace = true, features = ["derive"] }
+serde_json = "1.0.140"
+strum.workspace = true
 thread_local = "1.1.7"
+tracing = "0.1.41"
+tracing-appender = "0.2.3"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 widestring = "1.0.2"
 windows = { workspace = true, features = [
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
   "Win32_Security",
+  "Win32_System_Diagnostics_Debug",
   "Win32_System_Kernel",
   "Win32_System_LibraryLoader",
   "Win32_System_Memory",

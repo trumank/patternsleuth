@@ -1,28 +1,34 @@
-#![feature(backtrace_frames)]
-
-mod app;
+mod crash_handler;
+mod dot;
+mod events;
 mod gui;
 mod hooks;
+mod kismet;
+mod kismet_nodes;
+mod kismet_transform;
+mod logging;
 mod object_cache;
-mod ue;
+
+pub use libue as ue;
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use patternsleuth::resolvers::impl_try_collector;
-use patternsleuth::resolvers::unreal::UObjectBaseUtilityGetPathName;
 use patternsleuth::resolvers::unreal::blueprint_library::UFunctionBind;
+use patternsleuth::resolvers::unreal::game_loop::Main;
+use patternsleuth::resolvers::unreal::kismet::GNatives;
 use patternsleuth::resolvers::unreal::{
-    KismetSystemLibrary,
-    fname::FNameToString,
-    game_loop::{FEngineLoopInit, UGameEngineTick},
+    fname::{FNameCtorWchar, FNameToString},
+    fuobject_hash_tables::FUObjectHashTablesGet,
+    game_loop::{FEngineLoopInit, FEngineLoopTick},
     gmalloc::GMalloc,
     guobject_array::{
         FUObjectArrayAllocateUObjectIndex, FUObjectArrayFreeUObjectIndex, GUObjectArray,
     },
-    kismet::{FFrameStep, FFrameStepExplicitProperty, FFrameStepViaExec},
+    static_construct_object::StaticConstructObjectInternal,
+    static_load_object::StaticLoadObject,
 };
-use simple_log::{LogConfigBuilder, error, info};
 use windows::Win32::{
     Foundation::HMODULE,
     System::{
@@ -31,36 +37,7 @@ use windows::Win32::{
     },
 };
 
-// x3daudio1_7.dll
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn X3DAudioCalculate() {}
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn X3DAudioInitialize() {}
-
-// d3d9.dll
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn D3DPERF_EndEvent() {}
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn D3DPERF_BeginEvent() {}
-
-// d3d11.dll
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn D3D11CreateDevice() {}
-
-// dxgi.dll
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn CreateDXGIFactory() {}
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn CreateDXGIFactory1() {}
-
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(non_snake_case, unused_variables)]
 extern "system" fn DllMain(dll_module: HMODULE, call_reason: u32, _: *mut ()) -> bool {
     unsafe {
@@ -77,11 +54,13 @@ extern "system" fn DllMain(dll_module: HMODULE, call_reason: u32, _: *mut ()) ->
 }
 
 unsafe extern "system" fn init(_: usize) {
-    if let Ok(bin_dir) = setup() {
-        info!("dll_hook loaded",);
+    unsafe {
+        if let Ok(bin_dir) = setup() {
+            tracing::info!("dll_hook loaded",);
 
-        if let Err(e) = patch(bin_dir) {
-            error!("{e:#}");
+            if let Err(e) = patch(bin_dir) {
+                tracing::error!("{e:#}");
+            }
         }
     }
 }
@@ -89,35 +68,16 @@ unsafe extern "system" fn init(_: usize) {
 fn setup() -> Result<PathBuf> {
     let exe_path = std::env::current_exe()?;
     let bin_dir = exe_path.parent().context("could not find exe parent dir")?;
-    let config = LogConfigBuilder::builder()
-        .path(bin_dir.join("dll_hook.txt").to_str().unwrap()) // TODO why does this not take a path??
-        .time_format("%Y-%m-%d %H:%M:%S.%f")
-        .level("debug")
-        .output_file()
-        .size(u64::MAX)
-        .build();
-    simple_log::new(config).map_err(|e| anyhow!("{e}"))?;
+
+    let log_guard = logging::setup_logging(bin_dir)?;
+
+    std::mem::forget(log_guard); // TODO hold onto this and drop on exit?
+
+    unsafe {
+        crash_handler::setup_windows_exception_handler();
+    }
+
     Ok(bin_dir.to_path_buf())
-}
-
-#[derive(Debug, PartialEq)]
-pub struct FFrameKismetExecutionMessage(usize);
-
-mod resolvers {
-    use super::*;
-
-    use patternsleuth::{
-        resolvers::{futures::future::join_all, *},
-        scanner::Pattern,
-    };
-
-    impl_resolver_singleton!(collect, FFrameKismetExecutionMessage);
-    impl_resolver_singleton!(PEImage, FFrameKismetExecutionMessage, |ctx| async {
-        // void FFrame::KismetExecutionMessage(wchar16 const* Message, enum ELogVerbosity::Type Verbosity, class FName WarningId)
-        let patterns = ["48 89 5C 24 ?? 57 48 83 EC 40 0F B6 DA 48 8B F9"];
-        let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
-        Ok(Self(ensure_one(res.into_iter().flatten())?))
-    });
 }
 
 impl_try_collector! {
@@ -126,17 +86,20 @@ impl_try_collector! {
         gmalloc: GMalloc,
         guobject_array: GUObjectArray,
         fnametostring: FNameToString,
+        fname_ctor_wchar: FNameCtorWchar,
+        fuobject_hash_tables_get: FUObjectHashTablesGet,
+        static_load_object: StaticLoadObject,
+        static_construct_object: StaticConstructObjectInternal,
         allocate_uobject: FUObjectArrayAllocateUObjectIndex,
         free_uobject: FUObjectArrayFreeUObjectIndex,
-        game_tick: UGameEngineTick,
+        game_tick: FEngineLoopTick,
         engine_loop_init: FEngineLoopInit,
-        kismet_system_library: KismetSystemLibrary,
-        fframe_step_via_exec: FFrameStepViaExec,
-        fframe_step: FFrameStep,
-        fframe_step_explicit_property: FFrameStepExplicitProperty,
-        fframe_kismet_execution_message: FFrameKismetExecutionMessage,
+        // fframe_step_via_exec: FFrameStepViaExec,
+        // fframe_step: FFrameStep,
+        // fframe_step_explicit_property: FFrameStepExplicitProperty,
         ufunction_bind: UFunctionBind,
-        uobject_base_utility_get_path_name: UObjectBaseUtilityGetPathName,
+        gnatives: GNatives,
+        main: Main,
     }
 }
 
@@ -149,31 +112,45 @@ pub struct Globals {
 }
 
 impl Globals {
-    pub fn gmalloc(&self) -> &ue::FMalloc {
-        unsafe { &**(self.resolution.gmalloc.0 as *const *const ue::FMalloc) }
-    }
-    pub fn fframe_step(&self) -> ue::FnFFrameStep {
-        unsafe { std::mem::transmute(self.resolution.fframe_step.0) }
-    }
-    pub fn fframe_step_explicit_property(&self) -> ue::FnFFrameStepExplicitProperty {
-        unsafe { std::mem::transmute(self.resolution.fframe_step_explicit_property.0) }
-    }
-    pub fn fname_to_string(&self) -> ue::FnFNameToString {
-        unsafe { std::mem::transmute(self.resolution.fnametostring.0) }
-    }
-    pub fn uobject_base_utility_get_path_name(&self) -> ue::FnUObjectBaseUtilityGetPathName {
-        unsafe { std::mem::transmute(self.resolution.uobject_base_utility_get_path_name.0) }
-    }
     pub fn guobject_array(&self) -> parking_lot::FairMutexGuard<'static, &ue::FUObjectArray> {
         self.guobject_array.lock()
     }
     pub unsafe fn guobject_array_unchecked(&self) -> &ue::FUObjectArray {
-        *self.guobject_array.data_ptr()
+        unsafe { *self.guobject_array.data_ptr() }
+    }
+    pub fn gnatives(&self) -> &'static ue::GNatives {
+        unsafe {
+            &*std::ptr::with_exposed_provenance::<
+                [std::option::Option<
+                    for<'a> unsafe extern "system" fn(
+                        *mut ue::UObject,
+                        &'a mut ue::kismet::FFrame,
+                        *mut std::ffi::c_void,
+                    ),
+                >; 255],
+            >(self.resolution.gnatives.0.try_into().unwrap())
+        }
+    }
+    pub unsafe fn gnatives_mut(&self) -> &'static mut ue::GNatives {
+        unsafe {
+            &mut *std::ptr::with_exposed_provenance_mut::<
+                [std::option::Option<
+                    for<'a> unsafe extern "system" fn(
+                        *mut ue::UObject,
+                        &'a mut ue::kismet::FFrame,
+                        *mut std::ffi::c_void,
+                    ),
+                >; 255],
+            >(self.resolution.gnatives.0.try_into().unwrap())
+        }
     }
 }
 
 pub fn globals() -> &'static Globals {
-    unsafe { GLOBALS.as_ref().unwrap() }
+    #[allow(static_mut_refs)]
+    unsafe {
+        GLOBALS.as_ref().unwrap()
+    }
 }
 
 #[macro_export]
@@ -184,37 +161,90 @@ macro_rules! assert_main_thread {
 }
 
 fn dump_backtrace() {
-    info!(
+    tracing::info!(
         "Dumping backtrace on thread {:?}:",
         std::thread::current().id()
     );
-    let backtrace = backtrace::Backtrace::new();
-    for (index, frame) in backtrace.frames().iter().enumerate() {
-        info!("  {index}: {:?} {:?}", frame.ip(), frame.symbols());
-    }
+    // let backtrace = backtrace::Backtrace::new();
+    // tracing::error!("{backtrace:?}");
+    // for (index, frame) in backtrace.frames().iter().enumerate() {
+    //     let mut symbols = frame.symbols().into_iter();
+    //     tracing::info!(
+    //         "  {index}: {:?} {}",
+    //         frame.ip(),
+    //         symbols.next().map(format).unwrap_or_default()
+    //     );
+    //     for rest in symbols {
+    //         tracing::info!("          {}", format(rest));
+    //     }
+    // }
+
+    // fn format(sym: &backtrace::BacktraceSymbol) -> String {
+    //     format!(
+    //         "{} [{}]",
+    //         sym.name()
+    //             .map(|s| s.to_string())
+    //             .unwrap_or_else(|| "unknown".into()),
+    //         sym.filename()
+    //             .map(|p| p.to_string_lossy())
+    //             .unwrap_or("unknown".into())
+    //     )
+    // }
+    // backtrace::trace(|frame| {
+    //     let ip = frame.ip();
+    //     let symbol_address = frame.symbol_address();
+
+    //     // Resolve this instruction pointer to a symbol name
+    //     let mut missing = true;
+    //     backtrace::resolve_frame(frame, |symbol| {
+    //         missing = false;
+    //         tracing::info!("  {:?} {:?}", frame.ip(), symbol);
+    //     });
+    //     if missing {
+    //         tracing::info!("  {:?}", frame.ip());
+    //     }
+
+    //     true // keep going to the next frame
+    // });
+
+    tracing::info!("{:?}", backtrace::Backtrace::new());
 }
 
-unsafe fn patch(bin_dir: PathBuf) -> Result<()> {
-    let exe = patternsleuth::process::internal::read_image()?;
+unsafe fn patch(_bin_dir: PathBuf) -> Result<()> {
+    unsafe {
+        let exe = patternsleuth::process::internal::read_image()?;
 
-    info!("starting scan");
-    let resolution = exe.resolve(DllHookResolution::resolver())?;
-    info!("finished scan");
+        tracing::info!("starting scan");
+        let resolution = exe.resolve(DllHookResolution::resolver())?;
+        tracing::info!("finished scan");
 
-    info!("results: {:?}", resolution);
+        tracing::info!("results: {:?}", resolution);
 
-    let guobject_array: &'static ue::FUObjectArray =
-        &*(resolution.guobject_array.0 as *const ue::FUObjectArray);
+        let guobject_array: &'static ue::FUObjectArray =
+            &*(resolution.guobject_array.0 as *const ue::FUObjectArray);
 
-    GLOBALS = Some(Globals {
-        guobject_array: guobject_array.into(),
-        resolution,
-        main_thread_id: std::thread::current().id(),
-    });
+        ue::init(ue::UeGlobals {
+            gmalloc: resolution.gmalloc.0 as *const *const ue::FMalloc,
+            fname_to_string: std::mem::transmute(resolution.fnametostring.0),
+            fname_ctor_wchar: std::mem::transmute(resolution.fname_ctor_wchar.0),
+            guobject_array,
+            fuobject_hash_tables_get: std::mem::transmute(resolution.fuobject_hash_tables_get.0),
+            static_load_object: std::mem::transmute(resolution.static_load_object.0),
+            static_construct_object: std::mem::transmute(resolution.static_construct_object.0),
+            gnatives: resolution.gnatives.0 as *mut ue::GNatives,
+            layout: ue::UeLayout::UE_4_27,
+        });
 
-    hooks::initialize()?;
+        GLOBALS = Some(Globals {
+            guobject_array: guobject_array.into(),
+            resolution,
+            main_thread_id: std::thread::current().id(),
+        });
 
-    info!("initialized");
+        hooks::initialize()?;
 
-    app::run(bin_dir)
+        gui::init();
+
+        Ok(())
+    }
 }
