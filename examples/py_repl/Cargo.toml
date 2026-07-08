@@ -1,0 +1,58 @@
+[package]
+name = "py_repl"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+# Single self-contained DLL. RustPython is a pure-Rust Python 3 interpreter, so
+# there's no python3.dll / stdlib zip to ship and no loader stub — the whole
+# interpreter (plus the frozen stdlib) is statically linked into this cdylib.
+# That's why the old `py_repl` (stub) / `py_repl_inner` split is gone.
+
+[dependencies]
+anyhow = { workspace = true }
+crossbeam-channel = "0.5.15"
+libue = { path = "../libue" }
+patternsleuth = { path = "../../patternsleuth", features = ["process-internal", "image-pe"] }
+# Pure-Rust embedded Python: VM core, the native (Rust) stdlib modules, and the
+# frozen pure-python stdlib. `rustpython-stdlib` is needed for native modules
+# the bootstrap pulls in transitively (`_contextvars` via `warnings`, etc.); it
+# hard-depends on liblzma-sys / bzip2, but those are plain C (no MASM) and
+# cross-compile fine under cargo-xwin. `freeze-stdlib` bakes the pure-python Lib
+# into the binary so there's no stdlib zip to ship.
+rustpython-vm = { version = "0.5.0", default-features = false, features = [
+  "compiler",
+  "freeze-stdlib",
+  "gc",
+  "importlib",
+  "host_env",  # registers `_io.FileIO` etc. (filesystem-backed IO)
+  # NOTE: deliberately NO "stdio". With stdio on, the VM's essential init opens
+  # fds 0/1/2 as sys.stdin/out/err; in a windowed game those handles are invalid
+  # and the open fails, which RustPython turns into an `.expect()` panic inside
+  # `Interpreter::build()` — and that panic unwinding into our `extern "system"`
+  # engine detour aborts the game. Without stdio the streams are left None and
+  # the REPL captures output via `contextlib.redirect_stdout` anyway.
+] }
+rustpython-stdlib = { version = "0.5.0", default-features = false, features = [
+  "compiler",
+  "host_env",
+] }
+rustpython-pylib = { version = "0.5.0", features = ["freeze-stdlib"] }
+retour = { git = "https://github.com/Hpmason/retour-rs", features = ["static-detour"] }
+tracing = "0.1.41"
+tracing-appender = "0.2.3"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_Diagnostics_Debug",  # FlushInstructionCache for runtime stubs
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",             # VirtualAlloc for the trampoline stub pool
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+] }
