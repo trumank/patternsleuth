@@ -149,6 +149,30 @@ def first_live(path):
             return o
     return None
 
+def _arr_probe(fn):
+    """Run fn against some empty int-element array we can safely mutate."""
+    for o in ue.objects(max=40000):
+        try:
+            props = o._class.props()
+        except Exception:
+            continue
+        for n, pt in props:
+            if pt.kind != 'ArrayProperty':
+                continue
+            try:
+                if pt.inner().kind != 'IntProperty':
+                    continue
+                a = getattr(o, n)
+                if len(a) != 0:
+                    continue
+            except Exception:
+                continue
+            try:
+                return fn(a)
+            finally:
+                a.clear()
+    raise RuntimeError("no empty Array<int> found to probe")
+
 def expect_type_error(cls):
     """True if calling `cls()` raises TypeError — proxies must not be constructible."""
     try:
@@ -289,8 +313,15 @@ STEPS: list[tuple[str, str]] = [
     ("Struct: unknown field names itself", "expect_raises('struct attrerr', AttributeError, lambda: ue.find('/Script/Engine.Default__KismetMathLibrary').Add_VectorVector({'X':0},{'X':0}).NoSuchFieldQqq)"),
     # Proxies wrap engine memory; Python can't manufacture one.
     ("proxies are unconstructible", "chk('no ctor', lambda: all(expect_type_error(c) for c in (ue.Struct, ue.Array, ue.Map, ue.Set, ue.Text, ue.FProperty, ue.FStructProperty, ue.UObject, ue.UClass, ue.BoundMethod)))"),
-    ("UObject: _outer", "chk('outer', lambda: WS._outer is not None and WS._outer._path in WS._path)"),
-    ("UObject: dir() has meta attrs", "chk('dir meta', lambda: {'_class','_path','_name','_outer','_flags'} <= set(dir(WS)))"),
+    # ---- container Python-parity ----
+    # `chk` only catches exceptions, so these assert rather than return a bool.
+    ("Array: slice read", "def _t(a):\n a.extend([1,2,3,4])\n assert a[1:3] == [2,3]\n assert a[::-1] == [4,3,2,1]\n assert a[:] == [1,2,3,4]\nchk('slice read', lambda: _arr_probe(_t))"),
+    ("Array: contiguous slice resizes", "def _t(a):\n a.extend([1,2,3])\n a[1:2] = [9,9,9]\n assert list(a) == [1,9,9,9,3], list(a)\n del a[1:4]\n assert list(a) == [1,3], list(a)\nchk('slice resize', lambda: _arr_probe(_t))"),
+    ("Array: extended slice must match length", "def _t(a):\n a.extend([1,2,3,4])\n a[0:4:2] = [7,8]\n assert list(a) == [7,2,8,4], list(a)\n try:\n  a[0:4:2] = [1,2,3]\n  raise AssertionError('expected ValueError')\n except ValueError: pass\nchk('ext slice', lambda: _arr_probe(_t))"),
+    ("Array: reverse / sort", "def _t(a):\n a.extend([3,1,2])\n a.reverse()\n assert list(a) == [2,1,3], list(a)\n a.sort()\n assert list(a) == [1,2,3], list(a)\n a.sort(reverse=True)\n assert list(a) == [3,2,1], list(a)\nchk('reverse/sort', lambda: _arr_probe(_t))"),
+    ("Array: == compares contents", "def _t(a):\n a.extend([1,2])\n assert a == [1,2] and not (a == [1,3]) and a != [1]\nchk('array eq', lambda: _arr_probe(_t))"),
+    ("UObject: _outer", "def _t():\n assert WS._outer is not None\n assert WS._outer._path in WS._path\nchk('outer', _t)"),
+    ("UObject: dir() has meta attrs", "chk('dir meta', lambda: (lambda d: (_ for _ in ()).throw(AssertionError(d)) if not {'_class','_path','_name','_outer','_flags'} <= set(d) else None)(dir(WS)))"),
     ("UEnum: name_by_value / value_by_name", "_E = WS._class.prop_info(find_prop(WS,'EnumProperty')).enum_obj(); _N,_V = _E.enum_entries()[0]; chk('enum lookup', lambda: _E.name_by_value(_V)==_N and _E.value_by_name(_N)==_V)"),
 
     # ---- BoundMethod introspection (calls handled separately) ----
@@ -520,7 +551,26 @@ def _map_ops():
         del m["ps_k"]; assert len(m)==0
         m["a"]="1"; m.clear(); assert len(getattr(mo,mn))==0
     chk("Map mutation cycle (restored empty)", go)
+    def dictlike():
+        m = getattr(mo, mn); assert len(m)==0
+        try:
+            assert m.get("nope") is None and m.get("nope","d")=="d"
+            m["k"]="v"
+            assert m.get("k")=="v"
+            assert m.setdefault("k","other")=="v" and m["k"]=="v"
+            assert m.setdefault("k2","made")=="made" and m["k2"]=="made"
+            m.update({"k3":"u"}); assert m["k3"]=="u"
+            m.update([("k4","p")]); assert m["k4"]=="p"
+            assert m == {"k":"v","k2":"made","k3":"u","k4":"p"}, m.items()
+            assert m != {"k":"v"}
+            assert m.pop("k")=="v" and "k" not in m
+            assert m.pop("k","dflt")=="dflt"
+        finally:
+            m.clear()
+        assert len(getattr(mo,mn))==0
+    chk("Map dict parity (get/pop/setdefault/update/==)", dictlike)
     expect_raises("Map missing key -> KeyError", KeyError, lambda: getattr(mo,mn)["nope_xyz"])
+    expect_raises("Map pop missing -> KeyError", KeyError, lambda: getattr(mo,mn).pop("nope_xyz"))
 _map_ops()
 '''
 
@@ -623,7 +673,26 @@ def _set_ops():
         getattr(obj, name).add(sample); getattr(obj, name).clear()
         assert len(getattr(obj, name)) == 0
     chk("Set mutation cycle (restored empty)", go)
+    def setlike():
+        st = getattr(obj, name); assert len(st) == 0
+        two = {"NameProperty": "ps2", "StrProperty": "ps2", "IntProperty": 12, "UInt32Property": 12}[ik]
+        try:
+            st.update([sample], [two])
+            assert st == {sample, two} and st != {sample}
+            assert st.issuperset([sample]) and st.issubset([sample, two, two])
+            assert st.isdisjoint([]) and not st.isdisjoint([sample])
+            st.intersection_update([sample])
+            assert st == {sample}
+            st.difference_update([sample])
+            assert len(st) == 0
+            st.add(sample)
+            assert st.pop() == sample and len(st) == 0
+        finally:
+            getattr(obj, name).clear()
+        assert len(getattr(obj, name)) == 0
+    chk("Set set-parity (update/pop/subset/==)", setlike)
     expect_raises("Set.remove missing -> KeyError", KeyError, lambda: getattr(obj, name).remove(sample))
+    expect_raises("Set.pop when empty -> KeyError", KeyError, lambda: getattr(obj, name).pop())
 _set_ops()
 '''
 

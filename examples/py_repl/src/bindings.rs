@@ -36,11 +36,16 @@ pub(crate) mod ue_module {
     use std::sync::atomic::Ordering;
 
     use rustpython_vm::FromArgs;
-    use rustpython_vm::builtins::{PyBaseExceptionRef, PyDict, PyFloat, PyModule, PyStr, PyType};
+    use rustpython_vm::builtins::{
+        PyBaseExceptionRef, PyDict, PyFloat, PyModule, PySlice, PyStr, PyType,
+    };
     use rustpython_vm::class::PyClassDef;
     use rustpython_vm::convert::ToPyObject;
-    use rustpython_vm::function::{FuncArgs, OptionalArg, PyComparisonValue, PySetterValue};
+    use rustpython_vm::function::{
+        FuncArgs, OptionalArg, PosArgs, PyComparisonValue, PySetterValue,
+    };
     use rustpython_vm::protocol::{PyMappingMethods, PySequenceMethods};
+    use rustpython_vm::sliceable::SaturatedSlice;
     use rustpython_vm::types::{
         AsMapping, AsSequence, Callable, Comparable, Constructor, GetAttr, Hashable, Iterable,
         PyComparisonOp, Representable, SetAttr,
@@ -161,6 +166,22 @@ pub(crate) mod ue_module {
     }
 
     /// Collect a Python iterable into `Vec<PyObjectRef>` via the iterator protocol.
+    /// Is `needle` equal to any of `haystack`? Linear by necessity: UE container
+    /// elements are often unhashable proxies (a `Struct`, an `Array`), so the
+    /// usual "build a Python set" trick isn't available.
+    fn contains_eq(
+        vm: &VirtualMachine,
+        haystack: &[PyObjectRef],
+        needle: &PyObjectRef,
+    ) -> PyResult<bool> {
+        for h in haystack {
+            if vm.bool_eq(h, needle)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn py_iter_collect(vm: &VirtualMachine, value: &PyObject) -> PyResult<Vec<PyObjectRef>> {
         let iter = value.get_iter(vm)?;
         let mut out = Vec::new();
@@ -2360,10 +2381,103 @@ pub(crate) mod ue_module {
             let (arr, _) = self.resolve(vm)?;
             Ok(unsafe { (*arr).num() } as usize)
         }
+        /// Every element read out, in order. Mutating operations that need the
+        /// whole array (reverse, sort, ==) work on this rather than on live
+        /// memory, so a re-entrant read can't see a half-updated array.
+        fn snapshot(&self, vm: &VirtualMachine) -> PyResult<Vec<PyObjectRef>> {
+            let (arr, _) = self.resolve(vm)?;
+            let n = unsafe { (*arr).num() };
+            let mut out = Vec::with_capacity(n.max(0) as usize);
+            for i in 0..n {
+                out.push(read_at_path(vm, self.path.extend_index(i))?);
+            }
+            Ok(out)
+        }
         fn getitem_impl(&self, index: i32, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
             let (arr, _) = self.resolve(vm)?;
             let i = wrap_index(vm, index, unsafe { (*arr).num() })?;
             read_at_path(vm, self.path.extend_index(i))
+        }
+
+        /// The concrete element indices a slice selects, in iteration order.
+        /// Python's slice semantics (negative bounds, negative steps, clamping)
+        /// all live in `SaturatedSlice`, so they behave exactly as on a `list`.
+        fn slice_indices(&self, slice: &PySlice, vm: &VirtualMachine) -> PyResult<Vec<i32>> {
+            let (arr, _) = self.resolve(vm)?;
+            let len = unsafe { (*arr).num() }.max(0) as usize;
+            let sat = slice.to_saturated(vm)?;
+            Ok(sat.iter(len).map(|i| i as i32).collect())
+        }
+
+        /// `a[i:j]` — a plain Python list, like iteration: a snapshot, not a
+        /// view. There's no way to make a second `TArray` to hand back.
+        fn getslice_impl(&self, slice: &PySlice, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let mut out = Vec::new();
+            for i in self.slice_indices(slice, vm)? {
+                out.push(read_at_path(vm, self.path.extend_index(i))?);
+            }
+            Ok(vm.ctx.new_list(out).into())
+        }
+
+        /// `del a[i:j]` — remove back-to-front so earlier indices stay valid.
+        fn delslice_impl(&self, slice: &PySlice, vm: &VirtualMachine) -> PyResult<()> {
+            let mut idx = self.slice_indices(slice, vm)?;
+            idx.sort_unstable();
+            for i in idx.into_iter().rev() {
+                self.delitem_impl(i, vm)?;
+            }
+            Ok(())
+        }
+
+        /// `a[i:j] = values`. A contiguous slice may resize (delete the range,
+        /// then insert), matching `list`; an extended slice (step != 1) must
+        /// match lengths and assigns in place.
+        fn setslice_impl(
+            &self,
+            slice: &PySlice,
+            value: PyObjectRef,
+            vm: &VirtualMachine,
+        ) -> PyResult<()> {
+            let values = py_iter_collect(vm, &value)?;
+            let sat = slice.to_saturated(vm)?;
+            let step = {
+                let (arr, _) = self.resolve(vm)?;
+                let len = unsafe { (*arr).num() }.max(0) as usize;
+                sat.adjust_indices(len).1
+            };
+            let indices = self.slice_indices(slice, vm)?;
+            if step != 1 {
+                if indices.len() != values.len() {
+                    return Err(value_err(
+                        vm,
+                        format!(
+                            "attempt to assign sequence of size {} to extended slice of size {}",
+                            values.len(),
+                            indices.len()
+                        ),
+                    ));
+                }
+                for (i, v) in indices.into_iter().zip(values) {
+                    self.setitem_impl(i, v, vm)?;
+                }
+                return Ok(());
+            }
+            let start = indices.first().copied().unwrap_or_else(|| {
+                // An empty contiguous slice still names an insertion point.
+                let sat_start = sat.adjust_indices(
+                    self.resolve(vm)
+                        .map(|(arr, _)| unsafe { (*arr).num() }.max(0) as usize)
+                        .unwrap_or(0),
+                );
+                sat_start.0.start as i32
+            });
+            for i in indices.into_iter().rev() {
+                self.delitem_impl(i, vm)?;
+            }
+            for (n, v) in values.into_iter().enumerate() {
+                self.insert(start + n as i32, v, vm)?;
+            }
+            Ok(())
         }
         fn setitem_impl(
             &self,
@@ -2408,7 +2522,14 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(Constructor, AsMapping, AsSequence, Iterable, Representable))]
+    #[pyclass(with(
+        Constructor,
+        AsMapping,
+        AsSequence,
+        Iterable,
+        Comparable,
+        Representable
+    ))]
     impl Array {
         #[pymethod]
         fn append(&self, value: PyObjectRef, vm: &VirtualMachine) -> PyResult<()> {
@@ -2539,6 +2660,31 @@ pub(crate) mod ue_module {
                 .ok_or_else(|| value_err(vm, "value not in array"))?;
             self.delitem_impl(idx, vm)
         }
+
+        /// `a.reverse()` — in place, by writing the read-back values in reverse.
+        #[pymethod]
+        fn reverse(&self, vm: &VirtualMachine) -> PyResult<()> {
+            let items = self.snapshot(vm)?;
+            for (i, v) in items.into_iter().rev().enumerate() {
+                self.setitem_impl(i as i32, v, vm)?;
+            }
+            Ok(())
+        }
+
+        /// `a.sort(key=..., reverse=...)` — the ordering is Python's, done on a
+        /// snapshot by `list.sort` (so `key`/`reverse` behave identically), then
+        /// written back element-wise.
+        #[pymethod]
+        fn sort(&self, args: FuncArgs, vm: &VirtualMachine) -> PyResult<()> {
+            let items = self.snapshot(vm)?;
+            let list = vm.ctx.new_list(items);
+            vm.call_method(list.as_object(), "sort", args)?;
+            let sorted = list.borrow_vec().to_vec();
+            for (i, v) in sorted.into_iter().enumerate() {
+                self.setitem_impl(i as i32, v, vm)?;
+            }
+            Ok(())
+        }
     }
 
     impl Representable for Array {
@@ -2553,17 +2699,54 @@ pub(crate) mod ue_module {
         }
     }
 
+    impl Comparable for Array {
+        /// Compare element-wise against any sequence, so `a == [1, 2]` and
+        /// `a == other_array` both work. Without this a proxy only ever equalled
+        /// itself, which reads as "the contents differ" and they don't.
+        fn cmp(
+            zelf: &Py<Self>,
+            other: &PyObject,
+            op: PyComparisonOp,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyComparisonValue> {
+            op.eq_only(|| {
+                let Ok(rhs) = py_iter_collect(vm, other) else {
+                    return Ok(PyComparisonValue::NotImplemented);
+                };
+                let lhs = zelf.snapshot(vm)?;
+                if lhs.len() != rhs.len() {
+                    return Ok(PyComparisonValue::Implemented(false));
+                }
+                for (a, b) in lhs.iter().zip(rhs.iter()) {
+                    if !vm.bool_eq(a, b)? {
+                        return Ok(PyComparisonValue::Implemented(false));
+                    }
+                }
+                Ok(PyComparisonValue::Implemented(true))
+            })
+        }
+    }
+
     impl AsMapping for Array {
         fn as_mapping() -> &'static PyMappingMethods {
             static AS_MAPPING: PyMappingMethods = PyMappingMethods {
                 length: atomic_func!(|mapping, vm| Array::mapping_downcast(mapping).len_impl(vm)),
                 subscript: atomic_func!(|mapping, needle, vm| {
                     let zelf = Array::mapping_downcast(mapping);
+                    if let Some(slice) = needle.downcast_ref::<PySlice>() {
+                        return zelf.getslice_impl(slice, vm);
+                    }
                     let index: i32 = needle.try_to_value(vm)?;
                     zelf.getitem_impl(index, vm)
                 }),
                 ass_subscript: atomic_func!(|mapping, needle, value, vm| {
                     let zelf = Array::mapping_downcast(mapping);
+                    if let Some(slice) = needle.downcast_ref::<PySlice>() {
+                        return match value {
+                            Some(value) => zelf.setslice_impl(slice, value, vm),
+                            None => zelf.delslice_impl(slice, vm),
+                        };
+                    }
                     let index: i32 = needle.try_to_value(vm)?;
                     match value {
                         Some(value) => zelf.setitem_impl(index, value, vm),
@@ -2707,7 +2890,14 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(Constructor, AsMapping, AsSequence, Iterable, Representable))]
+    #[pyclass(with(
+        Constructor,
+        AsMapping,
+        AsSequence,
+        Iterable,
+        Comparable,
+        Representable
+    ))]
     impl Map {
         #[pymethod]
         fn keys(&self, vm: &VirtualMachine) -> PyResult<Vec<PyObjectRef>> {
@@ -2732,6 +2922,61 @@ pub(crate) mod ue_module {
             }
             Ok(vm.ctx.new_list(out).into())
         }
+        /// `m.pop(key[, default])` — like `dict.pop`.
+        #[pymethod]
+        fn pop(
+            &self,
+            key: PyObjectRef,
+            default: OptionalArg<PyObjectRef>,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyObjectRef> {
+            if self.contains_impl(key.clone(), vm)? {
+                let value = self.getitem_impl(key.clone(), vm)?;
+                self.delitem_impl(key, vm)?;
+                return Ok(value);
+            }
+            default
+                .into_option()
+                .ok_or_else(|| key_err(vm, "key not found"))
+        }
+
+        /// `m.setdefault(key, default=None)` — insert `default` if absent, then
+        /// return whatever the key now maps to.
+        #[pymethod]
+        fn setdefault(
+            &self,
+            key: PyObjectRef,
+            default: OptionalArg<PyObjectRef>,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyObjectRef> {
+            if !self.contains_impl(key.clone(), vm)? {
+                let value = default.into_option().unwrap_or_else(|| vm.ctx.none());
+                self.setitem_impl(key.clone(), value, vm)?;
+            }
+            self.getitem_impl(key, vm)
+        }
+
+        /// `m.update(other)` — from a mapping (anything with `keys()`) or an
+        /// iterable of `(key, value)` pairs, like `dict.update`.
+        #[pymethod]
+        fn update(&self, other: PyObjectRef, vm: &VirtualMachine) -> PyResult<()> {
+            if let Ok(keys) = vm.call_method(&other, "keys", ()) {
+                for k in py_iter_collect(vm, &keys)? {
+                    let v = other.get_item(&*k, vm)?;
+                    self.setitem_impl(k, v, vm)?;
+                }
+                return Ok(());
+            }
+            for pair in py_iter_collect(vm, &other)? {
+                let kv = py_iter_collect(vm, &pair)?;
+                if kv.len() != 2 {
+                    return Err(value_err(vm, "update expects (key, value) pairs"));
+                }
+                self.setitem_impl(kv[0].clone(), kv[1].clone(), vm)?;
+            }
+            Ok(())
+        }
+
         /// `m.get(key, default=None)` — like `dict.get`, no KeyError.
         #[pymethod]
         fn get(
@@ -2783,6 +3028,37 @@ pub(crate) mod ue_module {
             Ok(format!("<Map<{kn}, {vn}> len={len}>"))
         }
     }
+    impl Comparable for Map {
+        /// Compare against any mapping, key by key.
+        fn cmp(
+            zelf: &Py<Self>,
+            other: &PyObject,
+            op: PyComparisonOp,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyComparisonValue> {
+            op.eq_only(|| {
+                let Ok(keys) = vm.call_method(other, "keys", ()) else {
+                    return Ok(PyComparisonValue::NotImplemented);
+                };
+                let other_keys = py_iter_collect(vm, &keys)?;
+                let own_keys = zelf.keys_vec(vm)?;
+                if own_keys.len() != other_keys.len() {
+                    return Ok(PyComparisonValue::Implemented(false));
+                }
+                for k in own_keys {
+                    let Ok(theirs) = other.get_item(&*k, vm) else {
+                        return Ok(PyComparisonValue::Implemented(false));
+                    };
+                    let ours = zelf.getitem_impl(k, vm)?;
+                    if !vm.bool_eq(&ours, &theirs)? {
+                        return Ok(PyComparisonValue::Implemented(false));
+                    }
+                }
+                Ok(PyComparisonValue::Implemented(true))
+            })
+        }
+    }
+
     impl AsMapping for Map {
         fn as_mapping() -> &'static PyMappingMethods {
             static AS_MAPPING: PyMappingMethods = PyMappingMethods {
@@ -2865,7 +3141,7 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(Constructor, AsSequence, Iterable, Representable))]
+    #[pyclass(with(Constructor, AsSequence, Iterable, Comparable, Representable))]
     impl Set {
         #[pymethod]
         fn add(&self, value: PyObjectRef, vm: &VirtualMachine) -> PyResult<bool> {
@@ -2912,6 +3188,90 @@ pub(crate) mod ue_module {
                 Ok(false)
             }
         }
+        /// `s.pop()` — remove and return an arbitrary element (TSet has no
+        /// meaningful order), KeyError when empty, like `set.pop`.
+        #[pymethod]
+        fn pop(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let items = self.items_vec(vm)?;
+            let value = items
+                .into_iter()
+                .next()
+                .ok_or_else(|| key_err(vm, "pop from an empty set"))?;
+            self.remove(value.clone(), vm)?;
+            Ok(value)
+        }
+
+        /// `s.update(iterable, ...)` — add everything from each iterable.
+        #[pymethod]
+        fn update(&self, others: PosArgs, vm: &VirtualMachine) -> PyResult<()> {
+            for other in others.into_vec() {
+                for v in py_iter_collect(vm, &other)? {
+                    self.add(v, vm)?;
+                }
+            }
+            Ok(())
+        }
+
+        /// `s.difference_update(iterable, ...)` — remove everything in them.
+        #[pymethod]
+        fn difference_update(&self, others: PosArgs, vm: &VirtualMachine) -> PyResult<()> {
+            for other in others.into_vec() {
+                for v in py_iter_collect(vm, &other)? {
+                    self.discard(v, vm)?;
+                }
+            }
+            Ok(())
+        }
+
+        /// `s.intersection_update(iterable, ...)` — keep only what appears in
+        /// every one of them.
+        #[pymethod]
+        fn intersection_update(&self, others: PosArgs, vm: &VirtualMachine) -> PyResult<()> {
+            for other in others.into_vec() {
+                let keep = py_iter_collect(vm, &other)?;
+                for existing in self.items_vec(vm)? {
+                    if !contains_eq(vm, &keep, &existing)? {
+                        self.discard(existing, vm)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        /// `s.issubset(iterable)`
+        #[pymethod]
+        fn issubset(&self, other: PyObjectRef, vm: &VirtualMachine) -> PyResult<bool> {
+            let theirs = py_iter_collect(vm, &other)?;
+            for v in self.items_vec(vm)? {
+                if !contains_eq(vm, &theirs, &v)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+
+        /// `s.issuperset(iterable)`
+        #[pymethod]
+        fn issuperset(&self, other: PyObjectRef, vm: &VirtualMachine) -> PyResult<bool> {
+            for v in py_iter_collect(vm, &other)? {
+                if !self.contains_impl(v, vm)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+
+        /// `s.isdisjoint(iterable)`
+        #[pymethod]
+        fn isdisjoint(&self, other: PyObjectRef, vm: &VirtualMachine) -> PyResult<bool> {
+            for v in py_iter_collect(vm, &other)? {
+                if self.contains_impl(v, vm)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+
         #[pymethod]
         fn clear(&self, vm: &VirtualMachine) -> PyResult<()> {
             let s = self.resolve(vm)?;
@@ -2940,6 +3300,32 @@ pub(crate) mod ue_module {
             Ok(format!("<Set<{en}> len={len}>"))
         }
     }
+    impl Comparable for Set {
+        /// Set equality: same size, and every element present on both sides.
+        fn cmp(
+            zelf: &Py<Self>,
+            other: &PyObject,
+            op: PyComparisonOp,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyComparisonValue> {
+            op.eq_only(|| {
+                let Ok(theirs) = py_iter_collect(vm, other) else {
+                    return Ok(PyComparisonValue::NotImplemented);
+                };
+                let ours = zelf.items_vec(vm)?;
+                if ours.len() != theirs.len() {
+                    return Ok(PyComparisonValue::Implemented(false));
+                }
+                for v in ours {
+                    if !contains_eq(vm, &theirs, &v)? {
+                        return Ok(PyComparisonValue::Implemented(false));
+                    }
+                }
+                Ok(PyComparisonValue::Implemented(true))
+            })
+        }
+    }
+
     impl AsSequence for Set {
         fn as_sequence() -> &'static PySequenceMethods {
             static AS_SEQUENCE: PySequenceMethods = PySequenceMethods {
