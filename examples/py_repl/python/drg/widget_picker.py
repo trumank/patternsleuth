@@ -347,7 +347,7 @@ def _install():
             props = wdg._class.props()
         except Exception:
             props = []
-        for name, kind in props:
+        for name, _pt in props:
             try:
                 v = repr(getattr(wdg, name))
             except Exception as e:

@@ -149,16 +149,24 @@ def first_live(path):
             return o
     return None
 
+def expect_type_error(cls):
+    """True if calling `cls()` raises TypeError — proxies must not be constructible."""
+    try:
+        cls()
+    except TypeError:
+        return True
+    return False
+
 def find_prop(obj, kind):
-    for n, ff in obj._class.props():
-        if ff == kind:
+    for n, pt in obj._class.props():
+        if pt.kind == kind:
             return n
     return None
 
 def props_by_kind(uclass):
     out = {}
-    for n, ff in uclass.props():
-        out.setdefault(ff, []).append(n)
+    for n, pt in uclass.props():
+        out.setdefault(pt.kind, []).append(n)
     return out
 
 def find_soft(prefer=()):
@@ -172,8 +180,8 @@ def find_soft(prefer=()):
         if n:
             return o, n
     for o in ue.objects(max=200000):
-        for n, ff in o._class.props():
-            if ff in ('SoftObjectProperty', 'SoftClassProperty'):
+        for n, pt in o._class.props():
+            if pt.kind in ('SoftObjectProperty', 'SoftClassProperty'):
                 return o, n
     return None, None
 
@@ -207,15 +215,17 @@ STEPS: list[tuple[str, str]] = [
     ("module: find missing -> None", "chk('find missing', lambda: ue.find('/Game/Nope.X_Y_Z') is None or (_ for _ in ()).throw(AssertionError()))"),
     ("module: load already-loaded", "chk('load Actor', lambda: ue.load('/Script/Engine.Actor') is not None or (_ for _ in ()).throw(AssertionError()))"),
     ("module: objects(max) cap", "chk('objects cap', lambda: len(ue.objects(max=10))<=10 or (_ for _ in ()).throw(AssertionError()))"),
-    ("module: objects(class,max) filter", "chk('objects filter', lambda: all(o._class._name=='WorldSettings' for o in ue.objects('WorldSettings',5)))"),
+    ("module: objects(class_,max) filter", "chk('objects filter', lambda: all(o._class._name=='WorldSettings' for o in ue.objects(class_='WorldSettings', max=5)))"),
+    ("module: objects(max=None) uncapped", "chk('objects uncapped', lambda: len(ue.objects(max=None)) >= len(ue.objects(max=1024)))"),
     ("module: objects_of_class via path", "chk('ooc path', lambda: isinstance(ue.objects_of_class('/Script/Engine.Actor', max=3), list))"),
+    ("module: objects_of_class(class_=) kwarg", "chk('ooc kwarg', lambda: len(ue.objects_of_class(class_='/Script/Engine.Actor', max=3)) <= 3)"),
     ("module: objects_of_class via UClass", "chk('ooc proxy', lambda: isinstance(ue.objects_of_class(ue.find('/Script/Engine.Actor'), max=3), list))"),
     ("module: ooc include_subclasses subset", "chk('ooc subset', lambda: len(ue.objects_of_class('/Script/Engine.Actor', include_subclasses=False)) <= len(ue.objects_of_class('/Script/Engine.Actor')))"),
     ("module: ooc bad path -> ValueError", "expect_raises('ooc bad path', ValueError, lambda: ue.objects_of_class('/Game/Nope.X_Y_Z'))"),
 
     # ---- UClass introspection ----
     ("UClass: _name/_path/repr", "chk('uclass basics', lambda: (WS._class._name and WS._class._path.startswith('/') and 'UClass' in repr(WS._class)) or (_ for _ in ()).throw(AssertionError()))"),
-    ("UClass: props() shape", "chk('props shape', lambda: all(len(t)==2 for t in WS._class.props()))"),
+    ("UClass: props() shape", "chk('props shape', lambda: all(len(t)==2 and isinstance(t[0],str) and isinstance(t[1], ue.FProperty) for t in WS._class.props()))"),
     ("UClass: functions() shape", "chk('functions shape', lambda: all(isinstance(n,str) and isinstance(p,list) for n,p in WS._class.functions()))"),
     ("UClass: functions_detailed() shape", "chk('fdetailed shape', lambda: all(type(f).__name__=='Function' and isinstance(f.signature, str) for f in WS._class.functions_detailed()))"),
     ("UClass: parents() are UClasses", "chk('parents', lambda: all(type(p).__name__=='UClass' for p in WS._class.parents()))"),
@@ -250,20 +260,38 @@ STEPS: list[tuple[str, str]] = [
     ("read: still-unsupported types -> clean TypeError", "expect_raises('read unsupported', TypeError, lambda: getattr(PC, (find_prop(PC,'InterfaceProperty') or find_prop(PC,'FieldPathProperty'))) if (find_prop(PC,'InterfaceProperty') or find_prop(PC,'FieldPathProperty')) else (_ for _ in ()).throw(TypeError()))"),
 
     # ---- enum introspection ----
-    ("enum: prop_info -> PropType", "chk('prop_info enum', lambda: WS._class.prop_info(find_prop(WS,'EnumProperty')) is not None)"),
-    ("enum: PropType.enum_obj -> UEnum", "chk('enum_obj', lambda: WS._class.prop_info(find_prop(WS,'EnumProperty')).enum_obj() is not None)"),
+    ("enum: prop_info -> FEnumProperty", "chk('prop_info enum', lambda: isinstance(WS._class.prop_info(find_prop(WS,'EnumProperty')), ue.FEnumProperty))"),
+    ("enum: FEnumProperty.enum_obj -> UEnum", "chk('enum_obj', lambda: WS._class.prop_info(find_prop(WS,'EnumProperty')).enum_obj() is not None)"),
+    ("enum: FEnumProperty.underlying -> FNumericProperty", "chk('enum underlying', lambda: isinstance(WS._class.prop_info(find_prop(WS,'EnumProperty')).underlying(), ue.FNumericProperty))"),
     ("enum: UEnum.enum_entries shape", "chk('enum_entries', lambda: all(isinstance(n,str) and isinstance(v,int) for n,v in WS._class.prop_info(find_prop(WS,'EnumProperty')).enum_obj().enum_entries()))"),
     ("enum: enum_entries None on non-enum", "chk('enum None', lambda: WS.enum_entries() is None)"),
 
-    # ---- PropType / Function / Param ----
+    # ---- FProperty tree / Function / Param ----
     ("introspect: function_info -> Function", "_FI = PC._class.function_info('K2_GetPawn'); chk('function_info', lambda: _FI is not None)"),
     ("introspect: Function getters", "chk('fn getters', lambda: isinstance(_FI.name,str) and isinstance(_FI.function_flags,int) and all(isinstance(s,str) for s in _FI.flag_names()) and 'Function' in repr(_FI))"),
     ("introspect: Function.params -> Param", "_P = _FI.params(); chk('params', lambda: len(_P)>=1 and 'Param' in repr(_P[0]))"),
     ("introspect: Param getters", "chk('param getters', lambda: isinstance(_P[0].name,str) and _P[0].role in ('in','out','ret','in_const','out_ref') and isinstance(_P[0].flags,int) and _P[0].type_ is not None)"),
-    ("introspect: PropType array.inner()", "chk('pt inner', lambda: PC._class.prop_info(props_by_kind(PC._class)['ArrayProperty'][0]).inner() is not None)"),
-    ("introspect: PropType struct.struct_type()", "chk('pt struct', lambda: PC._class.prop_info(props_by_kind(PC._class)['StructProperty'][0]).struct_type() is not None)"),
-    ("introspect: PropType object.target_class()", "chk('pt target', lambda: PC._class.prop_info(props_by_kind(PC._class)['ObjectProperty'][0]).target_class() is not None)"),
-    ("introspect: PropType scalar getters", "_PT = PC._class.prop_info(props_by_kind(PC._class)['ArrayProperty'][0]); chk('pt getters', lambda: isinstance(_PT.kind,str) and isinstance(_PT.cast_flags,int) and isinstance(_PT.property_flags,int) and isinstance(_PT.element_size,int))"),
+    ("introspect: FArrayProperty.inner()", "chk('pt inner', lambda: isinstance(PC._class.prop_info(props_by_kind(PC._class)['ArrayProperty'][0]).inner(), ue.FProperty))"),
+    ("introspect: FStructProperty.struct_type()", "chk('pt struct', lambda: PC._class.prop_info(props_by_kind(PC._class)['StructProperty'][0]).struct_type().props() is not None)"),
+    ("introspect: FObjectProperty.target_class()", "chk('pt target', lambda: PC._class.prop_info(props_by_kind(PC._class)['ObjectProperty'][0]).target_class() is not None)"),
+    ("introspect: FProperty scalar getters", "_PT = PC._class.prop_info(props_by_kind(PC._class)['ArrayProperty'][0]); chk('pt getters', lambda: isinstance(_PT.kind,str) and isinstance(_PT.cast_flags,int) and isinstance(_PT.property_flags,int) and isinstance(_PT.element_size,int) and isinstance(_PT.offset,int))"),
+    # The tree is the point: each class carries only what its C++ counterpart
+    # has members for, so a wrong-kind accessor is an AttributeError, not None.
+    ("introspect: props are most-derived", "chk('derived', lambda: isinstance(PC._class.prop_info(props_by_kind(PC._class)['StructProperty'][0]), ue.FStructProperty))"),
+    ("introspect: subclass chain", "chk('chain', lambda: issubclass(ue.FClassProperty, ue.FObjectProperty) and issubclass(ue.FObjectProperty, ue.FObjectPropertyBase) and issubclass(ue.FObjectPropertyBase, ue.FProperty) and issubclass(ue.FIntProperty, ue.FNumericProperty))"),
+    ("introspect: no cross-kind accessors", "_PS = PC._class.prop_info(props_by_kind(PC._class)['StructProperty'][0]); chk('no cross', lambda: not hasattr(_PS, 'target_class') and not hasattr(_PS, 'inner'))"),
+    ("introspect: FProperty.flag_names()", "chk('prop flags', lambda: 'Parm' in PC._class.function_info('K2_SetActorLocation').params()[0].type_.flag_names())"),
+    ("flags: EPropertyFlags / EFunctionFlags", "chk('flag enums', lambda: int(ue.EPropertyFlags.Parm)==0x80 and int(ue.EFunctionFlags.Static)==0x2000)"),
+    ("flags: flag_names agrees with enum", "_F = PC._class.functions_detailed()[0]; chk('flag agree', lambda: all(_F.function_flags & int(getattr(ue.EFunctionFlags,n)) for n in _F.flag_names()))"),
+    # Struct reads back out in the shape its writer accepts.
+    ("Struct: _type -> UStruct", "_K = ue.find('/Script/Engine.Default__KismetMathLibrary'); _S = _K.MakeTransform({'X':1},{'Pitch':0},{'X':1,'Y':1,'Z':1}); chk('struct _type', lambda: len(_S._type.props()) == 3)"),
+    ("Struct: to_dict round-trips", "_K = ue.find('/Script/Engine.Default__KismetMathLibrary'); _V = _K.Add_VectorVector({'X':1,'Y':2,'Z':3},{'X':1,'Y':1,'Z':1}); chk('to_dict', lambda: _K.VSize(_V.to_dict()) == _K.VSize(_V))"),
+    ("Struct: unknown field names itself", "expect_raises('struct attrerr', AttributeError, lambda: ue.find('/Script/Engine.Default__KismetMathLibrary').Add_VectorVector({'X':0},{'X':0}).NoSuchFieldQqq)"),
+    # Proxies wrap engine memory; Python can't manufacture one.
+    ("proxies are unconstructible", "chk('no ctor', lambda: all(expect_type_error(c) for c in (ue.Struct, ue.Array, ue.Map, ue.Set, ue.Text, ue.FProperty, ue.FStructProperty, ue.UObject, ue.UClass, ue.BoundMethod)))"),
+    ("UObject: _outer", "chk('outer', lambda: WS._outer is not None and WS._outer._path in WS._path)"),
+    ("UObject: dir() has meta attrs", "chk('dir meta', lambda: {'_class','_path','_name','_outer','_flags'} <= set(dir(WS)))"),
+    ("UEnum: name_by_value / value_by_name", "_E = WS._class.prop_info(find_prop(WS,'EnumProperty')).enum_obj(); _N,_V = _E.enum_entries()[0]; chk('enum lookup', lambda: _E.name_by_value(_V)==_N and _E.value_by_name(_N)==_V)"),
 
     # ---- BoundMethod introspection (calls handled separately) ----
     ("BoundMethod: getattr -> BoundMethod", "_BM = PC.K2_GetPawn; chk('bm type', lambda: type(_BM).__name__=='BoundMethod')"),
@@ -442,12 +470,11 @@ def _array_ops():
     name = None; inner = None
     for cand in (PC, WS):
         if cand is None: continue
-        for n, ff in cand._class.props():
-            if ff != "ArrayProperty": continue
+        for n, pt in cand._class.props():
+            if pt.kind != "ArrayProperty": continue
             a = getattr(cand, n)
             if len(a) != 0: continue
-            pt = cand._class.prop_info(n)
-            ik = pt.inner().kind if (pt and pt.inner()) else None
+            ik = pt.inner().kind
             if ik in ("ObjectProperty","IntProperty","FloatProperty","StrProperty","NameProperty"):
                 obj, name, inner = cand, n, ik; break
         if name: break
@@ -475,12 +502,11 @@ def _map_ops():
     mo = mn = None
     for cand in (GI, PC, WS):
         if cand is None: continue
-        for n, ff in cand._class.props():
-            if ff != "MapProperty": continue
+        for n, pt in cand._class.props():
+            if pt.kind != "MapProperty": continue
             m = getattr(cand, n)
             if len(m) != 0: continue
-            pt = cand._class.prop_info(n)
-            if pt and pt.key() and pt.value() and pt.key().kind=="StrProperty" and pt.value().kind=="StrProperty":
+            if pt.key().kind=="StrProperty" and pt.value().kind=="StrProperty":
                 mo, mn = cand, n; break
         if mn: break
     if not mn:
@@ -517,7 +543,7 @@ def _writes():
         rt(WS, "NameProperty", lambda v: v, "Name (identity)")
         en = find_prop(WS, "EnumProperty")
         if en:
-            pt = WS._class.prop_info(en); eo = pt.enum_obj() if pt else None
+            pt = WS._class.prop_info(en); eo = pt.enum_obj() if pt is not None else None
             ents = [e for e in (eo.enum_entries() if eo else []) if not e[0].endswith("_MAX")]
             if ents:
                 def by_name():
@@ -567,11 +593,10 @@ def _set_ops():
             continue
         scanned.add(cn)
         try:
-            for n, ff in o._class.props():
-                if ff != "SetProperty":
+            for n, pt in o._class.props():
+                if pt.kind != "SetProperty":
                     continue
-                pt = o._class.prop_info(n)
-                ik = pt.inner().kind if (pt and pt.inner()) else None
+                ik = pt.inner().kind
                 if ik in ("NameProperty", "IntProperty", "UInt32Property", "StrProperty"):
                     if len(getattr(o, n)) == 0:
                         target = (o, n, ik); break
@@ -701,7 +726,7 @@ HOOK_STEPS: list[tuple[str, str]] = [
     ("hook: replace struct return via dict", "def cb(t,p): return {'X':7.0,'Y':8.0,'Z':9.0}\nwith _hooked('MakeVector', cb):\n v=HKML.MakeVector(1.0,1.0,1.0)\nchk('hook struct ret', lambda: v.X==7.0 and v.Z==9.0)"),
     ("hook: out-param fn, original() fills outs", "def cb(t,p): return p.original()\nwith _hooked('BreakVector', cb):\n r=HKML.BreakVector({'X':3.0,'Y':4.0,'Z':5.0})\nchk('hook outparams', lambda: r==(3.0,4.0,5.0))"),
     ("hook: bounded reentrancy (re-call self)", "depth=[0]\ndef cb(t,p):\n depth[0]+=1\n if p.A>0 and depth[0]<10: return HKML.Add_IntInt(p.A-1, p.B)\n return p.B\nwith _hooked('Add_IntInt', cb): chk('hook reentry', lambda: HKML.Add_IntInt(3,100)==100)"),
-    ("hook: callback unhooks itself mid-call", "def cb(t,p): ue.unhook(HKC,'Add_IntInt'); return 555\nue.hook(HKC,'Add_IntInt',cb)\ntry:\n a=HKML.Add_IntInt(1,2); b=HKML.Add_IntInt(1,2); chk('hook self-unhook', lambda: a==555 and b==3)\nfinally:\n (ue.unhook(HKC,'Add_IntInt') if '/Script/Engine.KismetMathLibrary:Add_IntInt' in ue.hooks() else None)"),
+    ("hook: callback unhooks itself mid-call", "def cb(t,p): ue.unhook(HKC,'Add_IntInt'); return 555\nue.hook(HKC,'Add_IntInt',cb)\ntry:\n a=HKML.Add_IntInt(1,2); b=HKML.Add_IntInt(1,2); chk('hook self-unhook', lambda: a==555 and b==3)\nfinally:\n (ue.unhook(HKC,'Add_IntInt') if (HKC,'Add_IntInt') in ue.hooks() else None)"),
     ("hook: double hook -> RuntimeError", "ue.hook(HKC,'Add_IntInt',lambda t,p:0)\ntry: expect_raises('hook double', RuntimeError, lambda: ue.hook(HKC,'Add_IntInt',lambda t,p:0))\nfinally: ue.unhook(HKC,'Add_IntInt')"),
     ("hook: unhook not-hooked -> RuntimeError", "expect_raises('hook unhook-missing', RuntimeError, lambda: ue.unhook(HKC,'Add_IntInt'))"),
     ("hook: instance target -> TypeError", "expect_raises('hook instance', TypeError, lambda: ue.hook(HKML,'Add_IntInt',lambda t,p:0))"),

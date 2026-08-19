@@ -51,6 +51,7 @@ def main():
         try:
             was = ue.find(path) is not None
             obj = ue.load(path)               # synchronous StaticLoadObject
+            obj.add_to_root()
             if obj is None:
                 failed += 1
                 c = str(a.AssetClass)

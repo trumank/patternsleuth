@@ -36,13 +36,14 @@ pub(crate) mod ue_module {
     use std::sync::atomic::Ordering;
 
     use rustpython_vm::FromArgs;
-    use rustpython_vm::builtins::{PyBaseExceptionRef, PyDict, PyFloat, PyModule, PyStr};
+    use rustpython_vm::builtins::{PyBaseExceptionRef, PyDict, PyFloat, PyModule, PyStr, PyType};
+    use rustpython_vm::class::PyClassDef;
     use rustpython_vm::convert::ToPyObject;
     use rustpython_vm::function::{FuncArgs, OptionalArg, PyComparisonValue, PySetterValue};
     use rustpython_vm::protocol::{PyMappingMethods, PySequenceMethods};
     use rustpython_vm::types::{
-        AsMapping, AsSequence, Callable, Comparable, GetAttr, Hashable, Iterable, PyComparisonOp,
-        Representable, SetAttr,
+        AsMapping, AsSequence, Callable, Comparable, Constructor, GetAttr, Hashable, Iterable,
+        PyComparisonOp, Representable, SetAttr,
     };
     // Note: `pyfunction`/`pygetset`/`pymethod`/`pyattr`/`pyslot` are *helper*
     // attributes processed by the `#[pyclass]` / `#[pymodule]` macros — they are
@@ -88,6 +89,44 @@ pub(crate) mod ue_module {
             })+
         };
     }
+    /// None of these proxies can be built from Python — every one wraps engine
+    /// memory it has no way to conjure. Without this they inherit
+    /// `object.__new__` and hand back an instance with no payload, which then
+    /// fails deep inside some later slot ("unexpected payload for __repr__").
+    /// Subclasses inherit the slot, so only the roots of each chain need it.
+    macro_rules! unconstructible {
+        ($($t:ident),+ $(,)?) => {
+            $(impl Constructor for $t {
+                type Args = FuncArgs;
+                fn py_new(_cls: &Py<PyType>, _args: FuncArgs, vm: &VirtualMachine) -> PyResult<Self> {
+                    Err(type_err(
+                        vm,
+                        format!("cannot create ue.{} instances", <$t as PyClassDef>::NAME),
+                    ))
+                }
+            })+
+        };
+    }
+    unconstructible!(
+        UObject,
+        PyFProperty,
+        Param,
+        Function,
+        Struct,
+        Array,
+        Map,
+        Set,
+        Text,
+        Delegate,
+        MulticastDelegate,
+        DelegateBinding,
+        HookParams,
+        BeginPlayHook,
+        TickHook,
+        Trace,
+        BoundMethod,
+    );
+
     debug_name!(
         UObject,
         UStruct,
@@ -164,12 +203,25 @@ pub(crate) mod ue_module {
         }
     }
 
-    /// Args for class-indexed lookups (`objects_of_class`, `UClass.instances`).
+    /// Args for `ue.objects_of_class`. `class_` (not `class`, which is a Python
+    /// keyword, and not `cls`) matches `ue.objects` and `ue.trace`.
     /// `#[pyarg(any, …)]` makes each positional-or-keyword so the Python-side
     /// `include_subclasses=`/`max=` keywords work (RustPython's inline
     /// `#[pyfunction]` params are positional-only).
     #[derive(FromArgs)]
     struct ClassQueryArgs {
+        #[pyarg(any, default = true)]
+        include_subclasses: bool,
+        #[pyarg(any, default)]
+        max: Option<usize>,
+    }
+
+    /// Same, plus the class itself — `ue.objects_of_class` needs it as a real
+    /// `#[pyarg]` so `class_=` works; `UClass.instances` gets it from `self`.
+    #[derive(FromArgs)]
+    struct ObjectsOfClassArgs {
+        #[pyarg(any)]
+        class_: PyObjectRef,
         #[pyarg(any, default = true)]
         include_subclasses: bool,
         #[pyarg(any, default)]
@@ -196,13 +248,16 @@ pub(crate) mod ue_module {
 
     /// `ue.objects_of_class("/Script/Engine.Actor")` — fast class-indexed lookup.
     #[pyfunction]
-    fn objects_of_class(
-        cls: PyObjectRef,
-        args: ClassQueryArgs,
-        vm: &VirtualMachine,
-    ) -> PyResult<PyObjectRef> {
-        let class_ptr = resolve_class(vm, &cls)?;
-        Ok(instances_of(vm, class_ptr, &args))
+    fn objects_of_class(args: ObjectsOfClassArgs, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        let class_ptr = resolve_class(vm, &args.class_)?;
+        Ok(instances_of(
+            vm,
+            class_ptr,
+            &ClassQueryArgs {
+                include_subclasses: args.include_subclasses,
+                max: args.max,
+            },
+        ))
     }
 
     /// Wrap a `UObjectBase` as a `UClass`, `UStruct`, or `UObject` proxy by
@@ -295,7 +350,7 @@ pub(crate) mod ue_module {
     #[derive(FromArgs)]
     struct ObjectsArgs {
         #[pyarg(any, default)]
-        class: Option<String>,
+        class_: Option<String>,
         // `Option<usize>` rather than a bare `usize` so an explicit `max=None`
         // means "no cap" (matching `ClassQueryArgs`); omitting it still caps at
         // 1024, since this walks the whole GUObjectArray.
@@ -306,7 +361,7 @@ pub(crate) mod ue_module {
     /// `ue.objects(class="MyClass", max=100)` — iterate GUObjectArray.
     #[pyfunction]
     fn objects(args: ObjectsArgs, vm: &VirtualMachine) -> PyObjectRef {
-        let class = args.class;
+        let class = args.class_;
         let max = args.max.unwrap_or(usize::MAX);
         let array = unsafe { &*ue::globals().guobject_array };
         let objs = array.objects();
@@ -352,7 +407,7 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(GetAttr, SetAttr, Comparable, Hashable, Representable))]
+    #[pyclass(with(Constructor, GetAttr, SetAttr, Comparable, Hashable, Representable))]
     impl UObject {
         /// `obj._class` — introspection escapes start with `_` to dodge FProperty names.
         #[pygetset]
@@ -370,6 +425,18 @@ pub(crate) mod ue_module {
         #[pygetset]
         fn _name(&self, vm: &VirtualMachine) -> PyResult<String> {
             Ok(self.resolve(vm)?.name_private().to_string())
+        }
+
+        /// `obj._outer` — the object this one lives inside (its package, actor,
+        /// or owning class), or `None` at the top of the chain. The counterpart
+        /// of `ue.new_object(..., outer=...)`.
+        #[pygetset]
+        fn _outer(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let obj = self.resolve(vm)?;
+            Ok(match unsafe { obj.outer_private().as_ref() } {
+                Some(o) => wrap_obj(vm, o),
+                None => vm.ctx.none(),
+            })
         }
 
         /// Raw `EObjectFlags` bitmask — compare against `ue.EObjectFlags`.
@@ -416,18 +483,47 @@ pub(crate) mod ue_module {
             ))
         }
 
+        /// If this UObject is a UEnum, the entry name for `value` (`None` if the
+        /// value isn't one of the entries, or this isn't a UEnum). Saves a linear
+        /// scan of `enum_entries()` for the lookup enum-valued property reads
+        /// already do internally.
+        #[pymethod]
+        fn name_by_value(&self, value: i64, vm: &VirtualMachine) -> PyResult<Option<String>> {
+            let obj = self.resolve(vm)?;
+            let Some(en) = obj.cast::<ue::UEnum>() else {
+                return Ok(None);
+            };
+            Ok(en.name_by_value(value).map(|n| n.to_string()))
+        }
+
+        /// The inverse: the value for an entry name. Accepts either the short
+        /// name (`"VIS_MostAggressive"`) or the qualified one
+        /// (`"EVisibilityAggressiveness::VIS_MostAggressive"`), matching what
+        /// enum property reads produce and writes accept.
+        #[pymethod]
+        fn value_by_name(&self, name: String, vm: &VirtualMachine) -> PyResult<Option<i64>> {
+            let obj = self.resolve(vm)?;
+            let Some(en) = obj.cast::<ue::UEnum>() else {
+                return Ok(None);
+            };
+            Ok(en.value_by_name_str(&name))
+        }
+
         #[pymethod]
         fn __dir__(&self, vm: &VirtualMachine) -> PyObjectRef {
-            let names: Vec<String> = self
-                .weak
-                .get_even_if_pending_kill()
-                .map(|o| {
-                    o.class()
-                        .iter_props()
-                        .map(|f| f.name().to_string())
-                        .collect()
-                })
-                .unwrap_or_default();
+            // Property names *plus* the meta attributes — otherwise `dir()` (and
+            // so the REPL's tab-completion) never surfaces `_class`/`_path`/…,
+            // which are the first thing you reach for on an unknown object.
+            let mut names: Vec<String> = ["_class", "_path", "_name", "_outer", "_flags"]
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect();
+            names.extend(
+                self.weak
+                    .get_even_if_pending_kill()
+                    .into_iter()
+                    .flat_map(|o| o.class().iter_props().map(|f| f.name().to_string())),
+            );
             to_list(vm, names)
         }
     }
@@ -808,10 +904,12 @@ pub(crate) mod ue_module {
         }
     }
 
-    fn function_flags_str(flags: ue::EFunctionFlags) -> String {
+    /// `(entry_name, bits)` for every `EFunctionFlags` bit worth naming. One
+    /// table drives both `flag_names()`/signature rendering and the
+    /// `ue.EFunctionFlags` IntFlag, so they can't drift apart.
+    fn function_flag_table() -> Vec<(&'static str, u64)> {
         use ue::EFunctionFlags as F;
-        let mut parts: Vec<&'static str> = Vec::new();
-        for (bit, name) in &[
+        [
             (F::FUNC_Final, "Final"),
             (F::FUNC_Native, "Native"),
             (F::FUNC_Static, "Static"),
@@ -839,12 +937,96 @@ pub(crate) mod ue_module {
             (F::FUNC_Delegate, "Delegate"),
             (F::FUNC_MulticastDelegate, "MulticastDelegate"),
             (F::FUNC_UbergraphFunction, "UbergraphFunction"),
-        ] {
-            if flags.contains(*bit) {
-                parts.push(name);
-            }
-        }
-        parts.join(" ")
+        ]
+        .iter()
+        .map(|(bit, name)| (*name, bit.bits() as u64))
+        .collect()
+    }
+
+    /// The same for `EPropertyFlags`.
+    fn property_flag_table() -> Vec<(&'static str, u64)> {
+        use ue::EPropertyFlags as P;
+        [
+            (P::CPF_Edit, "Edit"),
+            (P::CPF_ConstParm, "ConstParm"),
+            (P::CPF_BlueprintVisible, "BlueprintVisible"),
+            (P::CPF_ExportObject, "ExportObject"),
+            (P::CPF_BlueprintReadOnly, "BlueprintReadOnly"),
+            (P::CPF_Net, "Net"),
+            (P::CPF_EditFixedSize, "EditFixedSize"),
+            (P::CPF_Parm, "Parm"),
+            (P::CPF_OutParm, "OutParm"),
+            (P::CPF_ZeroConstructor, "ZeroConstructor"),
+            (P::CPF_ReturnParm, "ReturnParm"),
+            (P::CPF_DisableEditOnTemplate, "DisableEditOnTemplate"),
+            (P::CPF_NonNullable, "NonNullable"),
+            (P::CPF_Transient, "Transient"),
+            (P::CPF_Config, "Config"),
+            (P::CPF_RequiredParm, "RequiredParm"),
+            (P::CPF_DisableEditOnInstance, "DisableEditOnInstance"),
+            (P::CPF_EditConst, "EditConst"),
+            (P::CPF_GlobalConfig, "GlobalConfig"),
+            (P::CPF_InstancedReference, "InstancedReference"),
+            (P::CPF_DuplicateTransient, "DuplicateTransient"),
+            (P::CPF_SaveGame, "SaveGame"),
+            (P::CPF_NoClear, "NoClear"),
+            (P::CPF_ReferenceParm, "ReferenceParm"),
+            (P::CPF_BlueprintAssignable, "BlueprintAssignable"),
+            (P::CPF_Deprecated, "Deprecated"),
+            (P::CPF_IsPlainOldData, "IsPlainOldData"),
+            (P::CPF_RepSkip, "RepSkip"),
+            (P::CPF_RepNotify, "RepNotify"),
+            (P::CPF_Interp, "Interp"),
+            (P::CPF_NonTransactional, "NonTransactional"),
+            (P::CPF_EditorOnly, "EditorOnly"),
+            (P::CPF_NoDestructor, "NoDestructor"),
+            (P::CPF_AutoWeak, "AutoWeak"),
+            (
+                P::CPF_ContainsInstancedReference,
+                "ContainsInstancedReference",
+            ),
+            (P::CPF_AssetRegistrySearchable, "AssetRegistrySearchable"),
+            (P::CPF_SimpleDisplay, "SimpleDisplay"),
+            (P::CPF_AdvancedDisplay, "AdvancedDisplay"),
+            (P::CPF_Protected, "Protected"),
+            (P::CPF_BlueprintCallable, "BlueprintCallable"),
+            (P::CPF_BlueprintAuthorityOnly, "BlueprintAuthorityOnly"),
+            (P::CPF_TextExportTransient, "TextExportTransient"),
+            (P::CPF_NonPIEDuplicateTransient, "NonPIEDuplicateTransient"),
+            (P::CPF_ExposeOnSpawn, "ExposeOnSpawn"),
+            (P::CPF_PersistentInstance, "PersistentInstance"),
+            (P::CPF_UObjectWrapper, "UObjectWrapper"),
+            (P::CPF_HasGetValueTypeHash, "HasGetValueTypeHash"),
+            (
+                P::CPF_NativeAccessSpecifierPublic,
+                "NativeAccessSpecifierPublic",
+            ),
+            (
+                P::CPF_NativeAccessSpecifierProtected,
+                "NativeAccessSpecifierProtected",
+            ),
+            (
+                P::CPF_NativeAccessSpecifierPrivate,
+                "NativeAccessSpecifierPrivate",
+            ),
+            (P::CPF_SkipSerialization, "SkipSerialization"),
+        ]
+        .iter()
+        .map(|(bit, name)| (*name, bit.bits()))
+        .collect()
+    }
+
+    /// Names of the set bits in `bits`, in table order.
+    fn set_flag_names(table: &[(&'static str, u64)], bits: u64) -> Vec<String> {
+        table
+            .iter()
+            .filter(|(_, bit)| bits & bit == *bit)
+            .map(|(name, _)| (*name).to_owned())
+            .collect()
+    }
+
+    fn function_flags_str(flags: ue::EFunctionFlags) -> String {
+        set_flag_names(&function_flag_table(), flags.bits() as u64).join(" ")
     }
 
     /// Render a UFunction's full signature as a readable string, e.g.
@@ -916,7 +1098,7 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(Representable))]
+    #[pyclass(with(Constructor, Representable))]
     impl PyFProperty {
         /// The FField class name, e.g. `"StructProperty"` — the Python class
         /// name without the `F`.
@@ -928,9 +1110,18 @@ pub(crate) mod ue_module {
         fn cast_flags(&self, vm: &VirtualMachine) -> PyResult<u64> {
             Ok(self.resolve(vm)?.class().cast_flags().bits())
         }
+        /// Raw `EPropertyFlags` bitmask — compare against `ue.EPropertyFlags`.
         #[pygetset]
         fn property_flags(&self, vm: &VirtualMachine) -> PyResult<u64> {
             Ok(self.resolve(vm)?.property_flags().bits())
+        }
+
+        /// The set flags by name, e.g. `["Parm", "OutParm", "ReferenceParm"]` —
+        /// the property-side counterpart of `Function.flag_names()`.
+        #[pymethod]
+        fn flag_names(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let bits = self.resolve(vm)?.property_flags().bits();
+            Ok(to_list(vm, set_flag_names(&property_flag_table(), bits)))
         }
         #[pygetset]
         fn element_size(&self, vm: &VirtualMachine) -> PyResult<i32> {
@@ -1565,7 +1756,7 @@ pub(crate) mod ue_module {
         type_: PyObjectRef,
     }
 
-    #[pyclass(with(Representable))]
+    #[pyclass(with(Constructor, Representable))]
     impl Param {
         #[pygetset]
         fn name(&self) -> String {
@@ -1632,7 +1823,7 @@ pub(crate) mod ue_module {
         .into_ref(&vm.ctx)
     }
 
-    #[pyclass(with(Representable))]
+    #[pyclass(with(Constructor, Representable))]
     impl Function {
         #[pygetset]
         fn name(&self, vm: &VirtualMachine) -> PyResult<String> {
@@ -1649,13 +1840,8 @@ pub(crate) mod ue_module {
         }
         #[pymethod]
         fn flag_names(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-            let f = self.resolve(vm)?;
-            Ok(to_list(
-                vm,
-                function_flags_str(f.function_flags())
-                    .split_whitespace()
-                    .map(|s| s.to_string()),
-            ))
+            let bits = self.resolve(vm)?.function_flags().bits() as u64;
+            Ok(to_list(vm, set_flag_names(&function_flag_table(), bits)))
         }
         #[pymethod]
         fn params(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
@@ -2045,12 +2231,35 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(GetAttr, SetAttr, Representable))]
+    #[pyclass(with(Constructor, GetAttr, SetAttr, Representable))]
     impl Struct {
         #[pymethod]
         fn __dir__(&self, vm: &VirtualMachine) -> PyObjectRef {
             let ty = unsafe { &*self.struct_ty };
             to_list(vm, ty.iter_props().map(|f| f.name().to_string()))
+        }
+
+        /// `s._type` — the UScriptStruct describing this value, the same object
+        /// `FStructProperty.struct_type()` returns. Underscore-prefixed like
+        /// `UObject._class`, to stay clear of FProperty names.
+        #[pygetset]
+        fn _type(&self, vm: &VirtualMachine) -> PyObjectRef {
+            wrap_obj(vm, unsafe { &*self.struct_ty })
+        }
+
+        /// Shallow `{field: value}`. The inverse of the dict a struct field or
+        /// param accepts, so a struct round-trips: nested structs stay `Struct`
+        /// proxies, which is exactly what the writer takes back.
+        #[pymethod]
+        fn to_dict(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let ty = unsafe { &*self.struct_ty };
+            let dict = vm.ctx.new_dict();
+            for field in ty.iter_props() {
+                let name = field.name();
+                let value = read_at_path(vm, self.path.extend_field(name))?;
+                dict.set_item(&*vm.ctx.new_str(name.to_string()), value, vm)?;
+            }
+            Ok(dict.into())
         }
     }
 
@@ -2066,12 +2275,27 @@ pub(crate) mod ue_module {
         }
     }
 
+    impl Struct {
+        /// Resolve an attribute name to an FName, failing with the *name the
+        /// caller wrote*. `FName::find` returns index 0 for anything not in the
+        /// engine's name table, and index 0 renders as "None" — so without this
+        /// a typo'd field came back as `AttributeError: None`.
+        fn field_name(name: &Py<PyStr>, vm: &VirtualMachine) -> PyResult<ue::FName> {
+            let s = name.to_string();
+            let fname = ue::FName::find(&s);
+            if fname.comparison_index.value == 0 {
+                return Err(attr_err(vm, s));
+            }
+            Ok(fname)
+        }
+    }
+
     impl GetAttr for Struct {
         fn getattro(zelf: &Py<Self>, name: &Py<PyStr>, vm: &VirtualMachine) -> PyResult {
             if let Some(attr) = zelf.as_object().generic_getattr_opt(name, None, vm)? {
                 return Ok(attr);
             }
-            let new_path = zelf.path.extend_field(ue::FName::find(&name.to_string()));
+            let new_path = zelf.path.extend_field(Struct::field_name(name, vm)?);
             read_at_path(vm, new_path)
         }
     }
@@ -2087,7 +2311,7 @@ pub(crate) mod ue_module {
                 PySetterValue::Assign(v) => v,
                 PySetterValue::Delete => return Err(attr_err(vm, "cannot delete struct fields")),
             };
-            let new_path = zelf.path.extend_field(ue::FName::find(&name.to_string()));
+            let new_path = zelf.path.extend_field(Struct::field_name(name, vm)?);
             write_at_path(vm, new_path, value)
         }
     }
@@ -2152,15 +2376,20 @@ pub(crate) mod ue_module {
             write_at_path(vm, self.path.extend_index(i), value)
         }
         fn contains_impl(&self, value: PyObjectRef, vm: &VirtualMachine) -> PyResult<bool> {
+            Ok(self.find_index(&value, vm)?.is_some())
+        }
+        /// Index of the first element equal to `value`, by Python equality —
+        /// shared by `in`, `index`, and `remove`.
+        fn find_index(&self, value: &PyObjectRef, vm: &VirtualMachine) -> PyResult<Option<i32>> {
             let (arr, _) = self.resolve(vm)?;
             let n = unsafe { (*arr).num() };
             for i in 0..n {
                 let item = read_at_path(vm, self.path.extend_index(i))?;
-                if vm.bool_eq(&item, &value)? {
-                    return Ok(true);
+                if vm.bool_eq(&item, value)? {
+                    return Ok(Some(i));
                 }
             }
-            Ok(false)
+            Ok(None)
         }
         fn delitem_impl(&self, index: i32, vm: &VirtualMachine) -> PyResult<()> {
             let (arr_ptr, _ap) = self.resolve(vm)?;
@@ -2179,7 +2408,7 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(AsMapping, AsSequence, Iterable, Representable))]
+    #[pyclass(with(Constructor, AsMapping, AsSequence, Iterable, Representable))]
     impl Array {
         #[pymethod]
         fn append(&self, value: PyObjectRef, vm: &VirtualMachine) -> PyResult<()> {
@@ -2229,8 +2458,10 @@ pub(crate) mod ue_module {
             Ok(())
         }
 
+        /// `a.pop()` / `a.pop(i)` — like `list.pop`, defaulting to the last
+        /// element and accepting negative indices.
         #[pymethod]
-        fn pop(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        fn pop(&self, index: OptionalArg<i32>, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
             let (arr_ptr, _ap) = self.resolve(vm)?;
             let arr = unsafe { &mut *arr_ptr };
             let inner = unsafe { &*self.inner };
@@ -2238,7 +2469,10 @@ pub(crate) mod ue_module {
             if num == 0 {
                 return Err(index_err(vm, "pop from empty array"));
             }
-            let idx = num - 1;
+            let idx = match index.into_option() {
+                Some(i) => wrap_index(vm, i, num)?,
+                None => num - 1,
+            };
             let elem_size = inner.element_size();
             let base = arr.get_data_mut() as *mut u8;
             let slot = unsafe { base.add(idx as usize * elem_size as usize) } as *mut c_void;
@@ -2272,6 +2506,38 @@ pub(crate) mod ue_module {
                 self.append(item, vm)?;
             }
             Ok(())
+        }
+
+        /// `a.index(v)` — first index equal to `v`, ValueError if absent.
+        #[pymethod]
+        fn index(&self, value: PyObjectRef, vm: &VirtualMachine) -> PyResult<i32> {
+            self.find_index(&value, vm)?
+                .ok_or_else(|| value_err(vm, "value not in array"))
+        }
+
+        /// `a.count(v)` — how many elements equal `v`.
+        #[pymethod]
+        fn count(&self, value: PyObjectRef, vm: &VirtualMachine) -> PyResult<usize> {
+            let (arr, _) = self.resolve(vm)?;
+            let n = unsafe { (*arr).num() };
+            let mut hits = 0;
+            for i in 0..n {
+                let item = read_at_path(vm, self.path.extend_index(i))?;
+                if vm.bool_eq(&item, &value)? {
+                    hits += 1;
+                }
+            }
+            Ok(hits)
+        }
+
+        /// `a.remove(v)` — delete the first element equal to `v`, ValueError if
+        /// absent. (`del a[i]` removes by index.)
+        #[pymethod]
+        fn remove(&self, value: PyObjectRef, vm: &VirtualMachine) -> PyResult<()> {
+            let idx = self
+                .find_index(&value, vm)?
+                .ok_or_else(|| value_err(vm, "value not in array"))?;
+            self.delitem_impl(idx, vm)
         }
     }
 
@@ -2441,7 +2707,7 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(AsMapping, AsSequence, Iterable, Representable))]
+    #[pyclass(with(Constructor, AsMapping, AsSequence, Iterable, Representable))]
     impl Map {
         #[pymethod]
         fn keys(&self, vm: &VirtualMachine) -> PyResult<Vec<PyObjectRef>> {
@@ -2466,6 +2732,20 @@ pub(crate) mod ue_module {
             }
             Ok(vm.ctx.new_list(out).into())
         }
+        /// `m.get(key, default=None)` — like `dict.get`, no KeyError.
+        #[pymethod]
+        fn get(
+            &self,
+            key: PyObjectRef,
+            default: OptionalArg<PyObjectRef>,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyObjectRef> {
+            if self.contains_impl(key.clone(), vm)? {
+                return self.getitem_impl(key, vm);
+            }
+            Ok(default.into_option().unwrap_or_else(|| vm.ctx.none()))
+        }
+
         #[pymethod]
         fn clear(&self, vm: &VirtualMachine) -> PyResult<()> {
             let m = self.resolve(vm)?;
@@ -2585,7 +2865,7 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(AsSequence, Iterable, Representable))]
+    #[pyclass(with(Constructor, AsSequence, Iterable, Representable))]
     impl Set {
         #[pymethod]
         fn add(&self, value: PyObjectRef, vm: &VirtualMachine) -> PyResult<bool> {
@@ -2762,7 +3042,7 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(Representable))]
+    #[pyclass(with(Constructor, Representable))]
     impl Text {}
 
     impl Representable for Text {
@@ -3630,7 +3910,7 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(Representable))]
+    #[pyclass(with(Constructor, Representable))]
     impl Delegate {
         #[pygetset]
         fn is_bound(&self, vm: &VirtualMachine) -> PyResult<bool> {
@@ -3760,7 +4040,7 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(AsSequence, Representable))]
+    #[pyclass(with(Constructor, AsSequence, Iterable, Representable))]
     impl MulticastDelegate {
         #[pygetset]
         fn bindings(&self, vm: &VirtualMachine) -> PyResult<Vec<PyObjectRef>> {
@@ -3832,6 +4112,18 @@ pub(crate) mod ue_module {
             })
         }
     }
+    impl Iterable for MulticastDelegate {
+        fn iter(zelf: PyRef<Self>, vm: &VirtualMachine) -> PyResult {
+            let bindings = zelf.bindings(vm)?;
+            Ok(vm
+                .ctx
+                .new_list(bindings)
+                .to_pyobject(vm)
+                .get_iter(vm)?
+                .into())
+        }
+    }
+
     impl AsSequence for MulticastDelegate {
         fn as_sequence() -> &'static PySequenceMethods {
             static AS_SEQUENCE: PySequenceMethods = PySequenceMethods {
@@ -4447,7 +4739,7 @@ pub(crate) mod ue_module {
         multicast: bool,
     }
 
-    #[pyclass(with(Representable))]
+    #[pyclass(with(Constructor, Representable))]
     impl DelegateBinding {
         /// Detach this callback: remove the binding from the delegate, drop the
         /// manufactured function from the FuncMap and the GC root set, and free
@@ -5046,7 +5338,7 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(GetAttr, SetAttr, Representable))]
+    #[pyclass(with(Constructor, GetAttr, SetAttr, Representable))]
     impl HookParams {
         #[pygetset]
         fn this(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
@@ -5063,11 +5355,14 @@ pub(crate) mod ue_module {
         fn args(&self, vm: &VirtualMachine) -> PyResult<Vec<PyObjectRef>> {
             self.check_alive(vm)?;
             let mut out = Vec::new();
-            for p in self
-                .ufunc()
-                .params()
-                .filter(|p| !p.property_flags().contains(ue::EPropertyFlags::CPF_OutParm))
-            {
+            for p in self.ufunc().params().filter(|p| {
+                let f = p.property_flags();
+                // Same test as `parm_role` and `BoundMethod::call`: only a
+                // non-const out param is an output. A const-ref param is an
+                // input the caller had to supply, so it belongs in `args`.
+                !(f.contains(ue::EPropertyFlags::CPF_OutParm)
+                    && !f.contains(ue::EPropertyFlags::CPF_ConstParm))
+            }) {
                 out.push(read_at_path(vm, self.param_path(p))?);
             }
             Ok(out)
@@ -5313,9 +5608,38 @@ pub(crate) mod ue_module {
         })
     }
 
+    /// Unhook everything, returning how many were removed. Hooks are global
+    /// per UFunction and survive a failed experiment, so a REPL session needs a
+    /// way to get back to a clean slate without tracking what it installed.
+    #[pyfunction]
+    fn unhook_all(vm: &VirtualMachine) -> PyResult<usize> {
+        let mut removed = 0;
+        loop {
+            let next = with_sinks(|t| {
+                reclaim_dead_hooks(t);
+                t.sinks.values().find_map(|s| match &s.detail {
+                    Detail::Hook { target, .. } => target
+                        .get_even_if_pending_kill()
+                        .map(|o| (o.name_private().to_string(), o.outer_private())),
+                    _ => None,
+                })
+            });
+            let Some((name, outer)) = next else { break };
+            let Some(owner) = (unsafe { outer.as_ref() }) else {
+                break;
+            };
+            unhook(wrap_obj(vm, owner), name, vm)?;
+            removed += 1;
+        }
+        Ok(removed)
+    }
+
     #[pyfunction(name = "hooks")]
+    /// `[(owning_class, "FuncName"), ...]` — the exact argument pair `unhook`
+    /// takes, so `for h in ue.hooks(): ue.unhook(*h)` works. (It used to return
+    /// `"/Script/X.Class:Func"` paths, which `unhook` rejects.)
     fn hooks_list(vm: &VirtualMachine) -> PyObjectRef {
-        let paths: Vec<String> = with_sinks(|t| {
+        let out: Vec<PyObjectRef> = with_sinks(|t| {
             reclaim_dead_hooks(t);
             t.sinks
                 .values()
@@ -5323,10 +5647,17 @@ pub(crate) mod ue_module {
                     Detail::Hook { target, .. } => target.get_even_if_pending_kill(),
                     _ => None,
                 })
-                .map(|o| o.object_path())
+                .map(|o| {
+                    // A UFunction's Outer is the UClass that declares it.
+                    let owner = match unsafe { o.outer_private().as_ref() } {
+                        Some(c) => wrap_obj(vm, c),
+                        None => vm.ctx.none(),
+                    };
+                    vm.new_pyobj((owner, o.name_private().to_string()))
+                })
                 .collect()
         });
-        to_list(vm, paths)
+        vm.ctx.new_list(out).into()
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -5441,7 +5772,7 @@ pub(crate) mod ue_module {
         id: u64,
     }
 
-    #[pyclass(with(Representable))]
+    #[pyclass(with(Constructor, Representable))]
     impl BeginPlayHook {
         #[pymethod]
         fn remove(&self) {
@@ -5527,7 +5858,7 @@ pub(crate) mod ue_module {
         id: u64,
     }
 
-    #[pyclass(with(Representable))]
+    #[pyclass(with(Constructor, Representable))]
     impl TickHook {
         #[pymethod]
         fn remove(&self) {
@@ -5875,7 +6206,7 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(AsSequence, Representable))]
+    #[pyclass(with(Constructor, AsSequence, Representable))]
     impl Trace {
         #[pygetset]
         fn dropped(&self) -> u64 {
@@ -5970,7 +6301,7 @@ pub(crate) mod ue_module {
         }
     }
 
-    #[pyclass(with(Callable, Representable))]
+    #[pyclass(with(Constructor, Callable, Representable))]
     impl BoundMethod {
         #[pymethod]
         fn function_info(&self, vm: &VirtualMachine) -> Option<PyRef<Function>> {
@@ -6173,6 +6504,27 @@ pub(crate) mod ue_module {
     pub(crate) fn module_exec(vm: &VirtualMachine, module: &Py<PyModule>) -> PyResult<()> {
         __module_exec(vm, module);
         register_object_flags(vm, module)?;
+        register_flag_enum(vm, module, "EPropertyFlags", &property_flag_table())?;
+        register_flag_enum(vm, module, "EFunctionFlags", &function_flag_table())?;
+        Ok(())
+    }
+
+    /// Build an `enum.IntFlag` named `name` from `(entry, bits)` pairs and bind
+    /// it on the module. Shared by the property/function flag enums so they come
+    /// out the same shape as the hand-rolled `EObjectFlags`.
+    fn register_flag_enum(
+        vm: &VirtualMachine,
+        module: &Py<PyModule>,
+        name: &'static str,
+        table: &[(&'static str, u64)],
+    ) -> PyResult<()> {
+        let members = vm.ctx.new_dict();
+        for (entry, bits) in table {
+            members.set_item(*entry, vm.new_pyobj(*bits), vm)?;
+        }
+        let int_flag = vm.import("enum", 0)?.get_attr("IntFlag", vm)?;
+        let cls = int_flag.call((name, members.to_pyobject(vm)), vm)?;
+        module.set_attr(name, cls, vm)?;
         Ok(())
     }
 
