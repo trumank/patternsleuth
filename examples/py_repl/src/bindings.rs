@@ -90,8 +90,9 @@ pub(crate) mod ue_module {
     }
     debug_name!(
         UObject,
+        UStruct,
         UClass,
-        PropType,
+        PyFProperty,
         Param,
         Function,
         Struct,
@@ -142,10 +143,10 @@ pub(crate) mod ue_module {
         cls: &PyObject,
     ) -> PyResult<*const ue::UClass> {
         if let Some(uc) = cls.downcast_ref::<UClass>() {
-            let obj =
-                uc.0.weak
-                    .get_even_if_pending_kill()
-                    .ok_or_else(|| value_err(vm, "stale UClass"))?;
+            let obj = uc
+                .weak()
+                .get_even_if_pending_kill()
+                .ok_or_else(|| value_err(vm, "stale UClass"))?;
             let cls = obj
                 .cast::<ue::UClass>()
                 .ok_or_else(|| type_err(vm, "UClass proxy no longer refers to a UClass"))?;
@@ -176,22 +177,21 @@ pub(crate) mod ue_module {
     }
 
     /// Collect instances of `class_ptr` (optionally including subclasses),
-    /// truncated to `args.max`, as a Python list of `UObject` proxies. Shared by
-    /// `ue.objects_of_class` and `UClass.instances`.
+    /// truncated to `args.max`, as a Python list. Each hit goes through
+    /// `wrap_obj`, so looking up e.g. `/Script/CoreUObject.Class` yields real
+    /// `UClass` proxies (with `props()` and friends) rather than bare `UObject`s.
+    /// Shared by `ue.objects_of_class` and `UClass.instances`.
     fn instances_of(
         vm: &VirtualMachine,
         class_ptr: *const ue::UClass,
         args: &ClassQueryArgs,
     ) -> PyObjectRef {
-        let mut out: Vec<UObject> = ue::hash_tables()
-            .objects_of_class(class_ptr, args.include_subclasses)
-            .into_iter()
-            .map(UObject::from_ref)
-            .collect();
+        let mut hits = ue::hash_tables().objects_of_class(class_ptr, args.include_subclasses);
         if let Some(n) = args.max {
-            out.truncate(n);
+            hits.truncate(n);
         }
-        to_list(vm, out)
+        let out: Vec<PyObjectRef> = hits.into_iter().map(|o| wrap_obj(vm, o)).collect();
+        vm.ctx.new_list(out).into()
     }
 
     /// `ue.objects_of_class("/Script/Engine.Actor")` — fast class-indexed lookup.
@@ -205,11 +205,14 @@ pub(crate) mod ue_module {
         Ok(instances_of(vm, class_ptr, &args))
     }
 
-    /// Wrap a `UObjectBase` as a `UClass` or `UObject` proxy by runtime type.
+    /// Wrap a `UObjectBase` as a `UClass`, `UStruct`, or `UObject` proxy by
+    /// runtime type — most-derived first, since `UClass` is a `UStruct`.
     pub(super) fn wrap_obj(vm: &VirtualMachine, obj: &ue::UObjectBase) -> PyObjectRef {
         let weak = ue::FWeakObjectPtr::new(obj);
         if obj.is::<ue::UClass>() {
             UClass::from_weak(weak).into_pyobject(vm)
+        } else if obj.is::<ue::UStruct>() {
+            UStruct::from_weak(weak).into_pyobject(vm)
         } else {
             UObject { weak }.into_pyobject(vm)
         }
@@ -293,15 +296,18 @@ pub(crate) mod ue_module {
     struct ObjectsArgs {
         #[pyarg(any, default)]
         class: Option<String>,
-        #[pyarg(any, default = 1024)]
-        max: usize,
+        // `Option<usize>` rather than a bare `usize` so an explicit `max=None`
+        // means "no cap" (matching `ClassQueryArgs`); omitting it still caps at
+        // 1024, since this walks the whole GUObjectArray.
+        #[pyarg(any, default = Some(1024))]
+        max: Option<usize>,
     }
 
     /// `ue.objects(class="MyClass", max=100)` — iterate GUObjectArray.
     #[pyfunction]
     fn objects(args: ObjectsArgs, vm: &VirtualMachine) -> PyObjectRef {
         let class = args.class;
-        let max = args.max;
+        let max = args.max.unwrap_or(usize::MAX);
         let array = unsafe { &*ue::globals().guobject_array };
         let objs = array.objects();
         let mut out = Vec::new();
@@ -311,12 +317,12 @@ pub(crate) mod ue_module {
                     continue;
                 }
             }
-            out.push(UObject::from_ref(obj));
+            out.push(wrap_obj(vm, obj));
             if out.len() >= max {
                 break;
             }
         }
-        to_list(vm, out)
+        vm.ctx.new_list(out).into()
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -331,11 +337,9 @@ pub(crate) mod ue_module {
     }
 
     impl UObject {
-        pub(super) fn from_ref(obj: &ue::UObjectBase) -> Self {
-            Self {
-                weak: ue::FWeakObjectPtr::new(obj),
-            }
-        }
+        // No `from_ref` constructor: building a `UObject` proxy directly would
+        // skip the most-derived wrapping, so every engine object entering Python
+        // goes through `wrap_obj` instead.
         pub(super) fn resolve(&self, vm: &VirtualMachine) -> PyResult<&ue::UObjectBase> {
             self.weak
                 .get_even_if_pending_kill()
@@ -514,60 +518,75 @@ pub(crate) mod ue_module {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // UClass — a `UObject` specialized for introspection. It's a genuine Python
-    // subclass of `UObject` (`isinstance(cls, ue.UObject)` holds) and reuses
-    // `UObject`'s payload, identity (`__eq__`/`__hash__`), `_name`/`_path`/
-    // `_flags`, and attribute access; it only adds class-reflection methods and
-    // its own `repr`. Sharing the payload also means a `UClass` value downcasts
-    // to `&Py<UObject>` on the Rust side, so object-argument coercion is uniform.
+    // UStruct — a `UObject` specialized for reflection. Everything reflection
+    // needs (properties, functions, the super chain) hangs off `UStruct`, not
+    // `UClass`: a UScriptStruct and a UFunction are UStructs too, and both have
+    // properties worth listing. So the reflection methods live here and `UClass`
+    // (below) subclasses this, adding only the genuinely class-only extras.
+    //
+    // It's a genuine Python subclass of `UObject` (`isinstance(s, ue.UObject)`
+    // holds) and reuses `UObject`'s payload, identity (`__eq__`/`__hash__`),
+    // `_name`/`_path`/`_flags`, and attribute access. Sharing the payload means
+    // a `UStruct`/`UClass` value still downcasts to `&Py<UObject>` on the Rust
+    // side (`#[pyclass(base = ...)]` inherits `PAYLOAD_TYPE_ID`), so
+    // object-argument coercion stays uniform down the whole chain.
     // ──────────────────────────────────────────────────────────────────────
 
     #[pyattr]
-    #[pyclass(name = "UClass", module = "ue", base = UObject)]
+    #[pyclass(name = "UStruct", module = "ue", base = UObject)]
     #[repr(transparent)]
-    pub struct UClass(UObject);
+    pub struct UStruct(UObject);
 
-    impl UClass {
+    impl UStruct {
         fn from_weak(weak: ue::FWeakObjectPtr) -> Self {
-            UClass(UObject { weak })
+            UStruct(UObject { weak })
         }
 
-        /// The live object reinterpreted as a `&UClass`, or `None` if it's been
+        /// The live object reinterpreted as a `&UStruct`, or `None` if it's been
         /// GC'd. Callers decide how to surface staleness (empty list / `None`).
         /// Same caveat as `Function::resolve`: the ref is good for the current
         /// Python call only — don't hold it across engine re-entry (GC shares
-        /// this thread and can otherwise collect the class under it).
-        fn as_class(&self) -> Option<&ue::UClass> {
+        /// this thread and can otherwise collect the struct under it).
+        fn as_struct(&self) -> Option<&ue::UStruct> {
             self.0
                 .weak
                 .get_even_if_pending_kill()
-                .and_then(|o| o.cast::<ue::UClass>())
+                .and_then(|o| o.cast::<ue::UStruct>())
         }
     }
 
     #[pyclass(with(Representable))]
-    impl UClass {
-        /// List `(name, ffield_class_name)` for each property in the class chain.
+    impl UStruct {
+        /// List `(name, FProperty)` for each property in the super chain. The
+        /// property object is the same one `prop_info` hands back — two words,
+        /// so there's no reason to hand out a lossy `"StructProperty"` string
+        /// here and make callers re-look-up by name for the element/target/
+        /// struct type. `pt.kind` is that string if it's all you wanted.
         #[pymethod]
         fn props(&self, vm: &VirtualMachine) -> PyObjectRef {
-            let Some(class) = self.as_class() else {
+            let Some(ustruct) = self.as_struct() else {
                 return vm.ctx.new_list(vec![]).into();
             };
-            to_list(
-                vm,
-                class
-                    .iter_props()
-                    .map(|f| (f.name().to_string(), f.class().name.to_string())),
-            )
+            let anchor = self.0.weak;
+            let out: Vec<PyObjectRef> = ustruct
+                .iter_props()
+                .filter_map(|f| {
+                    let prop = f.cast::<ue::FProperty>()?;
+                    let pt = wrap_prop(vm, prop as *const _, anchor);
+                    Some(vm.new_pyobj((f.name().to_string(), pt)))
+                })
+                .collect();
+            vm.ctx.new_list(out).into()
         }
 
         /// List `(function_name, [param_name, ...])` for every UFunction on the chain.
+        /// Empty for a UScriptStruct — script structs have properties, not methods.
         #[pymethod]
         fn functions(&self, vm: &VirtualMachine) -> PyObjectRef {
-            let Some(class) = self.as_class() else {
+            let Some(ustruct) = self.as_struct() else {
                 return vm.ctx.new_list(vec![]).into();
             };
-            let out: Vec<PyObjectRef> = class
+            let out: Vec<PyObjectRef> = ustruct
                 .iter_functions()
                 .map(|func| {
                     let parms: Vec<String> = func.params().map(|p| p.name().to_string()).collect();
@@ -578,13 +597,13 @@ pub(crate) mod ue_module {
             vm.ctx.new_list(out).into()
         }
 
-        /// Structured `Function` object for every UFunction on this class chain.
+        /// Structured `Function` object for every UFunction on this super chain.
         #[pymethod]
         fn functions_detailed(&self, vm: &VirtualMachine) -> PyObjectRef {
-            let Some(class) = self.as_class() else {
+            let Some(ustruct) = self.as_struct() else {
                 return vm.ctx.new_list(vec![]).into();
             };
-            let out: Vec<PyRef<Function>> = class
+            let out: Vec<PyRef<Function>> = ustruct
                 .iter_functions()
                 .map(|func| function_proxy(vm, func))
                 .collect();
@@ -595,55 +614,96 @@ pub(crate) mod ue_module {
         /// super chain.
         #[pymethod]
         fn function_info(&self, name: String, vm: &VirtualMachine) -> Option<PyRef<Function>> {
-            let class = self.as_class()?;
+            let ustruct = self.as_struct()?;
             let fname = ue::FName::find(&name);
             if fname.comparison_index.value == 0 {
                 return None;
             }
-            let func = class.find_function(fname)?;
+            let func = ustruct.find_function(fname)?;
             Some(function_proxy(vm, func))
         }
 
-        /// Structured `PropType` for one FProperty by name; walks the super chain.
+        /// The `FProperty` (as its most-derived subclass) for one property by
+        /// name; walks the super chain. Same object `props()` yields.
         #[pymethod]
-        fn prop_info(&self, name: String, vm: &VirtualMachine) -> Option<PyRef<PropType>> {
-            let class = self.as_class()?;
+        fn prop_info(&self, name: String, vm: &VirtualMachine) -> Option<PyObjectRef> {
+            let ustruct = self.as_struct()?;
             let fname = ue::FName::find(&name);
             if fname.comparison_index.value == 0 {
                 return None;
             }
-            for field in class.iter_props() {
+            for field in ustruct.iter_props() {
                 if field.name() == fname {
                     if let Some(prop) = field.cast::<ue::FProperty>() {
-                        return Some(
-                            PropType::new(prop as *const _, self.0.weak).into_ref(&vm.ctx),
-                        );
+                        return Some(wrap_prop(vm, prop as *const _, self.0.weak));
                     }
                 }
             }
             None
         }
 
-        /// Walk the super-class chain, root last.
+        /// Walk the super chain, root last. Each entry is wrapped by its own
+        /// runtime type, so a class's parents come back as `UClass` and a script
+        /// struct's as `UStruct` — no filtering, the chain is reported whole.
         #[pymethod]
         fn parents(&self, vm: &VirtualMachine) -> PyObjectRef {
-            let Some(class) = self.as_class() else {
+            let Some(ustruct) = self.as_struct() else {
                 return vm.ctx.new_list(vec![]).into();
             };
             // `iter_super` yields self first; `skip(1)` gives ancestors only.
-            let out: Vec<UClass> = class
+            let out: Vec<PyObjectRef> = ustruct
                 .iter_super()
                 .skip(1)
-                .filter_map(|s| {
-                    s.class()
-                        .class_cast_flags()
-                        .contains(ue::EClassCastFlags::CASTCLASS_UClass)
-                        .then(|| UClass::from_weak(ue::FWeakObjectPtr::new(s)))
-                })
+                .map(|s| wrap_obj(vm, s))
                 .collect();
-            to_list(vm, out)
+            vm.ctx.new_list(out).into()
+        }
+    }
+
+    impl Representable for UStruct {
+        fn repr_str(zelf: &Py<Self>, _vm: &VirtualMachine) -> PyResult<String> {
+            Ok(match zelf.0.weak.get_even_if_pending_kill() {
+                Some(o) => format!("<UStruct {}>", o.object_path()),
+                None => "<UStruct stale>".into(),
+            })
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // UClass — a `UStruct` plus the reflection that only a class has: the
+    // interface table and the class-indexed instance lookup. Everything else
+    // (props, functions, prop_info, function_info, parents) is inherited.
+    // ──────────────────────────────────────────────────────────────────────
+
+    #[pyattr]
+    #[pyclass(name = "UClass", module = "ue", base = UStruct)]
+    #[repr(transparent)]
+    pub struct UClass(UStruct);
+
+    impl UClass {
+        fn from_weak(weak: ue::FWeakObjectPtr) -> Self {
+            UClass(UStruct(UObject { weak }))
         }
 
+        /// The underlying weak pointer, past the `UClass(UStruct(UObject))`
+        /// newtype nesting the payload sharing requires. Returned by reference:
+        /// `get_even_if_pending_kill` hands back a borrow of the pointer, so a
+        /// by-value accessor would only ever yield a temporary to borrow from.
+        fn weak(&self) -> &ue::FWeakObjectPtr {
+            &self.0.0.weak
+        }
+
+        /// The live object reinterpreted as a `&UClass`, or `None` if it's been
+        /// GC'd. Same borrow caveat as [`UStruct::as_struct`].
+        fn as_class(&self) -> Option<&ue::UClass> {
+            self.weak()
+                .get_even_if_pending_kill()
+                .and_then(|o| o.cast::<ue::UClass>())
+        }
+    }
+
+    #[pyclass(with(Representable))]
+    impl UClass {
         /// `(interface_class, vtable_offset, implemented_by_k2)` for each interface
         /// this class implements directly (UE's `UClass::Interfaces`).
         #[pymethod]
@@ -676,7 +736,7 @@ pub(crate) mod ue_module {
     // `__eq__`/`__hash__` are inherited from `UObject` (identity by address).
     impl Representable for UClass {
         fn repr_str(zelf: &Py<Self>, _vm: &VirtualMachine) -> PyResult<String> {
-            Ok(match zelf.0.weak.get_even_if_pending_kill() {
+            Ok(match zelf.weak().get_even_if_pending_kill() {
                 Some(o) => format!("<UClass {}>", o.object_path()),
                 None => "<UClass stale>".into(),
             })
@@ -685,7 +745,7 @@ pub(crate) mod ue_module {
 
     // ──────────────────────────────────────────────────────────────────────
     // Reflection rendering helpers — the single string/role/flag renderers
-    // behind the structured `PropType` / `Param` / `Function` types.
+    // behind the structured `FProperty` / `Param` / `Function` types.
     // ──────────────────────────────────────────────────────────────────────
 
     /// Format an FProperty's type as a human-readable string.
@@ -808,21 +868,46 @@ pub(crate) mod ue_module {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // Structured reflection: PropType, Param, Function.
+    // FProperty hierarchy — a 1:1 mirror of UE's C++ FProperty tree.
+    //
+    // `FProperty` carries what every property has (kind/flags/size) and each
+    // subclass adds exactly the accessors its C++ counterpart has members for:
+    // `target_class` lives on `FObjectPropertyBase`, `inner` on `FArrayProperty`,
+    // `struct_type` on `FStructProperty`, and so on. So `dir(pt)` tells you what
+    // this property actually is, and asking a property something it can't answer
+    // is an AttributeError rather than a `None` you have to distinguish from a
+    // genuine null.
+    //
+    // Every class shares `FProperty`'s payload — RustPython inherits
+    // `PAYLOAD_TYPE_ID` down a `base = ...` chain — so the whole tree downcasts
+    // to `&Py<PyFProperty>` on the Rust side, and `Deref` walks the newtype
+    // nesting back to the fields. Python idents are the C++ names (`FIntProperty`);
+    // the Rust ones are `Py`-prefixed to stay clear of libue's `ue::FIntProperty`.
     // ──────────────────────────────────────────────────────────────────────
 
     #[pyattr]
-    #[pyclass(name = "PropType", module = "ue")]
+    #[pyclass(name = "FProperty", module = "ue")]
     #[derive(PyPayload)]
-    pub struct PropType {
+    pub struct PyFProperty {
         prop: *const ue::FProperty,
         anchor: ue::FWeakObjectPtr,
     }
 
-    impl PropType {
-        fn new(prop: *const ue::FProperty, anchor: ue::FWeakObjectPtr) -> Self {
+    impl PyFProperty {
+        fn wrap(prop: *const ue::FProperty, anchor: ue::FWeakObjectPtr) -> Self {
             Self { prop, anchor }
         }
+
+        /// The base payload. `Deref` reaches it for field/method access, but a
+        /// generic `Deref<Target = PyFProperty>` bound only matches the classes
+        /// one level down, so deep subclasses forward through this instead.
+        fn base(&self) -> &PyFProperty {
+            self
+        }
+
+        /// FFields aren't UObjects and have no weak-pointer machinery of their
+        /// own, so liveness is borrowed from the UStruct that owns the chain:
+        /// while that's alive the property can't have been freed.
         fn resolve(&self, vm: &VirtualMachine) -> PyResult<&ue::FProperty> {
             if self.anchor.get_even_if_pending_kill().is_none() {
                 return Err(attr_err(vm, "owning UStruct is stale"));
@@ -832,7 +917,9 @@ pub(crate) mod ue_module {
     }
 
     #[pyclass(with(Representable))]
-    impl PropType {
+    impl PyFProperty {
+        /// The FField class name, e.g. `"StructProperty"` — the Python class
+        /// name without the `F`.
         #[pygetset]
         fn kind(&self, vm: &VirtualMachine) -> PyResult<String> {
             Ok(self.resolve(vm)?.class().name.to_string())
@@ -849,100 +936,622 @@ pub(crate) mod ue_module {
         fn element_size(&self, vm: &VirtualMachine) -> PyResult<i32> {
             Ok(self.resolve(vm)?.element_size())
         }
-
-        #[pymethod]
-        fn target_class(&self, vm: &VirtualMachine) -> PyResult<Option<UClass>> {
-            let prop = self.resolve(vm)?;
-            let Some(opb) = prop.cast_field::<ue::FObjectPropertyBase>() else {
-                return Ok(None);
-            };
-            Ok(opb
-                .property_class()
-                .map(|c| UClass::from_weak(ue::FWeakObjectPtr::new(c))))
-        }
-
-        /// For an FInterfaceProperty, the interface UClass it accepts (parallels
-        /// `target_class` for object properties); `None` for other property kinds.
-        #[pymethod]
-        fn interface_class(&self, vm: &VirtualMachine) -> PyResult<Option<UClass>> {
-            let prop = self.resolve(vm)?;
-            let Some(ip) = prop.cast_field::<ue::FInterfaceProperty>() else {
-                return Ok(None);
-            };
-            Ok(ip
-                .interface_class()
-                .map(|c| UClass::from_weak(ue::FWeakObjectPtr::new(c))))
-        }
-
-        #[pymethod]
-        fn struct_type(&self, vm: &VirtualMachine) -> PyResult<Option<UObject>> {
-            let prop = self.resolve(vm)?;
-            let Some(sp) = prop.cast_field::<ue::FStructProperty>() else {
-                return Ok(None);
-            };
-            let st = sp.get_struct();
-            Ok(Some(UObject::from_ref(st)))
-        }
-
-        #[pymethod]
-        fn inner(&self, vm: &VirtualMachine) -> PyResult<Option<PropType>> {
-            let prop = self.resolve(vm)?;
-            if let Some(ap) = prop.cast_field::<ue::FArrayProperty>() {
-                return Ok(Some(PropType::new(ap.inner() as *const _, self.anchor)));
-            }
-            if let Some(sp) = prop.cast_field::<ue::FSetProperty>() {
-                return Ok(Some(PropType::new(
-                    sp.element_property() as *const _,
-                    self.anchor,
-                )));
-            }
-            Ok(None)
-        }
-
-        #[pymethod]
-        fn key(&self, vm: &VirtualMachine) -> PyResult<Option<PropType>> {
-            let prop = self.resolve(vm)?;
-            let Some(mp) = prop.cast_field::<ue::FMapProperty>() else {
-                return Ok(None);
-            };
-            Ok(Some(PropType::new(
-                mp.key_property() as *const _,
-                self.anchor,
-            )))
-        }
-
-        #[pymethod]
-        fn value(&self, vm: &VirtualMachine) -> PyResult<Option<PropType>> {
-            let prop = self.resolve(vm)?;
-            let Some(mp) = prop.cast_field::<ue::FMapProperty>() else {
-                return Ok(None);
-            };
-            Ok(Some(PropType::new(
-                mp.value_property() as *const _,
-                self.anchor,
-            )))
-        }
-
-        #[pymethod]
-        fn enum_obj(&self, vm: &VirtualMachine) -> PyResult<Option<UObject>> {
-            let prop = self.resolve(vm)?;
-            let enum_ptr = if let Some(ep) = prop.cast_field::<ue::FEnumProperty>() {
-                ep.enum_ptr()
-            } else if let Some(bp) = prop.cast_field::<ue::FByteProperty>() {
-                bp.enum_ptr()
-            } else {
-                return Ok(None);
-            };
-            Ok(enum_ptr.map(|e| UObject::from_ref(e)))
+        #[pygetset]
+        fn offset(&self, vm: &VirtualMachine) -> PyResult<i32> {
+            Ok(self.resolve(vm)?.offset())
         }
     }
 
-    impl Representable for PropType {
+    impl Representable for PyFProperty {
         fn repr_str(zelf: &Py<Self>, vm: &VirtualMachine) -> PyResult<String> {
-            Ok(match zelf.resolve(vm) {
-                Ok(p) => format!("<PropType {}>", type_name(p)),
-                Err(_) => "<PropType stale>".to_string(),
-            })
+            Ok(prop_repr(zelf, vm))
+        }
+    }
+
+    /// Shared `repr` for the whole tree: the rendered type, e.g.
+    /// `<StructProperty<RChatLogItem>>` or `<ArrayProperty<ObjectProperty<Actor>>>`.
+    fn prop_repr(zelf: &PyFProperty, vm: &VirtualMachine) -> String {
+        match zelf.resolve(vm) {
+            Ok(p) => format!("<{}>", type_name(p)),
+            Err(_) => "<FProperty stale>".to_string(),
+        }
+    }
+
+    /// Per-subclass boilerplate: the payload-forwarding constructor, the `Deref`
+    /// that makes `self.resolve(..)`/`self.anchor` reach the base through the
+    /// newtype nesting, and the inherited `repr`/`Debug`.
+    macro_rules! prop_class {
+        ($rust:ident, $base:ident, $py:literal) => {
+            impl $rust {
+                fn wrap(prop: *const ue::FProperty, anchor: ue::FWeakObjectPtr) -> Self {
+                    $rust($base::wrap(prop, anchor))
+                }
+                fn base(&self) -> &PyFProperty {
+                    self.0.base()
+                }
+            }
+            impl std::ops::Deref for $rust {
+                type Target = $base;
+                fn deref(&self) -> &$base {
+                    &self.0
+                }
+            }
+            impl Representable for $rust {
+                fn repr_str(zelf: &Py<Self>, vm: &VirtualMachine) -> PyResult<String> {
+                    Ok(prop_repr(zelf.base(), vm))
+                }
+            }
+            impl std::fmt::Debug for $rust {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str($py)
+                }
+            }
+        };
+    }
+
+    #[pyattr]
+    #[pyclass(name = "FNumericProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFNumericProperty(PyFProperty);
+    prop_class!(PyFNumericProperty, PyFProperty, "FNumericProperty");
+    #[pyclass(with(Representable))]
+    impl PyFNumericProperty {}
+    #[pyattr]
+    #[pyclass(name = "FByteProperty", module = "ue", base = PyFNumericProperty)]
+    #[repr(transparent)]
+    pub struct PyFByteProperty(PyFNumericProperty);
+    prop_class!(PyFByteProperty, PyFNumericProperty, "FByteProperty");
+    #[pyclass(with(Representable))]
+    impl PyFByteProperty {
+        /// `Enum` — set for the legacy `TEnumAsByte<E>` spelling, `None` for a
+        /// plain `uint8`. (A modern `enum class` is an `FEnumProperty` instead.)
+        #[pymethod]
+        fn enum_obj(&self, vm: &VirtualMachine) -> PyResult<Option<PyObjectRef>> {
+            let prop = self.resolve(vm)?;
+            Ok(prop
+                .cast_field::<ue::FByteProperty>()
+                .and_then(|p| p.enum_ptr())
+                .map(|e| wrap_obj(vm, e)))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FInt8Property", module = "ue", base = PyFNumericProperty)]
+    #[repr(transparent)]
+    pub struct PyFInt8Property(PyFNumericProperty);
+    prop_class!(PyFInt8Property, PyFNumericProperty, "FInt8Property");
+    #[pyclass(with(Representable))]
+    impl PyFInt8Property {}
+    #[pyattr]
+    #[pyclass(name = "FInt16Property", module = "ue", base = PyFNumericProperty)]
+    #[repr(transparent)]
+    pub struct PyFInt16Property(PyFNumericProperty);
+    prop_class!(PyFInt16Property, PyFNumericProperty, "FInt16Property");
+    #[pyclass(with(Representable))]
+    impl PyFInt16Property {}
+    #[pyattr]
+    #[pyclass(name = "FIntProperty", module = "ue", base = PyFNumericProperty)]
+    #[repr(transparent)]
+    pub struct PyFIntProperty(PyFNumericProperty);
+    prop_class!(PyFIntProperty, PyFNumericProperty, "FIntProperty");
+    #[pyclass(with(Representable))]
+    impl PyFIntProperty {}
+    #[pyattr]
+    #[pyclass(name = "FInt64Property", module = "ue", base = PyFNumericProperty)]
+    #[repr(transparent)]
+    pub struct PyFInt64Property(PyFNumericProperty);
+    prop_class!(PyFInt64Property, PyFNumericProperty, "FInt64Property");
+    #[pyclass(with(Representable))]
+    impl PyFInt64Property {}
+    #[pyattr]
+    #[pyclass(name = "FUInt16Property", module = "ue", base = PyFNumericProperty)]
+    #[repr(transparent)]
+    pub struct PyFUInt16Property(PyFNumericProperty);
+    prop_class!(PyFUInt16Property, PyFNumericProperty, "FUInt16Property");
+    #[pyclass(with(Representable))]
+    impl PyFUInt16Property {}
+    #[pyattr]
+    #[pyclass(name = "FUInt32Property", module = "ue", base = PyFNumericProperty)]
+    #[repr(transparent)]
+    pub struct PyFUInt32Property(PyFNumericProperty);
+    prop_class!(PyFUInt32Property, PyFNumericProperty, "FUInt32Property");
+    #[pyclass(with(Representable))]
+    impl PyFUInt32Property {}
+    #[pyattr]
+    #[pyclass(name = "FUInt64Property", module = "ue", base = PyFNumericProperty)]
+    #[repr(transparent)]
+    pub struct PyFUInt64Property(PyFNumericProperty);
+    prop_class!(PyFUInt64Property, PyFNumericProperty, "FUInt64Property");
+    #[pyclass(with(Representable))]
+    impl PyFUInt64Property {}
+    #[pyattr]
+    #[pyclass(name = "FFloatProperty", module = "ue", base = PyFNumericProperty)]
+    #[repr(transparent)]
+    pub struct PyFFloatProperty(PyFNumericProperty);
+    prop_class!(PyFFloatProperty, PyFNumericProperty, "FFloatProperty");
+    #[pyclass(with(Representable))]
+    impl PyFFloatProperty {}
+    #[pyattr]
+    #[pyclass(name = "FDoubleProperty", module = "ue", base = PyFNumericProperty)]
+    #[repr(transparent)]
+    pub struct PyFDoubleProperty(PyFNumericProperty);
+    prop_class!(PyFDoubleProperty, PyFNumericProperty, "FDoubleProperty");
+    #[pyclass(with(Representable))]
+    impl PyFDoubleProperty {}
+    #[pyattr]
+    #[pyclass(name = "FBoolProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFBoolProperty(PyFProperty);
+    prop_class!(PyFBoolProperty, PyFProperty, "FBoolProperty");
+    #[pyclass(with(Representable))]
+    impl PyFBoolProperty {
+        /// `FBoolProperty`'s bitfield descriptor. A `bool` UPROPERTY is a whole
+        /// byte with `byte_mask == field_mask == 0xFF`; a `uint8 x : 1` bitfield
+        /// packs several properties into one byte and the masks pick out this
+        /// one.
+        #[pygetset]
+        fn field_size(&self, vm: &VirtualMachine) -> PyResult<u8> {
+            Ok(self.as_bool(vm)?.field_size())
+        }
+        #[pygetset]
+        fn byte_offset(&self, vm: &VirtualMachine) -> PyResult<u8> {
+            Ok(self.as_bool(vm)?.byte_offset())
+        }
+        #[pygetset]
+        fn byte_mask(&self, vm: &VirtualMachine) -> PyResult<u8> {
+            Ok(self.as_bool(vm)?.byte_mask())
+        }
+        #[pygetset]
+        fn field_mask(&self, vm: &VirtualMachine) -> PyResult<u8> {
+            Ok(self.as_bool(vm)?.field_mask())
+        }
+    }
+    impl PyFBoolProperty {
+        fn as_bool(&self, vm: &VirtualMachine) -> PyResult<&ue::FBoolProperty> {
+            self.resolve(vm)?
+                .cast_field::<ue::FBoolProperty>()
+                .ok_or_else(|| type_err(vm, "not an FBoolProperty"))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FObjectPropertyBase", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFObjectPropertyBase(PyFProperty);
+    prop_class!(PyFObjectPropertyBase, PyFProperty, "FObjectPropertyBase");
+    #[pyclass(with(Representable))]
+    impl PyFObjectPropertyBase {
+        /// `PropertyClass` — the UClass a value of this property must be an
+        /// instance of (or, for a class property, a subclass of). `None` only if
+        /// the engine left it unset.
+        #[pymethod]
+        fn target_class(&self, vm: &VirtualMachine) -> PyResult<Option<UClass>> {
+            let prop = self.resolve(vm)?;
+            Ok(prop
+                .cast_field::<ue::FObjectPropertyBase>()
+                .and_then(|p| p.property_class())
+                .map(|c| UClass::from_weak(ue::FWeakObjectPtr::new(c))))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FObjectProperty", module = "ue", base = PyFObjectPropertyBase)]
+    #[repr(transparent)]
+    pub struct PyFObjectProperty(PyFObjectPropertyBase);
+    prop_class!(PyFObjectProperty, PyFObjectPropertyBase, "FObjectProperty");
+    #[pyclass(with(Representable))]
+    impl PyFObjectProperty {}
+    #[pyattr]
+    #[pyclass(name = "FClassProperty", module = "ue", base = PyFObjectProperty)]
+    #[repr(transparent)]
+    pub struct PyFClassProperty(PyFObjectProperty);
+    prop_class!(PyFClassProperty, PyFObjectProperty, "FClassProperty");
+    #[pyclass(with(Representable))]
+    impl PyFClassProperty {
+        /// `MetaClass` — for `TSubclassOf<T>`, the `T` the stored UClass must
+        /// derive from. `target_class()` is `UClass` itself here.
+        #[pymethod]
+        fn meta_class(&self, vm: &VirtualMachine) -> PyResult<Option<UClass>> {
+            let prop = self.resolve(vm)?;
+            Ok(prop
+                .cast_field::<ue::FClassProperty>()
+                .and_then(|p| p.meta_class())
+                .map(|c| UClass::from_weak(ue::FWeakObjectPtr::new(c))))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FWeakObjectProperty", module = "ue", base = PyFObjectPropertyBase)]
+    #[repr(transparent)]
+    pub struct PyFWeakObjectProperty(PyFObjectPropertyBase);
+    prop_class!(
+        PyFWeakObjectProperty,
+        PyFObjectPropertyBase,
+        "FWeakObjectProperty"
+    );
+    #[pyclass(with(Representable))]
+    impl PyFWeakObjectProperty {}
+    #[pyattr]
+    #[pyclass(name = "FLazyObjectProperty", module = "ue", base = PyFObjectPropertyBase)]
+    #[repr(transparent)]
+    pub struct PyFLazyObjectProperty(PyFObjectPropertyBase);
+    prop_class!(
+        PyFLazyObjectProperty,
+        PyFObjectPropertyBase,
+        "FLazyObjectProperty"
+    );
+    #[pyclass(with(Representable))]
+    impl PyFLazyObjectProperty {}
+    #[pyattr]
+    #[pyclass(name = "FSoftObjectProperty", module = "ue", base = PyFObjectPropertyBase)]
+    #[repr(transparent)]
+    pub struct PyFSoftObjectProperty(PyFObjectPropertyBase);
+    prop_class!(
+        PyFSoftObjectProperty,
+        PyFObjectPropertyBase,
+        "FSoftObjectProperty"
+    );
+    #[pyclass(with(Representable))]
+    impl PyFSoftObjectProperty {}
+    #[pyattr]
+    #[pyclass(name = "FSoftClassProperty", module = "ue", base = PyFSoftObjectProperty)]
+    #[repr(transparent)]
+    pub struct PyFSoftClassProperty(PyFSoftObjectProperty);
+    prop_class!(
+        PyFSoftClassProperty,
+        PyFSoftObjectProperty,
+        "FSoftClassProperty"
+    );
+    #[pyclass(with(Representable))]
+    impl PyFSoftClassProperty {
+        /// `MetaClass` — the class a `TSoftClassPtr<T>` must resolve to a
+        /// subclass of.
+        #[pymethod]
+        fn meta_class(&self, vm: &VirtualMachine) -> PyResult<Option<UClass>> {
+            let prop = self.resolve(vm)?;
+            Ok(prop
+                .cast_field::<ue::FSoftClassProperty>()
+                .and_then(|p| p.meta_class())
+                .map(|c| UClass::from_weak(ue::FWeakObjectPtr::new(c))))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FInterfaceProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFInterfaceProperty(PyFProperty);
+    prop_class!(PyFInterfaceProperty, PyFProperty, "FInterfaceProperty");
+    #[pyclass(with(Representable))]
+    impl PyFInterfaceProperty {
+        /// `InterfaceClass` — the interface UClass a `TScriptInterface` slot
+        /// requires.
+        #[pymethod]
+        fn interface_class(&self, vm: &VirtualMachine) -> PyResult<Option<UClass>> {
+            let prop = self.resolve(vm)?;
+            Ok(prop
+                .cast_field::<ue::FInterfaceProperty>()
+                .and_then(|p| p.interface_class())
+                .map(|c| UClass::from_weak(ue::FWeakObjectPtr::new(c))))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FNameProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFNameProperty(PyFProperty);
+    prop_class!(PyFNameProperty, PyFProperty, "FNameProperty");
+    #[pyclass(with(Representable))]
+    impl PyFNameProperty {}
+    #[pyattr]
+    #[pyclass(name = "FStrProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFStrProperty(PyFProperty);
+    prop_class!(PyFStrProperty, PyFProperty, "FStrProperty");
+    #[pyclass(with(Representable))]
+    impl PyFStrProperty {}
+    #[pyattr]
+    #[pyclass(name = "FTextProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFTextProperty(PyFProperty);
+    prop_class!(PyFTextProperty, PyFProperty, "FTextProperty");
+    #[pyclass(with(Representable))]
+    impl PyFTextProperty {}
+    #[pyattr]
+    #[pyclass(name = "FArrayProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFArrayProperty(PyFProperty);
+    prop_class!(PyFArrayProperty, PyFProperty, "FArrayProperty");
+    #[pyclass(with(Representable))]
+    impl PyFArrayProperty {
+        /// `Inner` — the element property.
+        #[pymethod]
+        fn inner(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let prop = self.resolve(vm)?;
+            let ap = prop
+                .cast_field::<ue::FArrayProperty>()
+                .ok_or_else(|| type_err(vm, "not an FArrayProperty"))?;
+            Ok(wrap_prop(vm, ap.inner() as *const _, self.anchor))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FSetProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFSetProperty(PyFProperty);
+    prop_class!(PyFSetProperty, PyFProperty, "FSetProperty");
+    #[pyclass(with(Representable))]
+    impl PyFSetProperty {
+        /// `ElementProp` — the element property. Named `inner` to match
+        /// `FArrayProperty`, since both answer "what's in it".
+        #[pymethod]
+        fn inner(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let prop = self.resolve(vm)?;
+            let sp = prop
+                .cast_field::<ue::FSetProperty>()
+                .ok_or_else(|| type_err(vm, "not an FSetProperty"))?;
+            Ok(wrap_prop(
+                vm,
+                sp.element_property() as *const _,
+                self.anchor,
+            ))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FMapProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFMapProperty(PyFProperty);
+    prop_class!(PyFMapProperty, PyFProperty, "FMapProperty");
+    #[pyclass(with(Representable))]
+    impl PyFMapProperty {
+        /// `KeyProp` — the key property.
+        #[pymethod]
+        fn key(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let prop = self.resolve(vm)?;
+            let mp = prop
+                .cast_field::<ue::FMapProperty>()
+                .ok_or_else(|| type_err(vm, "not an FMapProperty"))?;
+            Ok(wrap_prop(vm, mp.key_property() as *const _, self.anchor))
+        }
+
+        /// `ValueProp` — the value property.
+        #[pymethod]
+        fn value(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let prop = self.resolve(vm)?;
+            let mp = prop
+                .cast_field::<ue::FMapProperty>()
+                .ok_or_else(|| type_err(vm, "not an FMapProperty"))?;
+            Ok(wrap_prop(vm, mp.value_property() as *const _, self.anchor))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FStructProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFStructProperty(PyFProperty);
+    prop_class!(PyFStructProperty, PyFProperty, "FStructProperty");
+    #[pyclass(with(Representable))]
+    impl PyFStructProperty {
+        /// `Struct` — the UScriptStruct describing the value. Comes back as a
+        /// `UStruct` proxy, so `pt.struct_type().props()` lists its fields.
+        #[pymethod]
+        fn struct_type(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let prop = self.resolve(vm)?;
+            let sp = prop
+                .cast_field::<ue::FStructProperty>()
+                .ok_or_else(|| type_err(vm, "not an FStructProperty"))?;
+            Ok(wrap_obj(vm, sp.get_struct()))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FDelegateProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFDelegateProperty(PyFProperty);
+    prop_class!(PyFDelegateProperty, PyFProperty, "FDelegateProperty");
+    #[pyclass(with(Representable))]
+    impl PyFDelegateProperty {
+        /// `SignatureFunction` — the UFunction whose params define what the
+        /// delegate is called with.
+        #[pymethod]
+        fn signature_function(&self, vm: &VirtualMachine) -> PyResult<Option<PyObjectRef>> {
+            let prop = self.resolve(vm)?;
+            Ok(prop
+                .cast_field::<ue::FDelegateProperty>()
+                .and_then(|p| p.signature_function())
+                .map(|f| wrap_obj(vm, f)))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FMulticastDelegateProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFMulticastDelegateProperty(PyFProperty);
+    prop_class!(
+        PyFMulticastDelegateProperty,
+        PyFProperty,
+        "FMulticastDelegateProperty"
+    );
+    #[pyclass(with(Representable))]
+    impl PyFMulticastDelegateProperty {
+        /// `SignatureFunction` — the UFunction whose params define what each
+        /// binding is called with.
+        #[pymethod]
+        fn signature_function(&self, vm: &VirtualMachine) -> PyResult<Option<PyObjectRef>> {
+            let prop = self.resolve(vm)?;
+            Ok(prop
+                .cast_field::<ue::FMulticastDelegateProperty>()
+                .and_then(|p| p.signature_function())
+                .map(|f| wrap_obj(vm, f)))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FMulticastInlineDelegateProperty", module = "ue", base = PyFMulticastDelegateProperty)]
+    #[repr(transparent)]
+    pub struct PyFMulticastInlineDelegateProperty(PyFMulticastDelegateProperty);
+    prop_class!(
+        PyFMulticastInlineDelegateProperty,
+        PyFMulticastDelegateProperty,
+        "FMulticastInlineDelegateProperty"
+    );
+    #[pyclass(with(Representable))]
+    impl PyFMulticastInlineDelegateProperty {}
+    #[pyattr]
+    #[pyclass(name = "FMulticastSparseDelegateProperty", module = "ue", base = PyFMulticastDelegateProperty)]
+    #[repr(transparent)]
+    pub struct PyFMulticastSparseDelegateProperty(PyFMulticastDelegateProperty);
+    prop_class!(
+        PyFMulticastSparseDelegateProperty,
+        PyFMulticastDelegateProperty,
+        "FMulticastSparseDelegateProperty"
+    );
+    #[pyclass(with(Representable))]
+    impl PyFMulticastSparseDelegateProperty {}
+    #[pyattr]
+    #[pyclass(name = "FEnumProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFEnumProperty(PyFProperty);
+    prop_class!(PyFEnumProperty, PyFProperty, "FEnumProperty");
+    #[pyclass(with(Representable))]
+    impl PyFEnumProperty {
+        /// `Enum` — the UEnum this property's values name.
+        #[pymethod]
+        fn enum_obj(&self, vm: &VirtualMachine) -> PyResult<Option<PyObjectRef>> {
+            let prop = self.resolve(vm)?;
+            Ok(prop
+                .cast_field::<ue::FEnumProperty>()
+                .and_then(|p| p.enum_ptr())
+                .map(|e| wrap_obj(vm, e)))
+        }
+
+        /// `UnderlyingProp` — the numeric property the enum is actually stored
+        /// in, which is what fixes its width and signedness.
+        #[pymethod]
+        fn underlying(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let prop = self.resolve(vm)?;
+            let ep = prop
+                .cast_field::<ue::FEnumProperty>()
+                .ok_or_else(|| type_err(vm, "not an FEnumProperty"))?;
+            Ok(wrap_prop(vm, ep.underlying_prop() as *const _, self.anchor))
+        }
+    }
+    #[pyattr]
+    #[pyclass(name = "FFieldPathProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFFieldPathProperty(PyFProperty);
+    prop_class!(PyFFieldPathProperty, PyFProperty, "FFieldPathProperty");
+    #[pyclass(with(Representable))]
+    impl PyFFieldPathProperty {}
+    #[pyattr]
+    #[pyclass(name = "FOptionalProperty", module = "ue", base = PyFProperty)]
+    #[repr(transparent)]
+    pub struct PyFOptionalProperty(PyFProperty);
+    prop_class!(PyFOptionalProperty, PyFProperty, "FOptionalProperty");
+    #[pyclass(with(Representable))]
+    impl PyFOptionalProperty {}
+
+    /// Wrap an `FProperty` as the most-derived Python proxy its cast flags
+    /// allow. UE sets every ancestor's bit in `ClassCastFlags`, so the test has
+    /// to run most-derived-first — the same shape as `wrap_obj` for UObjects.
+    pub(super) fn wrap_prop(
+        vm: &VirtualMachine,
+        prop: *const ue::FProperty,
+        anchor: ue::FWeakObjectPtr,
+    ) -> PyObjectRef {
+        use ue::EClassCastFlags as F;
+        match unsafe { &*prop }.class().cast_flags() {
+            f if f.contains(F::CASTCLASS_FClassProperty) => {
+                PyFClassProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FSoftClassProperty) => {
+                PyFSoftClassProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FByteProperty) => {
+                PyFByteProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FInt8Property) => {
+                PyFInt8Property::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FInt16Property) => {
+                PyFInt16Property::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FIntProperty) => {
+                PyFIntProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FInt64Property) => {
+                PyFInt64Property::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FUInt16Property) => {
+                PyFUInt16Property::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FUInt32Property) => {
+                PyFUInt32Property::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FUInt64Property) => {
+                PyFUInt64Property::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FFloatProperty) => {
+                PyFFloatProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FDoubleProperty) => {
+                PyFDoubleProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FObjectProperty) => {
+                PyFObjectProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FWeakObjectProperty) => {
+                PyFWeakObjectProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FLazyObjectProperty) => {
+                PyFLazyObjectProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FSoftObjectProperty) => {
+                PyFSoftObjectProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FMulticastInlineDelegateProperty) => {
+                PyFMulticastInlineDelegateProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FMulticastSparseDelegateProperty) => {
+                PyFMulticastSparseDelegateProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FNumericProperty) => {
+                PyFNumericProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FBoolProperty) => {
+                PyFBoolProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FObjectPropertyBase) => {
+                PyFObjectPropertyBase::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FInterfaceProperty) => {
+                PyFInterfaceProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FNameProperty) => {
+                PyFNameProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FStrProperty) => {
+                PyFStrProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FTextProperty) => {
+                PyFTextProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FArrayProperty) => {
+                PyFArrayProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FSetProperty) => {
+                PyFSetProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FMapProperty) => {
+                PyFMapProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FStructProperty) => {
+                PyFStructProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FDelegateProperty) => {
+                PyFDelegateProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FMulticastDelegateProperty) => {
+                PyFMulticastDelegateProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FEnumProperty) => {
+                PyFEnumProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FFieldPathProperty) => {
+                PyFFieldPathProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            f if f.contains(F::CASTCLASS_FOptionalProperty) => {
+                PyFOptionalProperty::wrap(prop, anchor).into_pyobject(vm)
+            }
+            _ => PyFProperty::wrap(prop, anchor).into_pyobject(vm),
         }
     }
 
@@ -953,7 +1562,7 @@ pub(crate) mod ue_module {
         name: String,
         role: String,
         flags: u64,
-        type_: PyRef<PropType>,
+        type_: PyObjectRef,
     }
 
     #[pyclass(with(Representable))]
@@ -971,16 +1580,19 @@ pub(crate) mod ue_module {
             self.flags
         }
         #[pygetset(name = "type_")]
-        fn type_(&self) -> PyRef<PropType> {
+        fn type_(&self) -> PyObjectRef {
             self.type_.clone()
         }
     }
     impl Representable for Param {
         fn repr_str(zelf: &Py<Self>, vm: &VirtualMachine) -> PyResult<String> {
+            // `type_` is one of the FProperty subclasses; they all share
+            // `PyFProperty`'s payload, so the downcast covers every one.
             let ty = zelf
                 .type_
-                .resolve(vm)
-                .map(type_name)
+                .downcast_ref::<PyFProperty>()
+                .ok_or(())
+                .and_then(|p| p.resolve(vm).map(type_name).map_err(|_| ()))
                 .unwrap_or_else(|_| "stale".into());
             Ok(format!("<Param {}: {} [{}]>", zelf.name, ty, zelf.role))
         }
@@ -1056,7 +1668,7 @@ pub(crate) mod ue_module {
                 if !prop.property_flags().contains(ue::EPropertyFlags::CPF_Parm) {
                     continue;
                 }
-                let pt = PropType::new(prop as *const _, self.anchor).into_ref(&vm.ctx);
+                let pt = wrap_prop(vm, prop as *const _, self.anchor);
                 out.push(
                     Param {
                         name: prop.name().to_string(),
@@ -2248,14 +2860,14 @@ pub(crate) mod ue_module {
         if flags.contains(F::CASTCLASS_FObjectProperty) {
             let p: *const ue::UObjectBase = unsafe { *(data as *const *const ue::UObjectBase) };
             return match unsafe { p.as_ref() } {
-                Some(o) => Ok(UObject::from_ref(o).into_pyobject(vm)),
+                Some(o) => Ok(wrap_obj(vm, o)),
                 None => Ok(vm.ctx.none()),
             };
         }
         if flags.contains(F::CASTCLASS_FWeakObjectProperty) {
             let weak = unsafe { *(data as *const ue::FWeakObjectPtr) };
             return Ok(match weak.get_even_if_pending_kill() {
-                Some(o) => UObject::from_ref(o).into_pyobject(vm),
+                Some(o) => wrap_obj(vm, o),
                 None => vm.ctx.none(),
             });
         }
@@ -2267,7 +2879,7 @@ pub(crate) mod ue_module {
             // callable. The raw interface vtable pointer is dropped.
             let p: *const ue::UObjectBase = unsafe { *(data as *const *const ue::UObjectBase) };
             return match unsafe { p.as_ref() } {
-                Some(o) => Ok(UObject::from_ref(o).into_pyobject(vm)),
+                Some(o) => Ok(wrap_obj(vm, o)),
                 None => Ok(vm.ctx.none()),
             };
         }
@@ -2994,7 +3606,7 @@ pub(crate) mod ue_module {
 
     fn binding_to_py(vm: &VirtualMachine, d: &ue::FScriptDelegate) -> PyObjectRef {
         let obj = match d.object() {
-            Some(o) => UObject::from_ref(o).into_pyobject(vm),
+            Some(o) => wrap_obj(vm, o),
             None => vm.ctx.none(),
         };
         (obj, d.function_name.to_string()).to_pyobject(vm)
@@ -4053,7 +4665,7 @@ pub(crate) mod ue_module {
         let ufunc = unsafe { &*(func_ptr as *const ue::UFunction) };
         let return_prop = ufunc.return_property().map(|p| p as *const ue::FProperty);
         let this = match unsafe { (context as *const ue::UObjectBase).as_ref() } {
-            Some(o) => UObject::from_ref(o).into_pyobject(vm),
+            Some(o) => wrap_obj(vm, o),
             None => vm.ctx.none(),
         };
         let guard = Rc::new(Cell::new(true));
@@ -4441,7 +5053,7 @@ pub(crate) mod ue_module {
             self.check_alive(vm)?;
             Ok(
                 match unsafe { (self.context as *const ue::UObjectBase).as_ref() } {
-                    Some(o) => UObject::from_ref(o).into_pyobject(vm),
+                    Some(o) => wrap_obj(vm, o),
                     None => vm.ctx.none(),
                 },
             )
@@ -4763,7 +5375,7 @@ pub(crate) mod ue_module {
             if callbacks.is_empty() {
                 return;
             }
-            let actor = UObject::from_ref(obj).into_pyobject(vm);
+            let actor = wrap_obj(vm, obj);
             for cb in callbacks {
                 if let Err(e) = cb.call((actor.clone(),), vm) {
                     tracing::error!("on_begin_play callback failed");
@@ -4881,7 +5493,7 @@ pub(crate) mod ue_module {
             // (un)registers a tick must not re-enter the borrow.
             let callbacks: Vec<PyObjectRef> =
                 with_tick(|r| r.borrow().iter().map(|r| r.cb.clone()).collect());
-            let world = UObject::from_ref(obj).into_pyobject(vm);
+            let world = wrap_obj(vm, obj);
             let dt: PyObjectRef = vm.ctx.new_float(delta_seconds as f64).into();
             for cb in callbacks {
                 if let Err(e) = cb.call((world.clone(), dt.clone()), vm) {
