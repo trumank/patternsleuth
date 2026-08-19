@@ -156,13 +156,13 @@ def _arr_probe(fn):
             props = o._class.props()
         except Exception:
             continue
-        for n, pt in props:
+        for pt in props:
             if pt.kind != 'ArrayProperty':
                 continue
             try:
                 if pt.inner().kind != 'IntProperty':
                     continue
-                a = getattr(o, n)
+                a = getattr(o, pt.name)
                 if len(a) != 0:
                     continue
             except Exception:
@@ -182,15 +182,15 @@ def expect_type_error(cls):
     return False
 
 def find_prop(obj, kind):
-    for n, pt in obj._class.props():
+    for pt in obj._class.props():
         if pt.kind == kind:
-            return n
+            return pt.name
     return None
 
 def props_by_kind(uclass):
     out = {}
-    for n, pt in uclass.props():
-        out.setdefault(pt.kind, []).append(n)
+    for pt in uclass.props():
+        out.setdefault(pt.kind, []).append(pt.name)
     return out
 
 def find_soft(prefer=()):
@@ -204,9 +204,9 @@ def find_soft(prefer=()):
         if n:
             return o, n
     for o in ue.objects(max=200000):
-        for n, pt in o._class.props():
+        for pt in o._class.props():
             if pt.kind in ('SoftObjectProperty', 'SoftClassProperty'):
-                return o, n
+                return o, pt.name
     return None, None
 
 PC = first_live("/Script/Engine.PlayerController")
@@ -249,9 +249,11 @@ STEPS: list[tuple[str, str]] = [
 
     # ---- UClass introspection ----
     ("UClass: _name/_path/repr", "chk('uclass basics', lambda: (WS._class._name and WS._class._path.startswith('/') and 'UClass' in repr(WS._class)) or (_ for _ in ()).throw(AssertionError()))"),
-    ("UClass: props() shape", "chk('props shape', lambda: all(len(t)==2 and isinstance(t[0],str) and isinstance(t[1], ue.FProperty) for t in WS._class.props()))"),
-    ("UClass: functions() shape", "chk('functions shape', lambda: all(isinstance(n,str) and isinstance(p,list) for n,p in WS._class.functions()))"),
-    ("UClass: functions_detailed() shape", "chk('fdetailed shape', lambda: all(type(f).__name__=='Function' and isinstance(f.signature, str) for f in WS._class.functions_detailed()))"),
+    ("UClass: props() shape", "def _t():\n ps = WS._class.props()\n assert ps and all(isinstance(p, ue.FProperty) and isinstance(p.name, str) for p in ps)\nchk('props shape', _t)"),
+    ("UClass: functions() shape", "def _t():\n fs = WS._class.functions()\n assert fs and all(isinstance(f, ue.UFunction) and isinstance(f._name,str) and isinstance(f.signature,str) for f in fs)\nchk('functions shape', _t)"),
+    ("UObject tree: most-derived wrapping", "def _t():\n f = WS._class.functions()[0]\n assert isinstance(f, ue.UFunction) and isinstance(f, ue.UStruct) and isinstance(f, ue.UObject)\n assert ue.find(f._path) == f and isinstance(ue.find(f._path), ue.UFunction)\n assert isinstance(ue.find('/Script/CoreUObject.Vector'), ue.UScriptStruct)\n assert isinstance(WS._class, ue.UClass)\nchk('uobject tree', _t)"),
+    ("UFunction: params() and props() agree", "def _t():\n f = [x for x in WS._class.functions() if x.params()][0]\n names = {p.name for p in f.params()}\n assert names <= {p.name for p in f.props()}\nchk('ufunction props', _t)"),
+    ("UClass: props()/prop_info agree", "def _t():\n p = WS._class.props()[0]\n assert WS._class.prop_info(p.name).offset == p.offset\nchk('props agree', _t)"),
     ("UClass: parents() are UClasses", "chk('parents', lambda: all(type(p).__name__=='UClass' for p in WS._class.parents()))"),
     ("UClass: instances(max) cap", "chk('instances cap', lambda: len(WS._class.instances(max=2))<=2)"),
     ("UClass: __eq__/__hash__", "chk('uclass eq/hash', lambda: (WS._class==WS._class) and (WS._class in {WS._class}))"),
@@ -284,15 +286,16 @@ STEPS: list[tuple[str, str]] = [
     ("read: still-unsupported types -> clean TypeError", "expect_raises('read unsupported', TypeError, lambda: getattr(PC, (find_prop(PC,'InterfaceProperty') or find_prop(PC,'FieldPathProperty'))) if (find_prop(PC,'InterfaceProperty') or find_prop(PC,'FieldPathProperty')) else (_ for _ in ()).throw(TypeError()))"),
 
     # ---- enum introspection ----
+    ("enum: enum_obj -> UEnum", "chk('uenum type', lambda: (_ for _ in ()).throw(AssertionError('not UEnum')) if not isinstance(WS._class.prop_info(find_prop(WS,'EnumProperty')).enum_obj(), ue.UEnum) else None)"),
     ("enum: prop_info -> FEnumProperty", "chk('prop_info enum', lambda: isinstance(WS._class.prop_info(find_prop(WS,'EnumProperty')), ue.FEnumProperty))"),
     ("enum: FEnumProperty.enum_obj -> UEnum", "chk('enum_obj', lambda: WS._class.prop_info(find_prop(WS,'EnumProperty')).enum_obj() is not None)"),
     ("enum: FEnumProperty.underlying -> FNumericProperty", "chk('enum underlying', lambda: isinstance(WS._class.prop_info(find_prop(WS,'EnumProperty')).underlying(), ue.FNumericProperty))"),
     ("enum: UEnum.enum_entries shape", "chk('enum_entries', lambda: all(isinstance(n,str) and isinstance(v,int) for n,v in WS._class.prop_info(find_prop(WS,'EnumProperty')).enum_obj().enum_entries()))"),
-    ("enum: enum_entries None on non-enum", "chk('enum None', lambda: WS.enum_entries() is None)"),
+    ("enum: enum_entries absent on non-enum", "expect_raises('enum absent', AttributeError, lambda: WS.enum_entries())"),
 
     # ---- FProperty tree / Function / Param ----
     ("introspect: function_info -> Function", "_FI = PC._class.function_info('K2_GetPawn'); chk('function_info', lambda: _FI is not None)"),
-    ("introspect: Function getters", "chk('fn getters', lambda: isinstance(_FI.name,str) and isinstance(_FI.function_flags,int) and all(isinstance(s,str) for s in _FI.flag_names()) and 'Function' in repr(_FI))"),
+    ("introspect: UFunction getters", "def _t():\n assert isinstance(_FI._name,str) and isinstance(_FI.function_flags,int)\n assert all(isinstance(x,str) for x in _FI.flag_names())\n assert repr(_FI).startswith('<UFunction ') and _FI._name in _FI.signature\nchk('fn getters', _t)"),
     ("introspect: Function.params -> Param", "_P = _FI.params(); chk('params', lambda: len(_P)>=1 and 'Param' in repr(_P[0]))"),
     ("introspect: Param getters", "chk('param getters', lambda: isinstance(_P[0].name,str) and _P[0].role in ('in','out','ret','in_const','out_ref') and isinstance(_P[0].flags,int) and _P[0].type_ is not None)"),
     ("introspect: FArrayProperty.inner()", "chk('pt inner', lambda: isinstance(PC._class.prop_info(props_by_kind(PC._class)['ArrayProperty'][0]).inner(), ue.FProperty))"),
@@ -306,7 +309,7 @@ STEPS: list[tuple[str, str]] = [
     ("introspect: no cross-kind accessors", "_PS = PC._class.prop_info(props_by_kind(PC._class)['StructProperty'][0]); chk('no cross', lambda: not hasattr(_PS, 'target_class') and not hasattr(_PS, 'inner'))"),
     ("introspect: FProperty.flag_names()", "chk('prop flags', lambda: 'Parm' in PC._class.function_info('K2_SetActorLocation').params()[0].type_.flag_names())"),
     ("flags: EPropertyFlags / EFunctionFlags", "chk('flag enums', lambda: int(ue.EPropertyFlags.Parm)==0x80 and int(ue.EFunctionFlags.Static)==0x2000)"),
-    ("flags: flag_names agrees with enum", "_F = PC._class.functions_detailed()[0]; chk('flag agree', lambda: all(_F.function_flags & int(getattr(ue.EFunctionFlags,n)) for n in _F.flag_names()))"),
+    ("flags: flag_names agrees with enum", "_F = PC._class.functions()[0]; chk('flag agree', lambda: all(_F.function_flags & int(getattr(ue.EFunctionFlags,n)) for n in _F.flag_names()))"),
     # Struct reads back out in the shape its writer accepts.
     ("Struct: _type -> UStruct", "_K = ue.find('/Script/Engine.Default__KismetMathLibrary'); _S = _K.MakeTransform({'X':1},{'Pitch':0},{'X':1,'Y':1,'Z':1}); chk('struct _type', lambda: len(_S._type.props()) == 3)"),
     ("Struct: to_dict round-trips", "_K = ue.find('/Script/Engine.Default__KismetMathLibrary'); _V = _K.Add_VectorVector({'X':1,'Y':2,'Z':3},{'X':1,'Y':1,'Z':1}); chk('to_dict', lambda: _K.VSize(_V.to_dict()) == _K.VSize(_V))"),
@@ -322,6 +325,7 @@ STEPS: list[tuple[str, str]] = [
     ("Array: == compares contents", "def _t(a):\n a.extend([1,2])\n assert a == [1,2] and not (a == [1,3]) and a != [1]\nchk('array eq', lambda: _arr_probe(_t))"),
     ("UObject: _outer", "def _t():\n assert WS._outer is not None\n assert WS._outer._path in WS._path\nchk('outer', _t)"),
     ("UObject: dir() has meta attrs", "chk('dir meta', lambda: (lambda d: (_ for _ in ()).throw(AssertionError(d)) if not {'_class','_path','_name','_outer','_flags'} <= set(d) else None)(dir(WS)))"),
+    ("UEnum: lookups moved off UObject", "chk('enum not on uobject', lambda: (_ for _ in ()).throw(AssertionError('UObject still has enum_entries')) if hasattr(WS, 'enum_entries') else None)"),
     ("UEnum: name_by_value / value_by_name", "_E = WS._class.prop_info(find_prop(WS,'EnumProperty')).enum_obj(); _N,_V = _E.enum_entries()[0]; chk('enum lookup', lambda: _E.name_by_value(_V)==_N and _E.value_by_name(_N)==_V)"),
 
     # ---- BoundMethod introspection (calls handled separately) ----
@@ -332,7 +336,7 @@ STEPS: list[tuple[str, str]] = [
     ("BoundMethod: wrong arg count -> TypeError", "expect_raises('bm argc', TypeError, lambda: PC.K2_GetPawn(1,2,3))"),
 
     # ---- Struct proxy: writes on a Python-OWNED struct (zero game impact) ----
-    ("Struct: owned struct from GetFocalLocation", "_S = PC.GetFocalLocation() if dict(PC._class.functions()).get('GetFocalLocation') is not None else None; chk('owned struct', lambda: (_S is None) or (type(_S).__name__=='Struct'))"),
+    ("Struct: owned struct from GetFocalLocation", "_S = PC.GetFocalLocation() if PC._class.function_info('GetFocalLocation') is not None else None; chk('owned struct', lambda: (_S is None) or (type(_S).__name__=='Struct'))"),
     ("Struct: __repr__/__dir__", "chk('struct repr/dir', lambda: (_S is None) or ('Struct' in repr(_S) and len(_S.__dir__())>0))"),
     ("Struct: scalar field write round-trip (owned)", '''
 def _struct_rw():
@@ -501,8 +505,9 @@ def _array_ops():
     name = None; inner = None
     for cand in (PC, WS):
         if cand is None: continue
-        for n, pt in cand._class.props():
+        for pt in cand._class.props():
             if pt.kind != "ArrayProperty": continue
+            n = pt.name
             a = getattr(cand, n)
             if len(a) != 0: continue
             ik = pt.inner().kind
@@ -533,8 +538,9 @@ def _map_ops():
     mo = mn = None
     for cand in (GI, PC, WS):
         if cand is None: continue
-        for n, pt in cand._class.props():
+        for pt in cand._class.props():
             if pt.kind != "MapProperty": continue
+            n = pt.name
             m = getattr(cand, n)
             if len(m) != 0: continue
             if pt.key().kind=="StrProperty" and pt.value().kind=="StrProperty":
@@ -643,9 +649,10 @@ def _set_ops():
             continue
         scanned.add(cn)
         try:
-            for n, pt in o._class.props():
+            for pt in o._class.props():
                 if pt.kind != "SetProperty":
                     continue
+                n = pt.name
                 ik = pt.inner().kind
                 if ik in ("NameProperty", "IntProperty", "UInt32Property", "StrProperty"):
                     if len(getattr(o, n)) == 0:
@@ -745,7 +752,7 @@ def _delegate_mutate():
     if dn is None:
         _sk("delegate add/remove round-trip", "no inline multicast on AudioComponent"); return
     # Pick any UFunction on the class as a (never-broadcast) bind target.
-    fns = [n for n, _ in ac._class.functions()]
+    fns = [f._name for f in ac._class.functions()]
     if not fns:
         _sk("delegate add/remove round-trip", "no functions to bind"); return
     fn = fns[0]
@@ -803,7 +810,7 @@ HOOK_STEPS: list[tuple[str, str]] = [
     ("hook: FString param read + return replace", "S={}\ndef cb(t,p): S['a']=p.A; S['b']=p.B; return 'R:'+p.A\nKSL=ue.find('/Script/Engine.Default__KismetStringLibrary')\nue.hook(KSL._class,'Concat_StrStr',cb)\ntry:\n r=KSL.Concat_StrStr('foo','bar'); chk('hook string', lambda: S['a']=='foo' and S['b']=='bar' and r=='R:foo')\nfinally:\n ue.unhook(KSL._class,'Concat_StrStr')"),
     ("hook: table exhaustion (64 max) + clean teardown", '''
 def _table():
-    names = [n for n, _ in HKC.functions()]
+    names = [f._name for f in HKC.functions()]
     seen = []
     for n in names:
         if n not in seen: seen.append(n)
@@ -840,7 +847,7 @@ _BINST = []
 for _n in ['MakeVector','BreakVector','Subtract_VectorVector','Add_VectorVector',
            'Multiply_VectorFloat','Dot_VectorVector','VSize','Lerp','FClamp',
            'Abs','Add_DoubleDouble','Multiply_DoubleDouble']:
-    if _n in (x for x, _ in _BHC.functions()):
+    if _n in (f._name for f in _BHC.functions()):
         try: ue.hook(_BHC, _n, _mk_bh(_n)); _BINST.append(_n)
         except Exception: pass
 print("bytecode-probe hooks installed:", _BINST)
@@ -954,7 +961,7 @@ def main(argv):
     #    frame so a single bad call is isolated rather than blamed on a batch.
     present = []
     try:
-        names = set(c.eval("[n for n,_ in PC._class.functions()]")) if c.eval("PC is not None") else set()
+        names = set(c.eval("[f._name for f in PC._class.functions()]")) if c.eval("PC is not None") else set()
         present = [f for f in SAFE_CALLS if f in names]
     except Exception as e:  # noqa: BLE001
         print(f"(could not enumerate functions: {e})")
