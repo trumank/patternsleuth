@@ -247,6 +247,68 @@ impl std::fmt::Display for Sig {
     }
 }
 
+/// How to build an [`Image`] for a game.
+#[derive(Clone, Copy)]
+struct LoadOptions {
+    /// parse the exception table
+    functions: bool,
+    /// load symbols from a PDB when one is available
+    symbols: bool,
+}
+
+/// Load a game and hand the resulting image to `work`.
+///
+/// The image borrows the file contents, so `work` runs here rather than the
+/// binary being returned -- which also means the file is freed as soon as the
+/// work on it is done.
+fn with_image<R>(
+    game: &GameEntry,
+    options: LoadOptions,
+    work: impl FnOnce(&Image<'_>) -> R,
+) -> Result<R> {
+    match game {
+        GameEntry::File(GameFileEntry { exe_path, .. }) => {
+            let data = fs::read(exe_path)?;
+            let builder = Image::builder().functions(options.functions);
+            let image = if options.symbols {
+                builder.symbols(exe_path).build(&data)
+            } else {
+                builder.build(&data)
+            }?;
+            Ok(work(&image))
+        }
+        GameEntry::Process(GameProcessEntry { pid }) => Ok(work(
+            &patternsleuth::process::external::read_image_from_pid(*pid)?,
+        )),
+    }
+}
+
+/// Run `work` over every game, several at a time.
+///
+/// Loading a binary costs several times what the work on it does whenever it
+/// isn't already cached, and neither phase alone keeps the machine busy: reads
+/// scale with the number of threads issuing them, and a single image's resolvers
+/// leave cores idle between scan stages. Overlapping games covers both.
+///
+/// `each` runs on whichever thread finished the game, one game at a time, so it
+/// can hold the shared state the caller is accumulating -- and so a game's
+/// output lands in one piece rather than interleaved with another's. Games are
+/// reported as they finish rather than in the order given, which keeps progress
+/// moving steadily instead of stalling behind whichever game is slowest.
+fn run_games<T: Send>(
+    games: &[GameEntry],
+    options: LoadOptions,
+    work: impl Fn(&GameEntry, &Image<'_>) -> Result<T> + Sync,
+    each: impl Fn(&GameEntry, Result<T>) -> Result<()> + Sync,
+) -> Result<()> {
+    use rayon::prelude::*;
+
+    games.par_iter().try_for_each(|game| {
+        let result = with_image(game, options, |image| work(game, image)).and_then(|result| result);
+        each(game, result)
+    })
+}
+
 fn scan(command: CommandScan) -> Result<()> {
     let include_default = command.patterns.is_empty() && command.xref.is_empty();
     // TODO warn if empty?
@@ -287,13 +349,14 @@ fn scan(command: CommandScan) -> Result<()> {
         .map(|p| p.sig.clone())
         .collect::<HashSet<_>>();
 
-    let mut games: HashSet<String> = Default::default();
+    let games: std::sync::Mutex<HashSet<String>> = Default::default();
 
-    let mut all: HashMap<(String, (&Sig, &String)), Vec<Resolution>> = HashMap::new();
-    let mut all_resolutions: HashMap<String, _> = Default::default();
+    /// every match, keyed by game and by the pattern that found it
+    type SummaryScans<'p> = HashMap<(String, (&'p Sig, &'p String)), Vec<Resolution>>;
+    let all: std::sync::Mutex<SummaryScans> = Default::default();
+    let all_resolutions: std::sync::Mutex<HashMap<String, _>> = Default::default();
 
     use colored::Colorize;
-    use indicatif::ProgressIterator;
     use itertools::join;
     use prettytable::{Cell, Row, Table, format, row};
 
@@ -330,233 +393,235 @@ fn scan(command: CommandScan) -> Result<()> {
         games_vec.extend(get_games(command.game)?.into_iter().map(GameEntry::File));
     }
 
-    let (output, iter): (_, Box<dyn Iterator<Item = _>>) = if command.progress {
-        let progress = ProgressBar::new(games_vec.len() as u64);
-        (
-            Output::Progress(progress.clone()),
-            Box::new(games_vec.iter().progress_with(progress)),
-        )
-    } else {
-        (Output::Stdout, Box::new(games_vec.iter()))
+    let progress = command
+        .progress
+        .then(|| ProgressBar::new(games_vec.len() as u64));
+    let output = match &progress {
+        Some(progress) => Output::Progress(progress.clone()),
+        None => Output::Stdout,
     };
 
-    for game in iter {
-        #[allow(unused_assignments)]
-        let mut bin_data = None;
+    run_games(
+        &games_vec,
+        LoadOptions {
+            functions: !command.skip_exceptions,
+            symbols: command.symbols,
+        },
+        |game, exe| {
+            let scan = exe.scan(&patterns)?;
 
-        let (name, exe) = match game {
-            GameEntry::File(GameFileEntry { name, exe_path }) => {
-                output.println(format!("{:?} {:?}", name, exe_path.display()));
+            // group results by Sig
+            let folded_scans = scan
+                .results
+                .iter()
+                .map(|(config, m)| (&config.sig, (config, m)))
+                .fold(HashMap::new(), |mut map: HashMap<_, Vec<_>>, (k, v)| {
+                    map.entry(k).or_default().push(v);
+                    map
+                });
 
-                bin_data = Some(fs::read(exe_path)?);
+            let mut table = Table::new();
+            table.set_titles(row!["sig", "offline scan"]);
 
-                (Cow::Borrowed(name), {
-                    let bin_data = bin_data.as_ref().unwrap();
-                    let builder = Image::builder().functions(!command.skip_exceptions);
-                    let exe = if command.symbols {
-                        builder.symbols(exe_path).build(bin_data)
-                    } else {
-                        builder.build(bin_data)
-                    };
-                    match exe {
-                        Ok(exe) => exe,
-                        Err(err) => {
-                            output.println(format!("err reading {}: {}", exe_path.display(), err));
-                            continue;
-                        }
-                    }
-                })
-            }
-            GameEntry::Process(GameProcessEntry { pid }) => {
-                output.println(format!("PID={pid}"));
+            for sig in &sigs {
+                let mut cells = vec![];
+                cells.push(Cell::new(&sig.to_string()));
 
-                (
-                    Cow::Owned(format!("PID={pid}")),
-                    patternsleuth::process::external::read_image_from_pid(*pid)?,
-                )
-            }
-        };
-
-        games.insert(name.to_string());
-
-        let scan = exe.scan(&patterns)?;
-
-        // group results by Sig
-        let folded_scans = scan
-            .results
-            .iter()
-            .map(|(config, m)| (&config.sig, (config, m)))
-            .fold(HashMap::new(), |mut map: HashMap<_, Vec<_>>, (k, v)| {
-                map.entry(k).or_default().push(v);
-                map
-            });
-
-        let mut table = Table::new();
-        table.set_titles(row!["sig", "offline scan"]);
-
-        for sig in &sigs {
-            let mut cells = vec![];
-            cells.push(Cell::new(&sig.to_string()));
-
-            if let Some(sig_scans) = folded_scans.get(&sig) {
-                if command.disassemble {
-                    let mut table = Table::new();
-                    table.set_format(*format::consts::FORMAT_NO_BORDER);
-                    for m in sig_scans.iter() {
-                        let mut cells = vec![];
-                        cells.push(Cell::new(&format!(
-                            "{}\n{}",
-                            m.0.name,
-                            disassemble::disassemble(
-                                &exe,
-                                m.1.address,
-                                m.0.scan.scan_type.get_pattern()
-                            )
-                        )));
-                        table.add_row(Row::new(cells));
-                    }
-                    cells.push(Cell::new(&table.to_string()));
-                } else if command.disassemble_merged {
-                    cells.push(Cell::new(
-                        {
-                            let cells = sig_scans
-                                .iter()
-                                .fold(
-                                    HashMap::<&Resolution, HashMap<&str, usize>>::new(),
-                                    |mut map, m| {
-                                        *map.entry(m.1)
-                                            .or_default()
-                                            .entry(&m.0.name)
-                                            .or_default() += 1;
-                                        map
-                                    },
+                if let Some(sig_scans) = folded_scans.get(&sig) {
+                    if command.disassemble {
+                        let mut table = Table::new();
+                        table.set_format(*format::consts::FORMAT_NO_BORDER);
+                        for m in sig_scans.iter() {
+                            let mut cells = vec![];
+                            cells.push(Cell::new(&format!(
+                                "{}\n{}",
+                                m.0.name,
+                                disassemble::disassemble(
+                                    exe,
+                                    m.1.address,
+                                    m.0.scan.scan_type.get_pattern()
                                 )
-                                .iter()
-                                // sort by pattern name, then match address
-                                .sorted_by_key(|&data| data.0)
-                                .map(|(m, counts)| {
-                                    let dis = disassemble::disassemble(&exe, m.address, None);
+                            )));
+                            table.add_row(Row::new(cells));
+                        }
+                        cells.push(Cell::new(&table.to_string()));
+                    } else if command.disassemble_merged {
+                        cells.push(Cell::new(
+                            {
+                                let cells = sig_scans
+                                    .iter()
+                                    .fold(
+                                        HashMap::<&Resolution, HashMap<&str, usize>>::new(),
+                                        |mut map, m| {
+                                            *map.entry(m.1)
+                                                .or_default()
+                                                .entry(&m.0.name)
+                                                .or_default() += 1;
+                                            map
+                                        },
+                                    )
+                                    .iter()
+                                    // sort by pattern name, then match address
+                                    .sorted_by_key(|&data| data.0)
+                                    .map(|(m, counts)| {
+                                        let dis = disassemble::disassemble(exe, m.address, None);
 
-                                    let mut lines = vec![];
-                                    for (name, count) in counts.iter().sorted_by_key(|e| e.0) {
+                                        let mut lines = vec![];
+                                        for (name, count) in counts.iter().sorted_by_key(|e| e.0) {
+                                            let count = if *count > 1 {
+                                                format!(" (x{count})")
+                                            } else {
+                                                "".to_string()
+                                            };
+
+                                            lines.push(
+                                                format!("{name:?}{count}").normal().to_string(),
+                                            );
+                                        }
+                                        lines.push(dis);
+
+                                        Cell::new(&join(lines, "\n"))
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                let mut table = Table::new();
+                                table.set_format(*format::consts::FORMAT_NO_BORDER);
+
+                                table.add_row(Row::new(cells));
+                                table.to_string()
+                            }
+                            .as_str(),
+                        ));
+                    } else {
+                        cells.push(Cell::new(
+                            {
+                                let mut lines = sig_scans
+                                    .iter()
+                                    // group and count matches by (pattern name, address)
+                                    .fold(
+                                        HashMap::<(&String, &Resolution), usize>::new(),
+                                        |mut map, m| {
+                                            *map.entry((&m.0.name, m.1)).or_default() += 1;
+                                            map
+                                        },
+                                    )
+                                    .iter()
+                                    // sort by pattern name, then match address
+                                    .sorted_by_key(|&data| data.0)
+                                    .map(|(m, count)| {
+                                        // add count indicator if more than 1
                                         let count = if *count > 1 {
                                             format!(" (x{count})")
                                         } else {
                                             "".to_string()
                                         };
 
-                                        lines.push(format!("{name:?}{count}").normal().to_string());
+                                        (
+                                            format!("{:016x} {:?}{}", m.1.address, m.0, count)
+                                                .normal()
+                                                .to_string(),
+                                            exe.symbols
+                                                .as_ref()
+                                                .and_then(|symbols| symbols.get(&m.1.address)),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>();
+                                let max_len = lines.iter().map(|(line, _)| line.len()).max();
+                                for (line, symbol) in &mut lines {
+                                    if let Some(symbol) = symbol {
+                                        line.push_str(&format!(
+                                            "{}{}",
+                                            " ".repeat(1 + max_len.unwrap() - line.len()),
+                                            symbol.name.bright_yellow()
+                                        ));
                                     }
-                                    lines.push(dis);
-
-                                    Cell::new(&join(lines, "\n"))
-                                })
-                                .collect::<Vec<_>>();
-
-                            let mut table = Table::new();
-                            table.set_format(*format::consts::FORMAT_NO_BORDER);
-
-                            table.add_row(Row::new(cells));
-                            table.to_string()
-                        }
-                        .as_str(),
-                    ));
-                } else {
-                    cells.push(Cell::new(
-                        {
-                            let mut lines = sig_scans
-                                .iter()
-                                // group and count matches by (pattern name, address)
-                                .fold(
-                                    HashMap::<(&String, &Resolution), usize>::new(),
-                                    |mut map, m| {
-                                        *map.entry((&m.0.name, m.1)).or_default() += 1;
-                                        map
-                                    },
-                                )
-                                .iter()
-                                // sort by pattern name, then match address
-                                .sorted_by_key(|&data| data.0)
-                                .map(|(m, count)| {
-                                    // add count indicator if more than 1
-                                    let count = if *count > 1 {
-                                        format!(" (x{count})")
-                                    } else {
-                                        "".to_string()
-                                    };
-
-                                    (
-                                        format!("{:016x} {:?}{}", m.1.address, m.0, count)
-                                            .normal()
-                                            .to_string(),
-                                        exe.symbols
-                                            .as_ref()
-                                            .and_then(|symbols| symbols.get(&m.1.address)),
-                                    )
-                                })
-                                .collect::<Vec<_>>();
-                            let max_len = lines.iter().map(|(line, _)| line.len()).max();
-                            for (line, symbol) in &mut lines {
-                                if let Some(symbol) = symbol {
-                                    line.push_str(&format!(
-                                        "{}{}",
-                                        " ".repeat(1 + max_len.unwrap() - line.len()),
-                                        symbol.name.bright_yellow()
-                                    ));
                                 }
+                                join(lines.iter().map(|(line, _)| line), "\n").to_string()
                             }
-                            join(lines.iter().map(|(line, _)| line), "\n").to_string()
-                        }
-                        .as_str(),
-                    ));
+                            .as_str(),
+                        ));
+                    }
+                } else {
+                    #[allow(clippy::unnecessary_to_owned)]
+                    cells.push(Cell::new(&"not found".red().to_string()));
                 }
-            } else {
-                #[allow(clippy::unnecessary_to_owned)]
-                cells.push(Cell::new(&"not found".red().to_string()));
+
+                table.add_row(Row::new(cells));
             }
 
-            table.add_row(Row::new(cells));
-        }
+            let game_name = game.name().into_owned();
 
-        let game_name = match game {
-            GameEntry::File(GameFileEntry { name, .. }) => name.clone(),
-            GameEntry::Process(GameProcessEntry { pid }) => format!("pid={pid}"),
-        };
+            let resolution = tracing::info_span!("scan", game = game_name)
+                .in_scope(|| exe.resolve_many(&dyn_resolvers));
 
-        let resolution = tracing::info_span!("scan", game = game_name)
-            .in_scope(|| exe.resolve_many(&dyn_resolvers));
+            for (resolver, resolution) in resolvers.iter().zip(&resolution) {
+                table.add_row(Row::new(
+                    [
+                        Cell::new(resolver.name),
+                        match resolution {
+                            Ok(res) => Cell::new(&format!("{res:#x?}")),
+                            Err(err) =>
+                            {
+                                #[allow(clippy::unnecessary_to_owned)]
+                                Cell::new(&format!("{err:x?}").red().to_string())
+                            }
+                        },
+                    ]
+                    .to_vec(),
+                ));
+            }
 
-        for (resolver, resolution) in resolvers.iter().zip(&resolution) {
-            table.add_row(Row::new(
-                [
-                    Cell::new(resolver.name),
-                    match resolution {
-                        Ok(res) => Cell::new(&format!("{res:#x?}")),
-                        Err(err) =>
-                        {
-                            #[allow(clippy::unnecessary_to_owned)]
-                            Cell::new(&format!("{err:x?}").red().to_string())
-                        }
-                    },
-                ]
-                .to_vec(),
-            ));
-        }
+            Ok((table.to_string(), resolution, scan.results))
+        },
+        |game, result| {
+            // one game reported at a time, so its lines stay together
+            let mut games = games.lock().unwrap();
 
-        if !resolution.is_empty() {
-            all_resolutions.insert(name.to_string(), resolution);
-        }
+            output.println(game.header());
 
-        output.println(table.to_string());
+            let (table, resolution, results) = match result {
+                Ok(result) => result,
+                Err(err) => {
+                    output.println(format!("err reading {}: {err}", game.source()));
+                    if let Some(progress) = &progress {
+                        progress.inc(1);
+                    }
+                    return Ok(());
+                }
+            };
 
-        // fold current game scans into summary scans
-        scan.results.into_iter().fold(&mut all, |map, m| {
-            map.entry((name.to_string(), (&m.0.sig, &m.0.name)))
-                .or_default()
-                .push(m.1);
-            map
-        });
-    }
+            let name = game.name();
+            games.insert(name.to_string());
+
+            if !resolution.is_empty() {
+                all_resolutions
+                    .lock()
+                    .unwrap()
+                    .insert(name.to_string(), resolution);
+            }
+
+            output.println(table);
+
+            // fold current game scans into summary scans
+            results
+                .into_iter()
+                .fold(&mut *all.lock().unwrap(), |map, m| {
+                    map.entry((name.to_string(), (&m.0.sig, &m.0.name)))
+                        .or_default()
+                        .push(m.1);
+                    map
+                });
+
+            if let Some(progress) = &progress {
+                progress.inc(1);
+            }
+            Ok(())
+        },
+    )?;
+
+    let games = games.into_inner().unwrap();
+    let all = all.into_inner().unwrap();
+    let all_resolutions = all_resolutions.into_inner().unwrap();
 
     // force any progress output to be dropped
     let output = Output::Stdout;
@@ -680,15 +745,6 @@ fn scan(command: CommandScan) -> Result<()> {
 }
 
 fn report(command: CommandReport) -> Result<()> {
-    use rayon::prelude::*;
-
-    fn load_game(path: impl AsRef<Path>, data: &mut Vec<u8>) -> Result<Image<'_>> {
-        use std::io::Read;
-        data.clear();
-        fs::File::open(path)?.read_to_end(data)?;
-        Image::builder().build(data)
-    }
-
     let resolvers = command
         .resolver
         .iter()
@@ -699,38 +755,41 @@ fn report(command: CommandReport) -> Result<()> {
         "[year]-[month]-[day]_[hour]-[minute]-[second]"
     ))?;
 
-    let games = get_games(command.game)?;
+    let games = get_games(command.game)?
+        .into_iter()
+        .map(GameEntry::File)
+        .collect::<Vec<_>>();
 
-    let results = std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+    let results = std::sync::Mutex::new(BTreeMap::new());
 
     let progress = ProgressBar::new(games.len() as u64);
-    games.into_par_iter().try_for_each(|game| -> Result<()> {
-        progress.println(format!("{:?} {:?}", game.name, game.exe_path.display()));
-
-        let mut data = vec![];
-        let exe = match load_game(&game.exe_path, &mut data) {
-            Ok(exe) => exe,
-            Err(err) => {
-                progress.println(format!("err reading {}: {}", game.exe_path.display(), err));
-                progress.inc(1);
-                return Ok(());
+    run_games(
+        &games,
+        LoadOptions {
+            functions: false,
+            symbols: false,
+        },
+        |_game, exe| Ok(exe.resolve_many(&resolvers)),
+        |game, resolution| {
+            progress.println(game.header());
+            match resolution {
+                Ok(resolution) => {
+                    results.lock().unwrap().insert(
+                        game.name().into_owned(),
+                        command
+                            .resolver
+                            .iter()
+                            .zip(resolution)
+                            .map(|(resolver, resolution)| (resolver.name, resolution))
+                            .collect::<BTreeMap<_, _>>(),
+                    );
+                }
+                Err(err) => progress.println(format!("err reading {}: {err}", game.source())),
             }
-        };
-
-        let resolution = exe.resolve_many(&resolvers);
-
-        let map = command
-            .resolver
-            .iter()
-            .zip(resolution)
-            .map(|(resolver, resolution)| (resolver.name, resolution))
-            .collect::<BTreeMap<_, _>>();
-        results.lock().unwrap().insert(game.name, map);
-
-        progress.inc(1);
-
-        Ok(())
-    })?;
+            progress.inc(1);
+            Ok(())
+        },
+    )?;
 
     fs::create_dir_all("reports")?;
     fs::write(
@@ -744,13 +803,7 @@ fn report(command: CommandReport) -> Result<()> {
                 .map(|_| "-dirty")
                 .unwrap_or_default(),
         ),
-        serde_json::to_vec(
-            &std::sync::Arc::try_unwrap(results)
-                .unwrap()
-                .into_inner()
-                .unwrap(),
-        )
-        .unwrap(),
+        serde_json::to_vec(&results.into_inner().unwrap()).unwrap(),
     )?;
 
     Ok(())
@@ -975,6 +1028,31 @@ struct GameFileEntry {
 
 struct GameProcessEntry {
     pid: i32,
+}
+
+impl GameEntry {
+    fn name(&self) -> Cow<'_, str> {
+        match self {
+            GameEntry::File(GameFileEntry { name, .. }) => Cow::Borrowed(name),
+            GameEntry::Process(GameProcessEntry { pid }) => Cow::Owned(format!("PID={pid}")),
+        }
+    }
+    /// Where the image was read from, as errors report it.
+    fn source(&self) -> String {
+        match self {
+            GameEntry::File(GameFileEntry { exe_path, .. }) => exe_path.display().to_string(),
+            GameEntry::Process(GameProcessEntry { pid }) => format!("PID={pid}"),
+        }
+    }
+    /// The line printed before a game's results.
+    fn header(&self) -> String {
+        match self {
+            GameEntry::File(GameFileEntry { name, exe_path }) => {
+                format!("{:?} {:?}", name, exe_path.display())
+            }
+            GameEntry::Process(GameProcessEntry { pid }) => format!("PID={pid}"),
+        }
+    }
 }
 
 fn get_games(filter: impl AsRef<[String]>) -> Result<Vec<GameFileEntry>> {
