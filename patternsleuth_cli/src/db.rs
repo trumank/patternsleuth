@@ -136,10 +136,7 @@ pub(crate) fn auto_gen(_command: CommandAutoGen) -> Result<()> {
         let row = row?;
         dbg!(&row);
         let patterns = generate_patterns_for_symbol(&row.symbol)?;
-        pattern_map
-            .entry(row.symbol)
-            .or_default()
-            .extend(patterns.into_iter());
+        pattern_map.entry(row.symbol).or_default().extend(patterns);
     }
     println!("testing {} symbols", pattern_map.len());
 

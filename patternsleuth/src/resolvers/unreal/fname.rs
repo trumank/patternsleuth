@@ -62,8 +62,8 @@ impl_resolver_singleton!(ElfImage, FNameCtorWchar, |ctx| async {
     let fns = fns
         .into_iter()
         .reduce(|x, y| {
-            let x: HashSet<u64> = HashSet::from_iter(x.into_iter());
-            let y: HashSet<u64> = HashSet::from_iter(y.into_iter());
+            let x: HashSet<u64> = HashSet::from_iter(x);
+            let y: HashSet<u64> = HashSet::from_iter(y);
             x.intersection(&y).cloned().collect::<Vec<_>>()
         })
         .unwrap();

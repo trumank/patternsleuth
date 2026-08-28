@@ -48,7 +48,7 @@ impl_resolver_singleton!(PEImage, FEngineLoopTick, |ctx| async {
         common.retain(|f| r.contains(f));
     }
 
-    Ok(Self(ensure_one(common.into_iter())?))
+    Ok(Self(ensure_one(candidates)?))
 });
 impl_resolver_singleton!(ElfImage, FEngineLoopTick, |_ctx| async {
     crate::resolvers::bail_out!("ElfImage unimplemented");

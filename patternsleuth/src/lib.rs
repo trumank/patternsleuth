@@ -619,10 +619,8 @@ pub mod disassemble {
                 FlowControl::ConditionalBranch => {
                     ctx.queue.push(ctx.instruction.near_branch_target());
                 }
-                FlowControl::Return => {
-                    if !ctx.pop()? {
-                        break;
-                    }
+                FlowControl::Return if !ctx.pop()? => {
+                    break;
                 }
                 //FlowControl::Call => todo!(),
                 //FlowControl::IndirectCall => todo!(),
