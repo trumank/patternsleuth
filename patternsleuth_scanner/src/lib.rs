@@ -292,10 +292,7 @@ impl std::fmt::Debug for Pattern {
 #[derive(Debug, Clone, Copy, Hash, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Xref(pub usize);
 
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    fmt::Display,
-};
+use std::{collections::BTreeMap, fmt::Display};
 
 #[derive(Debug, Eq, PartialEq)]
 struct PatternPair<'p> {
@@ -588,6 +585,100 @@ fn group_patterns<'p>(
     pattern_pairs.into_iter().flatten().collect()
 }
 
+/// The bins for one anchor byte, ready to dispatch a candidate to without
+/// hashing anything.
+#[derive(Debug)]
+struct Anchor<'p> {
+    byte: u8,
+    /// Patterns with nothing fixed after the anchor, so every candidate reaches
+    /// them.
+    unfiltered: Option<Bin<'p>>,
+    /// Patterns with a fixed byte after the anchor, selected by it.
+    by_next: Option<ByNext<'p>>,
+}
+
+/// Bins selected by the byte following the anchor.
+///
+/// The anchor already pins the first byte, so one more byte is all that is left
+/// to key on and it can be indexed directly.
+#[derive(Debug)]
+struct ByNext<'p> {
+    /// one-based index into `bins`, zero meaning no patterns for that byte
+    index: [u16; 256],
+    bins: Vec<Bin<'p>>,
+}
+
+impl<'p> ByNext<'p> {
+    fn new(bins: BTreeMap<u8, Vec<(usize, &'p PatternPair<'p>)>>) -> Self {
+        let mut index = [0; 256];
+        let bins = bins
+            .into_iter()
+            .enumerate()
+            .map(|(i, (next, patterns))| {
+                index[next as usize] = i as u16 + 1;
+                Bin::new(patterns)
+            })
+            .collect();
+        Self { index, bins }
+    }
+    #[inline(always)]
+    fn get(&self, next: u8) -> Option<&Bin<'p>> {
+        match self.index[next as usize] {
+            0 => None,
+            i => Some(&self.bins[i as usize - 1]),
+        }
+    }
+}
+
+impl<'p> Anchor<'p> {
+    fn all(pattern_pairs: &'p [PatternPair<'p>]) -> Vec<Self> {
+        type Patterns<'p> = Vec<(usize, &'p PatternPair<'p>)>;
+
+        let mut by_anchor: BTreeMap<u8, (Patterns, BTreeMap<u8, Patterns>)> = Default::default();
+        for (pattern_index, pair) in pattern_pairs.iter().enumerate() {
+            let p = &pair.partial;
+            let (unfiltered, by_next) = by_anchor.entry(p.sig[0]).or_default();
+            match p.mask.get(1) {
+                Some(0xff) => by_next.entry(p.sig[1]).or_default(),
+                _ => unfiltered,
+            }
+            .push((pattern_index, pair));
+        }
+
+        by_anchor
+            .into_iter()
+            .map(|(byte, (unfiltered, by_next))| Anchor {
+                byte,
+                unfiltered: (!unfiltered.is_empty()).then(|| Bin::new(unfiltered)),
+                by_next: (!by_next.is_empty()).then(|| ByNext::new(by_next)),
+            })
+            .collect()
+    }
+
+    /// Check the candidate anchor byte at `offset`.
+    ///
+    /// Reads one byte past the anchor, which is in bounds because a pattern only
+    /// lands in `by_next` if it is at least that long, and the caller has trimmed
+    /// the data to fit the longest pattern.
+    #[inline(always)]
+    fn add_matches(
+        &self,
+        data: &[u8],
+        base_address: usize,
+        offset: usize,
+        matches: &mut Vec<(usize, usize)>,
+    ) {
+        if let Some(bin) = &self.unfiltered {
+            bin.add_matches(data, base_address, offset, matches)
+        }
+        if let Some(by_next) = &self.by_next
+            && let Some(bin) = by_next.get(data[offset + 1])
+        {
+            bin.add_matches(data, base_address, offset, matches)
+        }
+    }
+}
+
 /// Split `len` bytes into chunks to scan in parallel.
 ///
 /// Candidates are not spread evenly across a section, so handing each thread a
@@ -609,41 +700,8 @@ pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> 
         return result_bins;
     }
 
-    const WIDE1: usize = 2;
-    const WIDE2: usize = 4;
-
     let pattern_pairs = group_patterns(patterns, &sample_histogram(data), data.len());
-
-    let mut all_bins = HashSet::new();
-    let mut short_bins: HashMap<u8, Vec<_>> = Default::default();
-    let mut wide1_bins: HashMap<[u8; WIDE1], Vec<_>> = Default::default();
-    let mut wide2_bins: HashMap<[u8; WIDE2], Vec<_>> = Default::default();
-    for (pi, pair) in pattern_pairs.iter().enumerate() {
-        let p = &pair.partial;
-
-        all_bins.insert(p.sig[0]);
-        if p.mask.iter().take(WIDE2).filter(|m| **m == 0xff).count() == WIDE2 {
-            let mut buf = [0; WIDE2];
-            buf.copy_from_slice(&p.sig[0..WIDE2]);
-            wide2_bins.entry(buf).or_default().push((pi, pair));
-        } else if p.mask.iter().take(WIDE1).filter(|m| **m == 0xff).count() == WIDE1 {
-            let mut buf = [0; WIDE1];
-            buf.copy_from_slice(&p.sig[0..WIDE1]);
-            wide1_bins.entry(buf).or_default().push((pi, pair));
-        } else {
-            short_bins.entry(p.sig[0]).or_default().push((pi, pair));
-        }
-    }
-    let all_bins = Vec::from_iter(all_bins);
-
-    fn into_bins<'p, K: std::hash::Hash + Eq>(
-        bins: HashMap<K, Vec<(usize, &'p PatternPair<'p>)>>,
-    ) -> HashMap<K, Bin<'p>> {
-        bins.into_iter().map(|(k, v)| (k, Bin::new(v))).collect()
-    }
-    let short_bins = into_bins(short_bins);
-    let wide1_bins = into_bins(wide1_bins);
-    let wide2_bins = into_bins(wide2_bins);
+    let anchors = Anchor::all(&pattern_pairs);
 
     let max = patterns.iter().map(|p| p.simple.len()).max().unwrap();
 
@@ -662,26 +720,9 @@ pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> 
                 let mut matches = vec![];
                 let offset = index * chunk_size;
 
-                for first in &all_bins {
-                    for i in memchr::memchr_iter(*first, chunk) {
-                        let j = offset + i;
-                        if let Some(bin) = short_bins.get(first) {
-                            bin.add_matches(data, base_address, j, &mut matches)
-                        }
-                        if !wide2_bins.is_empty() {
-                            let mut buf = [0; WIDE2];
-                            buf.copy_from_slice(&data[j..j + WIDE2]);
-                            if let Some(bin) = wide2_bins.get(&buf) {
-                                bin.add_matches(data, base_address, j, &mut matches)
-                            }
-                        }
-                        if !wide1_bins.is_empty() {
-                            let mut buf = [0; WIDE1];
-                            buf.copy_from_slice(&data[j..j + WIDE1]);
-                            if let Some(bin) = wide1_bins.get(&buf) {
-                                bin.add_matches(data, base_address, j, &mut matches)
-                            }
-                        }
+                for anchor in &anchors {
+                    for i in memchr::memchr_iter(anchor.byte, chunk) {
+                        anchor.add_matches(data, base_address, offset + i, &mut matches)
                     }
                 }
                 matches
