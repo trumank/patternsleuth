@@ -1,11 +1,11 @@
 use std::fmt::Debug;
 
-use futures::{future::join_all, try_join};
+use futures::{future::join_all, join, try_join};
 
 use patternsleuth_scanner::Pattern;
 
 use crate::{
-    MemoryTrait,
+    Addressable, MemoryTrait,
     resolvers::{Result, ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util},
 };
 
@@ -22,7 +22,6 @@ impl_resolver_singleton!(all, GUObjectArray, |ctx| async {
         "75 ?? 48 ?? ?? 48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 45 33 C9 4C 89 74 24",
         "45 84 c0 48 c7 41 10 00 00 00 00 b8 ff ff ff ff 4c 8d 1d | ?? ?? ?? ?? 89 41 08 4c 8b d1 4c 89 19 0f 45 05 ?? ?? ?? ?? ff c0 89 41 08 3b 05",
         "81 ce 00 00 00 02 83 e0 fb 89 47 08 48 8d 0d | ?? ?? ?? ?? 48 89 fa 45 31 c0 e8 ?? ?? ?? ??",
-        "8B 05 ?? ?? ?? ?? 2B 05 ?? ?? ?? ?? 2B 05 | ?? ?? ?? ??",
         "E8 ?? ?? ?? ?? 8B 05 ?? ?? ?? ?? 8B 0D ?? ?? ?? ?? 03 0D | ?? ?? ?? ?? 29 C8 87 05",
     ];
     // mov imm32 pattern for linux
@@ -57,17 +56,58 @@ impl_resolver_singleton!(all, GUObjectArray, |ctx| async {
          */
         "8b 6f ?? 4c 89 f7 31 f6 e8 ?? ?? ?? ?? 41 39 ef 7e 0d bf | ?? ?? ?? ?? 48 89 de e8",
     ];
-    let res0 = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
-    let res1 = join_all(patterns1.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
+    // `ObjObjects.Num() - ObjFirstGCIndex - <available count>` inlined into a stat update.
+    // order and spacing depends on version so capture all three and match against known spacings
+    let num_minus_available =
+        Pattern::new("8B 05 [ ?? ?? ?? ?? ] 2B 05 [ ?? ?? ?? ?? ] 2B 05 [ ?? ?? ?? ?? ]").unwrap();
+
+    let (res0, res1, res2) = join!(
+        join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))),
+        join_all(patterns1.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))),
+        ctx.scan_tagged((), num_minus_available),
+    );
+
     let res1 = res1
         .iter()
         .flatten()
         .map(|a| -> Result<_> { Ok(ctx.image().memory.u32_le(*a)? as u64) });
+
+    let res2 = res2
+        .2
+        .iter()
+        .map(|a| -> Result<_> {
+            let Some(caps) = ctx.image().memory.captures(&res2.1, *a)? else {
+                return Ok(None);
+            };
+            let mut operands = [caps[0].rip(), caps[1].rip(), caps[2].rip()];
+            operands.sort_unstable();
+            Ok(base_from_operands(operands))
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .map(Ok);
+
+    /// Given the three ascending operand addresses, return the `FUObjectArray` base they belong to
+    fn base_from_operands(operands: [u64; 3]) -> Option<u64> {
+        [[0x00, 0x24, 0x60], [0x00, 0x24, 0x68], [0x08, 0x20, 0x68]]
+            .iter()
+            .find_map(|layout| {
+                let base = operands[0].checked_sub(layout[0])?;
+                layout
+                    .iter()
+                    .zip(operands)
+                    .all(|(offset, operand)| base + offset == operand)
+                    .then_some(base)
+            })
+    }
+
     Ok(Self(try_ensure_one(
         res0.iter()
             .flatten()
             .map(|a| -> Result<_> { Ok(ctx.image().memory.rip4(*a)?) })
-            .chain(res1),
+            .chain(res1)
+            .chain(res2),
     )?))
 });
 
