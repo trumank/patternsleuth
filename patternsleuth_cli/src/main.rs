@@ -1,5 +1,6 @@
 mod db;
 mod disassemble;
+mod output;
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -349,6 +350,15 @@ fn scan(command: CommandScan) -> Result<()> {
         .map(|p| p.sig.clone())
         .collect::<HashSet<_>>();
 
+    // every game reports the same rows, so the columns can be sized once
+    let value_width = output::value_width(
+        sigs.iter()
+            .map(|sig| sig.to_string().len())
+            .chain(resolvers.iter().map(|res| res.name.len()))
+            .max()
+            .unwrap_or(0),
+    );
+
     let games: std::sync::Mutex<HashSet<String>> = Default::default();
 
     /// every match, keyed by game and by the pattern that found it
@@ -358,7 +368,7 @@ fn scan(command: CommandScan) -> Result<()> {
 
     use colored::Colorize;
     use itertools::join;
-    use prettytable::{Cell, Row, Table, format, row};
+    use prettytable::{Cell, Row, Table, format};
 
     enum Output {
         Stdout,
@@ -420,14 +430,10 @@ fn scan(command: CommandScan) -> Result<()> {
                     map
                 });
 
-            let mut table = Table::new();
-            table.set_titles(row!["sig", "offline scan"]);
+            let mut rows: Vec<(String, String)> = vec![];
 
             for sig in &sigs {
-                let mut cells = vec![];
-                cells.push(Cell::new(&sig.to_string()));
-
-                if let Some(sig_scans) = folded_scans.get(&sig) {
+                let value = if let Some(sig_scans) = folded_scans.get(&sig) {
                     if command.disassemble {
                         let mut table = Table::new();
                         table.set_format(*format::consts::FORMAT_NO_BORDER);
@@ -444,109 +450,94 @@ fn scan(command: CommandScan) -> Result<()> {
                             )));
                             table.add_row(Row::new(cells));
                         }
-                        cells.push(Cell::new(&table.to_string()));
+                        table.to_string()
                     } else if command.disassemble_merged {
-                        cells.push(Cell::new(
-                            {
-                                let cells = sig_scans
-                                    .iter()
-                                    .fold(
-                                        HashMap::<&Resolution, HashMap<&str, usize>>::new(),
-                                        |mut map, m| {
-                                            *map.entry(m.1)
-                                                .or_default()
-                                                .entry(&m.0.name)
-                                                .or_default() += 1;
-                                            map
-                                        },
-                                    )
-                                    .iter()
-                                    // sort by pattern name, then match address
-                                    .sorted_by_key(|&data| data.0)
-                                    .map(|(m, counts)| {
-                                        let dis = disassemble::disassemble(exe, m.address, None);
+                        let cells = sig_scans
+                            .iter()
+                            .fold(
+                                HashMap::<&Resolution, HashMap<&str, usize>>::new(),
+                                |mut map, m| {
+                                    *map.entry(m.1).or_default().entry(&m.0.name).or_default() += 1;
+                                    map
+                                },
+                            )
+                            .iter()
+                            // sort by pattern name, then match address
+                            .sorted_by_key(|&data| data.0)
+                            .map(|(m, counts)| {
+                                let dis = disassemble::disassemble(exe, m.address, None);
 
-                                        let mut lines = vec![];
-                                        for (name, count) in counts.iter().sorted_by_key(|e| e.0) {
-                                            let count = if *count > 1 {
-                                                format!(" (x{count})")
-                                            } else {
-                                                "".to_string()
-                                            };
+                                let mut lines = vec![];
+                                for (name, count) in counts.iter().sorted_by_key(|e| e.0) {
+                                    let count = if *count > 1 {
+                                        format!(" (x{count})")
+                                    } else {
+                                        "".to_string()
+                                    };
 
-                                            lines.push(
-                                                format!("{name:?}{count}").normal().to_string(),
-                                            );
-                                        }
-                                        lines.push(dis);
-
-                                        Cell::new(&join(lines, "\n"))
-                                    })
-                                    .collect::<Vec<_>>();
-
-                                let mut table = Table::new();
-                                table.set_format(*format::consts::FORMAT_NO_BORDER);
-
-                                table.add_row(Row::new(cells));
-                                table.to_string()
-                            }
-                            .as_str(),
-                        ));
-                    } else {
-                        cells.push(Cell::new(
-                            {
-                                let mut lines = sig_scans
-                                    .iter()
-                                    // group and count matches by (pattern name, address)
-                                    .fold(
-                                        HashMap::<(&String, &Resolution), usize>::new(),
-                                        |mut map, m| {
-                                            *map.entry((&m.0.name, m.1)).or_default() += 1;
-                                            map
-                                        },
-                                    )
-                                    .iter()
-                                    // sort by pattern name, then match address
-                                    .sorted_by_key(|&data| data.0)
-                                    .map(|(m, count)| {
-                                        // add count indicator if more than 1
-                                        let count = if *count > 1 {
-                                            format!(" (x{count})")
-                                        } else {
-                                            "".to_string()
-                                        };
-
-                                        (
-                                            format!("{:016x} {:?}{}", m.1.address, m.0, count)
-                                                .normal()
-                                                .to_string(),
-                                            exe.symbols
-                                                .as_ref()
-                                                .and_then(|symbols| symbols.get(&m.1.address)),
-                                        )
-                                    })
-                                    .collect::<Vec<_>>();
-                                let max_len = lines.iter().map(|(line, _)| line.len()).max();
-                                for (line, symbol) in &mut lines {
-                                    if let Some(symbol) = symbol {
-                                        line.push_str(&format!(
-                                            "{}{}",
-                                            " ".repeat(1 + max_len.unwrap() - line.len()),
-                                            symbol.name.bright_yellow()
-                                        ));
-                                    }
+                                    lines.push(format!("{name:?}{count}").normal().to_string());
                                 }
-                                join(lines.iter().map(|(line, _)| line), "\n").to_string()
+                                lines.push(dis);
+
+                                Cell::new(&join(lines, "\n"))
+                            })
+                            .collect::<Vec<_>>();
+
+                        let mut table = Table::new();
+                        table.set_format(*format::consts::FORMAT_NO_BORDER);
+
+                        table.add_row(Row::new(cells));
+                        table.to_string()
+                    } else {
+                        let mut lines = sig_scans
+                            .iter()
+                            // group and count matches by (pattern name, address)
+                            .fold(
+                                HashMap::<(&String, &Resolution), usize>::new(),
+                                |mut map, m| {
+                                    *map.entry((&m.0.name, m.1)).or_default() += 1;
+                                    map
+                                },
+                            )
+                            .iter()
+                            // sort by pattern name, then match address
+                            .sorted_by_key(|&data| data.0)
+                            .map(|(m, count)| {
+                                // add count indicator if more than 1
+                                let count = if *count > 1 {
+                                    format!(" (x{count})")
+                                } else {
+                                    "".to_string()
+                                };
+
+                                (
+                                    format!("{:016x} {:?}{}", m.1.address, m.0, count)
+                                        .normal()
+                                        .to_string(),
+                                    exe.symbols
+                                        .as_ref()
+                                        .and_then(|symbols| symbols.get(&m.1.address)),
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        let max_len = lines.iter().map(|(line, _)| line.len()).max();
+                        for (line, symbol) in &mut lines {
+                            if let Some(symbol) = symbol {
+                                line.push_str(&format!(
+                                    "{}{}",
+                                    " ".repeat(1 + max_len.unwrap() - line.len()),
+                                    symbol.name.bright_yellow()
+                                ));
                             }
-                            .as_str(),
-                        ));
+                        }
+                        join(lines.iter().map(|(line, _)| line), "\n").to_string()
                     }
                 } else {
                     #[allow(clippy::unnecessary_to_owned)]
-                    cells.push(Cell::new(&"not found".red().to_string()));
-                }
+                    "not found".red().to_string()
+                };
 
-                table.add_row(Row::new(cells));
+                rows.push((sig.to_string(), value));
             }
 
             let game_name = game.name().into_owned();
@@ -555,34 +546,31 @@ fn scan(command: CommandScan) -> Result<()> {
                 .in_scope(|| exe.resolve_many(&dyn_resolvers));
 
             for (resolver, resolution) in resolvers.iter().zip(&resolution) {
-                table.add_row(Row::new(
-                    [
-                        Cell::new(resolver.name),
-                        match resolution {
-                            Ok(res) => Cell::new(&format!("{res:#x?}")),
-                            Err(err) =>
-                            {
-                                #[allow(clippy::unnecessary_to_owned)]
-                                Cell::new(&format!("{err:x?}").red().to_string())
-                            }
-                        },
-                    ]
-                    .to_vec(),
+                rows.push((
+                    resolver.name.to_owned(),
+                    match resolution {
+                        Ok(res) => output::resolution(resolver.name, res, value_width),
+                        Err(err) => output::error(resolver.name, err).red().to_string(),
+                    },
                 ));
             }
 
-            Ok((table.to_string(), resolution, scan.results))
+            let table = output::columns(rows.iter().map(|(n, v)| (n.as_str(), v.as_str())));
+
+            Ok((table, resolution, scan.results))
         },
         |game, result| {
             // one game reported at a time, so its lines stay together
             let mut games = games.lock().unwrap();
 
-            output.println(game.header());
-
             let (table, resolution, results) = match result {
                 Ok(result) => result,
                 Err(err) => {
-                    output.println(format!("err reading {}: {err}", game.source()));
+                    output.println(format!(
+                        "{}\n  err reading {}: {err}\n",
+                        game.header(),
+                        game.source()
+                    ));
                     if let Some(progress) = &progress {
                         progress.inc(1);
                     }
@@ -600,7 +588,7 @@ fn scan(command: CommandScan) -> Result<()> {
                     .insert(name.to_string(), resolution);
             }
 
-            output.println(table);
+            output.println(format!("{}\n{table}\n", game.header()));
 
             // fold current game scans into summary scans
             results
@@ -702,12 +690,15 @@ fn scan(command: CommandScan) -> Result<()> {
             row.extend(cell_strs.iter().map(|s| Cell::new(s)));
 
             if let Some(res) = all_resolutions.get(game) {
-                for res in res {
+                for (resolver, res) in resolvers.iter().zip(res) {
                     match res {
-                        Ok(res) => row.push(Cell::new(&format!("{res:x?}"))),
+                        Ok(res) => {
+                            row.push(Cell::new(&output::resolution_flat(resolver.name, res)))
+                        }
                         Err(err) => {
-                            #[allow(clippy::unnecessary_to_owned)]
-                            row.push(Cell::new(&format!("{err:x?}").red().to_string()));
+                            row.push(Cell::new(
+                                &output::error(resolver.name, err).red().to_string(),
+                            ));
                         }
                     }
                 }
@@ -1046,11 +1037,16 @@ impl GameEntry {
     }
     /// The line printed before a game's results.
     fn header(&self) -> String {
+        use colored::Colorize;
         match self {
             GameEntry::File(GameFileEntry { name, exe_path }) => {
-                format!("{:?} {:?}", name, exe_path.display())
+                format!(
+                    "{} {}",
+                    name.bold(),
+                    exe_path.display().to_string().dimmed()
+                )
             }
-            GameEntry::Process(GameProcessEntry { pid }) => format!("PID={pid}"),
+            GameEntry::Process(GameProcessEntry { pid }) => format!("PID={pid}").bold().to_string(),
         }
     }
 }

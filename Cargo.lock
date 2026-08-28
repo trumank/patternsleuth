@@ -2706,6 +2706,7 @@ dependencies = [
  "anyhow",
  "clap",
  "colored",
+ "console",
  "crossbeam",
  "globset",
  "iced-x86",

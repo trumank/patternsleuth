@@ -26,6 +26,7 @@ prettytable-rs = { workspace = true }
 rayon.workspace = true
 regex = { workspace = true }
 strum = { workspace = true }
+console = "0.15.7"
 indicatif = { version = "0.17.7", features = ["rayon"] }
 rusqlite = { version = "0.30.0", features = ["bundled"] }
 crossbeam = "0.8.4"
