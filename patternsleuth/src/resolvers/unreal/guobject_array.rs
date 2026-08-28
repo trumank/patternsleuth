@@ -79,11 +79,11 @@ impl_resolver_singleton!(all, GUObjectArray, |ctx| async {
 )]
 pub struct FUObjectArrayAllocateUObjectIndex(pub u64);
 impl_resolver_singleton!(all, FUObjectArrayAllocateUObjectIndex, |ctx| async {
-    let strings = ctx
-        .scan(util::utf16_pattern(
-            "Unable to add more objects to disregard for GC pool (Max: %d)\0",
-        ))
-        .await;
+    let strings = util::string_pattern(
+        ctx,
+        "Unable to add more objects to disregard for GC pool (Max: %d)\0",
+    )
+    .await;
     let refs = util::scan_xrefs(ctx, &strings).await;
     let fns = util::root_functions(ctx, &refs)?;
     Ok(Self(ensure_one(fns)?))
@@ -105,7 +105,7 @@ impl_resolver_singleton!(all, FUObjectArrayFreeUObjectIndex, |ctx| async {
         let strings = join_all(
             search_strings
                 .into_iter()
-                .map(|s| ctx.scan(util::utf16_pattern(s))),
+                .map(|s| util::string_pattern(ctx, s)),
         )
         .await
         .into_iter()
@@ -142,22 +142,22 @@ pub struct UObjectBaseShutdown(pub u64);
 impl_resolver_singleton!(collect, UObjectBaseShutdown);
 
 impl_resolver_singleton!(PEImage, UObjectBaseShutdown, |ctx| async {
-    let strings = ctx
-        .scan(util::utf16_pattern(
-                "All UObject delete listeners should be unregistered when shutting down the UObject array\0"
-        ))
-        .await;
+    let strings = util::string_pattern(
+        ctx,
+        "All UObject delete listeners should be unregistered when shutting down the UObject array\0",
+    )
+    .await;
     let refs = util::scan_xrefs(ctx, &strings).await;
     let fns = util::root_functions(ctx, &refs)?;
     Ok(UObjectBaseShutdown(ensure_one(fns)?))
 });
 
 impl_resolver_singleton!(ElfImage, UObjectBaseShutdown, |ctx| async {
-    let strings = ctx
-        .scan(util::utf16_pattern(
-                "All UObject delete listeners should be unregistered when shutting down the UObject array\0"
-        ))
-        .await;
+    let strings = util::string_pattern(
+        ctx,
+        "All UObject delete listeners should be unregistered when shutting down the UObject array\0",
+    )
+    .await;
     let refs = util::scan_xrefs(ctx, &strings).await;
     let fns = util::root_functions(ctx, &refs)?;
     let fns = {

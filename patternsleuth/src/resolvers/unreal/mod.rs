@@ -51,6 +51,12 @@ pub mod util {
     pub fn utf16_pattern(string: &str) -> Pattern {
         Pattern::from_bytes(utf16(string)).unwrap()
     }
+    pub async fn string_pattern(ctx: &AsyncContext<'_>, string: &str) -> Vec<u64> {
+        join_all([utf16_pattern(string), utf8_pattern(string)].map(|p| ctx.scan(p)))
+            .await
+            .concat()
+    }
+
     pub async fn scan_xrefs(
         ctx: &AsyncContext<'_>,
         addresses: impl IntoIterator<Item = &u64> + Copy,
