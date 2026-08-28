@@ -6,7 +6,7 @@ use patternsleuth_scanner::Pattern;
 
 use crate::resolvers::ResolveError;
 use crate::{
-    MemoryTrait,
+    Addressable, MemoryTrait,
     resolvers::{Result, ensure_one, impl_resolver_singleton, try_ensure_one, unreal::util},
 };
 
@@ -121,6 +121,17 @@ impl_resolver_singleton!(PEImage, FNameCtorWchar, |ctx| async {
     use futures::join;
     use iced_x86::{Code, Decoder, DecoderOptions};
 
+    // FName(wchar_t const*, EFindName) prologue
+    let ctor = async {
+        join_all([
+            "48 89 5C 24 08 57 48 83 EC 30 48 8B D9 41 8B F8 33 C9 4C 8B DA 44 8B D1 4C 8B CA 48 85 D2 74 ?? 0F B7 02 66 85 C0",
+            "48 89 5C 24 08 57 48 83 EC 30 48 8B D9 48 89 54 24 20 33 C9 41 8B F8 4C 8B D2 44 8B C9 48 85 D2 74 ?? 0F B7 02 66 85 C0",
+        ].map(|p| ctx.scan(Pattern::new(p).unwrap())))
+        .await
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+    };
     let strings = async {
         let strings = ["TGPUSkinVertexFactoryUnlimited\0", "MovementComponent0\0"];
         join_all(strings.iter().map(|s| ctx.scan(util::utf16_pattern(s)))).await
@@ -128,7 +139,12 @@ impl_resolver_singleton!(PEImage, FNameCtorWchar, |ctx| async {
     let patterns = async {
         ctx.scan(Pattern::new("EB 07 48 8D 15 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 41 B8 01 00 00 00 E8 | ?? ?? ?? ??").unwrap()).await
     };
-    let (patterns, strings) = join!(patterns, strings);
+    let (ctor, patterns, strings) = join!(ctor, patterns, strings);
+
+    // prefer the direct prologue match when present
+    if !ctor.is_empty() {
+        return Ok(Self(try_ensure_one(ctor.into_iter().map(Ok))?));
+    }
 
     // sometimes the call gets inlined so use patterns if any match
     if !patterns.is_empty() {
@@ -357,28 +373,7 @@ impl_resolver_singleton!(all, FNamePool, |ctx| async {
     use futures::join;
     use std::collections::HashSet;
 
-    // Strategy 1: post-4.23 FNamePool::FNamePool
-    //
-    // Two independent fingerprints, intersected at the end so disagreement
-    // surfaces as an error rather than a silent miscatch:
-    //
-    // (a) Body shape: the FNameEntry-buffer memset at the top of the ctor.
-    //     MSVC : `mov [r?+8], r?` immediately followed by `mov r8d, 0x10000`
-    //            — the +0x8 zero-store sits right before the 64KB memset.
-    //     Clang: `lea rcx, [r?+8]; mov r8d, 0x10008` — Clang folds the +0x8
-    //            field into the memset (size 0x10008) and skips the
-    //            separate zero-store.
-    //     Both land in `FNameEntryAllocator::FNameEntryAllocator`, which is
-    //     inlined into FNamePool::FNamePool in some builds (monolithic) and
-    //     a separate callee in others (split — Clang/PGO, some MSVC LTCG).
-    //     Caller-walking covers the split case; the LEA-CALL filter at the
-    //     end drops whichever candidate isn't the FNamePool ctor.
-    //
-    // (b) String intersection: xrefs to the EName-class narrow strings the
-    //     constructor registers. Bracketing nulls discriminate from
-    //     `UByteProperty`/etc. and the wide-char EName table. Fails on
-    //     builds where the ctor reads names indirectly via a `GetEName(idx)`
-    //     trampoline table — body shape covers those.
+    // post-4.23 FNamePool::FNamePool
     let post = async {
         let body = async {
             let body_matches: Vec<u64> = join_all([
@@ -441,56 +436,32 @@ impl_resolver_singleton!(all, FNamePool, |ctx| async {
         let mut candidates = body_set?;
         candidates.extend(str_set?);
 
-        // Strict singleton-init shape: `lea rcx, [pool]; call ctor; mov byte
-        // [init_flag], 1`. The trailing `c6 05 ?? ?? ?? ?? 01` is the C++
-        // static-local "ran ctor" flag set — present after every Meyers
-        // singleton init and absent from arbitrary `lea; call` adjacencies,
-        // so it filters out spurious LEA-CALL coincidences. Two variants:
-        // adjacent, or with 3 intermediate bytes (`mov rsi/rbx, rax` saving
-        // the ctor's return value before storing the flag).
-        //
-        // The strict filter is what makes caller-walking safe: in split-ctor
-        // builds the inner allocator candidate produces 0 strict matches
-        // (no singleton init wraps it), and in monolithic builds the
-        // singleton-getter wrapper added by caller-walking also produces 0
-        // strict matches (it is itself the wrapper, not constructed by
-        // one), so only the real FNamePool ctor's static-init sites remain.
-        let pool_matches = join_all(candidates.iter().flat_map(|c| {
-            [
-                ctx.scan(
-                    Pattern::new(format!(
-                        "48 8d 0d | ?? ?? ?? ?? e8 X0x{c:X} c6 05 ?? ?? ?? ?? 01"
-                    ))
-                    .unwrap(),
-                ),
-                ctx.scan(
-                    Pattern::new(format!(
-                        "48 8d 0d | ?? ?? ?? ?? e8 X0x{c:X} ?? ?? ?? c6 05 ?? ?? ?? ?? 01"
-                    ))
-                    .unwrap(),
-                ),
-            ]
-        }))
+        let shapes = [
+            "48 8d 0d [ ?? ?? ?? ?? ] e8 [ ?? ?? ?? ?? ] c6 05 ?? ?? ?? ?? 01",
+            "48 8d 0d [ ?? ?? ?? ?? ] e8 [ ?? ?? ?? ?? ] ?? ?? ?? c6 05 ?? ?? ?? ?? 01",
+        ];
+        let pool_matches = join_all(
+            shapes
+                .iter()
+                .map(|s| ctx.scan_tagged((), Pattern::new(s).unwrap())),
+        )
         .await;
-        let pool_addrs: HashSet<u64> = pool_matches
-            .into_iter()
-            .flatten()
-            .map(|a| ctx.image().memory.rip4(a))
-            .collect::<std::result::Result<_, _>>()?;
+
+        let mut pool_addrs: HashSet<u64> = HashSet::new();
+        for (_, pattern, addresses) in &pool_matches {
+            for a in addresses {
+                let Some(caps) = ctx.image().memory.captures(pattern, *a)? else {
+                    continue;
+                };
+                if candidates.contains(&caps[1].rip()) {
+                    pool_addrs.insert(caps[0].rip());
+                }
+            }
+        }
         ensure_one(pool_addrs)
     };
 
-    // Strategy 2: pre-4.23 GNames getter
-    //
-    // GNames is a static pointer to `TStaticIndirectArrayThreadSafeRead<
-    // FNameEntry>`, lazily allocated. The getter has a distinctive prologue:
-    //   sub rsp, 0x28
-    //   mov rax, [rip+disp]    <- captures &GNames
-    //   test rax, rax
-    //   jne short already_init
-    //   mov ecx, <size>         <- size of the indirect-array struct
-    // Size depends on template params: UE 4.07–4.21 use 0x408 (128-ptr chunk
-    // array), UE 4.22 doubled it to 0x808 (256 ptrs).
+    // pre-4.23 GNames getter
     let gnames = async {
         let matches: Vec<u64> = join_all([
             ctx.scan(
