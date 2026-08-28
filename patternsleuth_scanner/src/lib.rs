@@ -293,7 +293,7 @@ impl std::fmt::Debug for Pattern {
 pub struct Xref(pub usize);
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::Display,
 };
 
@@ -328,87 +328,174 @@ impl PatternPair<'_> {
     }
 }
 
-fn group_patterns<'p>(patterns: &[&'p Pattern]) -> Vec<PatternPair<'p>> {
+/// Estimated occurrence count of each byte value in the data being scanned.
+///
+/// Only used to rank candidate anchor bytes against each other, so a sampled
+/// estimate is plenty -- see [`sample_histogram`].
+type Histogram = [u64; 256];
+
+/// Estimate how often each byte value occurs in `data`.
+///
+/// Sampling a block out of every `SAMPLE_RATE` keeps this ~free relative to the
+/// scan it feeds, while staying spatially spread out so that byte values which
+/// only cluster in one region of a section are still accounted for.
+fn sample_histogram(data: &[u8]) -> Histogram {
+    use rayon::prelude::*;
+
+    const BLOCK: usize = 4096;
+    const SAMPLE_RATE: usize = 32;
+    const STRIDE: usize = BLOCK * SAMPLE_RATE;
+
+    fn count(data: &[u8], hist: &mut Histogram) {
+        for b in data {
+            hist[*b as usize] += 1;
+        }
+    }
+
+    if data.len() <= STRIDE {
+        let mut hist = [0; 256];
+        count(data, &mut hist);
+        return hist;
+    }
+
+    let (mut hist, sampled) = data
+        .par_chunks(4 << 20)
+        .map(|chunk| {
+            let mut hist = [0; 256];
+            let mut sampled = 0;
+            for block in chunk.chunks(STRIDE) {
+                let block = &block[..BLOCK.min(block.len())];
+                count(block, &mut hist);
+                sampled += block.len() as u64;
+            }
+            (hist, sampled)
+        })
+        .reduce(
+            || ([0; 256], 0),
+            |mut a: (Histogram, u64), b: (Histogram, u64)| {
+                for (a, b) in a.0.iter_mut().zip(b.0) {
+                    *a += b;
+                }
+                (a.0, a.1 + b.1)
+            },
+        );
+
+    // scale the sample back up so counts are comparable to `data.len()`
+    let scale = data.len() as u64 / sampled.max(1);
+    for count in &mut hist {
+        *count *= scale;
+    }
+    hist
+}
+
+/// Estimated number of candidates at `pos` that will survive the cheap prefix
+/// check the scan does before verifying a pattern in full.
+///
+/// [`scan_pattern`] bins patterns by the first 4 fixed bytes of their partial,
+/// else the first 2, else just the first, so an anchor followed by more fixed
+/// bytes rejects far more candidates before any real work happens. Byte
+/// probabilities are treated as independent, which is crude but enough to tell
+/// "anchor mid-pattern with only wildcards after it" apart from "anchor on a
+/// fixed run".
+fn surviving_candidates(hist: &Histogram, data_len: u64, p: &PatternSimple, pos: usize) -> u64 {
+    let fixed_run = (pos..p.len()).take_while(|i| p.mask[*i] == 0xff).count();
+    let window = match fixed_run {
+        0..=1 => 1,
+        2..=3 => 2,
+        _ => 4,
+    };
+    let mut est = hist[p.sig[pos] as usize];
+    for i in 1..window {
+        est = est.saturating_mul(hist[p.sig[pos + i] as usize]) / data_len.max(1);
+    }
+    est
+}
+
+/// Assign every pattern an anchor byte to be located with `memchr`.
+///
+/// Anchoring is what determines how much work the scan does, and it is not the
+/// `memchr` pass that costs -- it is the candidates that pass produces. Each
+/// distinct anchor pays for its pass and for a bin lookup per candidate, and
+/// each pattern then pays for the candidates that reach its bin. So anchors are
+/// picked greedily by cost per pattern anchored, judging a byte on how rare it
+/// is in the data actually being scanned and on how much fixed context follows
+/// it.
+fn group_patterns<'p>(
+    patterns: &[&'p Pattern],
+    hist: &Histogram,
+    data_len: usize,
+) -> Vec<PatternPair<'p>> {
     let mut pattern_pairs: Vec<Option<PatternPair>> = patterns.iter().map(|_| None).collect();
 
-    // common first bytes that should be avoided if possible
-    let bans = [0x00, 0x24, 0x48, 0xff];
+    // Cost of one more `memchr` pass, in candidates. Anchor bytes rarer than
+    // this are effectively free, so sharing is only worth it when the shared
+    // byte isn't much more common than the rare ones it replaces.
+    let pass_cost = (data_len / 1024) as u64;
 
-    #[derive(Debug, Default, Eq, PartialEq)]
-    struct ByteSelector {
-        is_banned: bool,
-        position_score: usize,
-        pattern_indexes: BTreeSet<usize>,
-    }
-    impl std::cmp::PartialOrd for ByteSelector {
-        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-            Some(self.cmp(other))
-        }
-    }
-    impl std::cmp::Ord for ByteSelector {
-        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            self.is_banned
-                .cmp(&other.is_banned)
-                .reverse()
-                .then(self.pattern_indexes.len().cmp(&other.pattern_indexes.len()))
-                .then(self.position_score.cmp(&other.position_score).reverse())
-        }
-    }
-
-    let mut patterns: Vec<Option<&Pattern>> = patterns.iter().map(|p| Some(*p)).collect();
-    while patterns.iter().any(Option::is_some) {
-        let mut counts: BTreeMap<u8, ByteSelector> = Default::default();
-        for (pi, p) in patterns
+    let mut remaining: Vec<Option<&Pattern>> = patterns.iter().map(|p| Some(*p)).collect();
+    while remaining.iter().any(Option::is_some) {
+        // every fixed byte, and where it first appears in each of the
+        // still-unassigned patterns it could anchor
+        let mut candidates: BTreeMap<u8, Vec<(u64, usize, usize)>> = Default::default();
+        for (pi, p) in remaining
             .iter()
             .enumerate()
             .filter_map(|(i, p)| p.map(|p| (i, &p.simple)))
         {
-            let unique = p
-                .iter()
-                .enumerate()
-                .filter_map(|(i, (sig, mask))| (*mask == 0xff).then_some((*sig, i)))
-                .rev()
-                .collect::<HashMap<u8, usize>>();
-            for (u, i) in unique {
-                let counts = counts.entry(u).or_insert_with(|| ByteSelector {
-                    is_banned: bans.contains(&u),
-                    ..Default::default()
-                });
-                // TODO potentially score by distance from end instead of distance from start
-                counts.position_score += i;
-                counts.pattern_indexes.insert(pi);
-            }
-        }
-        let (
-            max_key,
-            ByteSelector {
-                pattern_indexes, ..
-            },
-        ) = counts.iter().max_by_key(|a| a.1).unwrap();
-        for (i, p) in patterns.iter().enumerate() {
-            if let Some(p) = p
-                && pattern_indexes.contains(&i)
-            {
-                let pos = p
-                    .simple
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, (sig, mask))| (sig == max_key && *mask == 0xff).then_some(i))
-                    .unwrap();
-
-                pattern_pairs[i] = Some(PatternPair {
-                    pattern: p,
-                    partial: PatternSimple {
-                        sig: p.simple.sig[pos..].to_vec(),
-                        mask: p.simple.mask[pos..].to_vec(),
-                    },
-                    offset: pos,
-                });
+            let mut seen = [false; 256];
+            for (pos, (sig, mask)) in p.iter().enumerate() {
+                if *mask == 0xff && !std::mem::replace(&mut seen[*sig as usize], true) {
+                    let est = surviving_candidates(hist, data_len as u64, p, pos);
+                    candidates.entry(*sig).or_default().push((est, pi, pos));
+                }
             }
         }
 
-        for take in pattern_indexes {
-            patterns[*take].take();
+        // `a / a_len` against `b / b_len`, cross-multiplied to stay in integers
+        let cheaper = |(a, a_len): (u128, usize), (b, b_len): (u128, usize)| {
+            (a * b_len as u128).cmp(&(b * a_len as u128))
+        };
+
+        // For each byte, how many patterns are worth anchoring on it. A pattern
+        // with little fixed context after the anchor is expensive wherever it
+        // goes, and letting it drag the average up would rule out a byte that is
+        // a good anchor for everything else -- so consider the patterns cheapest
+        // first and stop where the cost per pattern stops improving.
+        let best = candidates
+            .iter_mut()
+            .map(|(byte, anchored)| {
+                anchored.sort_unstable();
+                let mut total = (pass_cost + hist[*byte as usize]) as u128;
+                let (mut best, mut best_len) = (u128::MAX, 1);
+                for (len, (est, _, _)) in anchored.iter().enumerate() {
+                    total += *est as u128;
+                    if cheaper((total, len + 1), (best, best_len)).is_lt() {
+                        (best, best_len) = (total, len + 1);
+                    }
+                }
+                (best, best_len, *byte, &anchored[..best_len])
+            })
+            .min_by(|a, b| cheaper((a.0, a.1), (b.0, b.1)).then(b.1.cmp(&a.1)));
+
+        let Some((_, _, _, anchored)) = best else {
+            // every fixed byte belongs to an already-assigned pattern, so what's
+            // left has none at all and there is nothing to anchor on
+            panic!(
+                "pattern has no fixed byte to anchor on: {:?}",
+                remaining.iter().flatten().next().unwrap()
+            );
+        };
+
+        for (_, pi, pos) in anchored {
+            let p = remaining[*pi].take().unwrap();
+            pattern_pairs[*pi] = Some(PatternPair {
+                pattern: p,
+                partial: PatternSimple {
+                    sig: p.simple.sig[*pos..].to_vec(),
+                    mask: p.simple.mask[*pos..].to_vec(),
+                },
+                offset: *pos,
+            });
         }
     }
     pattern_pairs.into_iter().flatten().collect()
@@ -426,7 +513,7 @@ pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> 
     const WIDE1: usize = 2;
     const WIDE2: usize = 4;
 
-    let pattern_pairs = group_patterns(patterns);
+    let pattern_pairs = group_patterns(patterns, &sample_histogram(data), data.len());
 
     let mut all_bins = HashSet::new();
     let mut short_bins: HashMap<u8, Vec<_>> = Default::default();
@@ -752,14 +839,31 @@ mod test {
         );
     }
 
+    /// 1 MiB of data, so one extra `memchr` pass is priced at 1024 candidates
+    const DATA_LEN: usize = 1 << 20;
+
+    /// Every byte equally common except the ones listed, so anchor choice comes
+    /// down to whatever the caller is actually testing
+    fn hist_with(counts: &[(u8, u64)]) -> Histogram {
+        let mut hist = [1000; 256];
+        for (byte, count) in counts {
+            hist[*byte as usize] = *count;
+        }
+        hist
+    }
+
     #[test]
     fn test_group_patterns() {
         // simple
         assert_eq!(
-            group_patterns(&[
-                &Pattern::new("12 34").unwrap(),
-                &Pattern::new("34 56").unwrap(),
-            ]),
+            group_patterns(
+                &[
+                    &Pattern::new("12 34").unwrap(),
+                    &Pattern::new("34 56").unwrap(),
+                ],
+                &hist_with(&[(0x34, 10)]),
+                DATA_LEN
+            ),
             vec![
                 PatternPair {
                     pattern: &Pattern::new("12 34").unwrap(),
@@ -776,10 +880,14 @@ mod test {
 
         // duplicate bytes
         assert_eq!(
-            group_patterns(&[
-                &Pattern::new("12 12 12 34").unwrap(),
-                &Pattern::new("34 56 12").unwrap(),
-            ]),
+            group_patterns(
+                &[
+                    &Pattern::new("12 12 12 34").unwrap(),
+                    &Pattern::new("34 56 12").unwrap(),
+                ],
+                &hist_with(&[(0x12, 10)]),
+                DATA_LEN
+            ),
             vec![
                 PatternPair {
                     pattern: &Pattern::new("12 12 12 34").unwrap(),
@@ -796,10 +904,14 @@ mod test {
 
         // multiple possible groupings (use first)
         assert_eq!(
-            group_patterns(&[
-                &Pattern::new("12 34 56").unwrap(),
-                &Pattern::new("34 56").unwrap(),
-            ]),
+            group_patterns(
+                &[
+                    &Pattern::new("12 34 56").unwrap(),
+                    &Pattern::new("34 56").unwrap(),
+                ],
+                &hist_with(&[(0x34, 10)]),
+                DATA_LEN
+            ),
             vec![
                 PatternPair {
                     pattern: &Pattern::new("12 34 56").unwrap(),
@@ -814,12 +926,17 @@ mod test {
             ]
         );
 
-        // test bans
+        // a byte common in the data is avoided even though it is the only one
+        // both patterns share (this used to be a hardcoded ban list)
         assert_eq!(
-            group_patterns(&[
-                &Pattern::new("12 00").unwrap(),
-                &Pattern::new("00 56").unwrap(),
-            ]),
+            group_patterns(
+                &[
+                    &Pattern::new("12 00").unwrap(),
+                    &Pattern::new("00 56").unwrap(),
+                ],
+                &hist_with(&[(0x00, 1_000_000)]),
+                DATA_LEN
+            ),
             vec![
                 PatternPair {
                     pattern: &Pattern::new("12 00").unwrap(),
@@ -834,15 +951,65 @@ mod test {
             ]
         );
 
-        // test bans
+        // a common byte is still used when it is the only byte available
         assert_eq!(
-            group_patterns(&[&Pattern::new("00").unwrap(),]),
+            group_patterns(
+                &[&Pattern::new("00").unwrap()],
+                &hist_with(&[(0x00, 1_000_000)]),
+                DATA_LEN
+            ),
             vec![PatternPair {
                 pattern: &Pattern::new("00").unwrap(),
                 partial: Pattern::new("00").unwrap().simple,
                 offset: 0,
             },]
         );
+    }
+
+    #[test]
+    fn test_group_patterns_prefers_rare_bytes() {
+        let patterns = [
+            &Pattern::new("AA 11").unwrap(),
+            &Pattern::new("AA 22").unwrap(),
+            &Pattern::new("AA 33").unwrap(),
+        ];
+
+        // 0xAA is the only byte all three share, but it is common enough that
+        // three passes on rare bytes come out cheaper than one pass on it
+        let anchors = group_patterns(
+            &patterns,
+            &hist_with(&[(0xAA, 1_000_000), (0x11, 10), (0x22, 10), (0x33, 10)]),
+            DATA_LEN,
+        );
+        assert_eq!(
+            anchors.iter().map(|p| p.offset).collect::<Vec<_>>(),
+            vec![1, 1, 1]
+        );
+
+        // when 0xAA is only marginally more common, sharing one pass wins
+        let anchors = group_patterns(&patterns, &hist_with(&[(0xAA, 2000)]), DATA_LEN);
+        assert_eq!(
+            anchors.iter().map(|p| p.offset).collect::<Vec<_>>(),
+            vec![0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn test_sample_histogram() {
+        // small enough to be counted exactly
+        let hist = sample_histogram(&[1, 1, 1, 2]);
+        assert_eq!((hist[1], hist[2], hist[3]), (3, 1, 0));
+
+        // large enough to be sampled, so counts are estimates: 3/4 of the data
+        // is 0x01 and 1/4 is 0x02, spread evenly
+        let data: Vec<u8> = std::iter::repeat_n([1, 1, 1, 2], 4 << 20)
+            .flatten()
+            .collect();
+        let hist = sample_histogram(&data);
+        let total = data.len() as u64;
+        assert!(hist[1].abs_diff(total / 4 * 3) < total / 100, "{}", hist[1]);
+        assert!(hist[2].abs_diff(total / 4) < total / 100, "{}", hist[2]);
+        assert_eq!(hist[3], 0);
     }
 
     type PatternScanFn =
