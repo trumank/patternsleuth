@@ -1,0 +1,450 @@
+ue — Python API reference
+=========================
+Native module exposed by py_repl (src/bindings.rs + the interp.rs bootstrap).
+Everything runs on the engine/game thread.
+
+
+MODULE FUNCTIONS
+----------------
+ue.find(path) -> UObject | UStruct | UClass | None
+    Look up an already-loaded object by full path ("/Script/Engine.Actor",
+    "/Game/Foo.Bar"). No load.
+
+ue.load(path) -> UObject | UStruct | UClass | None
+    StaticLoadObject; loads the owning package on demand.
+
+Every lookup (find, load, objects, objects_of_class, instances, _class,
+parents, new_object) wraps each hit as the most-derived proxy the object
+supports — see the UOBJECT TREE below.
+
+ue.objects_of_class(cls, include_subclasses=True, max=None) -> [UObject]
+    Class-indexed lookup (fast). cls is a UClass or a full class path string.
+
+ue.objects(class=None, max=1024) -> [UObject]
+    Linear GUObjectArray scan. `class` matches the class's short FName, and is
+    positional-only in practice (Python keyword): ue.objects('WorldSettings', 5).
+    max=None lifts the cap (as in objects_of_class); omitting it caps at 1024.
+
+ue.new_object(cls, outer=None, name=None, flags=None) -> UObject
+    StaticConstructObject_Internal. outer defaults to the transient package,
+    name to an engine-assigned unique name, flags to 0 (see ue.EObjectFlags).
+    Result is only weakly referenced — keep a reference or add_to_root().
+
+ue.hook(cls, func_name, callback) -> None
+ue.unhook(cls, func_name) -> None
+ue.unhook_all() -> int                  removes every hook; returns the count
+ue.hooks() -> [(UClass, func_name)]     feeds straight back into unhook(*h)
+ue.on_begin_play(cls_or_None, callback) -> BeginPlayHook
+ue.begin_play_hooks() -> [(id, label)]
+ue.on_tick(callback) -> TickHook
+ue.tick_hooks() -> [id]
+ue.trace(func=None, class_=None, opcodes=None, max_events=200000) -> Trace
+ue.trace_stop() / ue.trace_events() / ue.trace_drain()
+
+ue.EObjectFlags / ue.EPropertyFlags / ue.EFunctionFlags
+    enum.IntFlag types to compare raw bitmasks against:
+        obj._flags            & ue.EObjectFlags.RF_ClassDefaultObject
+        prop.property_flags   & ue.EPropertyFlags.OutParm
+        func.function_flags   & ue.EFunctionFlags.Static
+    EObjectFlags keeps UE's RF_ prefix; the other two drop the CPF_/FUNC_ one,
+    matching what flag_names() prints.
+
+ue._emit(token, tag, text) / ue._complete(token, text)
+    Internal, used by the async loop.
+
+Argument style: objects_of_class, objects, and new_object take keywords for
+every parameter. The rest (hook, unhook, on_*, trace) are positional-only.
+
+
+UObject
+-------
+Attribute access is UE reflection:
+    obj.SomeProperty              read  (FProperty on the class chain)
+    obj.SomeProperty = value      write
+    obj.SomeFunction(...)         BoundMethod (class chain, then implemented
+                                  interfaces)
+    dir(obj)                      property names
+Missing name -> AttributeError. Stale (GC'd) object -> AttributeError.
+
+Meta attributes (underscore-prefixed to avoid colliding with FProperty names,
+and included in dir() so they tab-complete):
+    obj._class      UClass
+    obj._path       full object path
+    obj._name       short FName
+    obj._outer      owning object (package/actor/class), or None
+    obj._flags      raw EObjectFlags bitmask (int)
+
+Methods:
+    obj.add_to_root()       pin as GC root (idempotent)
+    obj.remove_from_root()
+    obj.is_rooted() -> bool
+(enum lookups live on UEnum now — see the UOBJECT TREE below)
+
+Identity: __eq__/__hash__ by object address. repr: <UObject /Path>.
+
+
+UOBJECT TREE
+------------
+A mirror of UE's own chain; lookups return the most-derived class, so
+ue.find('/Script/Engine.GameplayStatics:GetGameInstance') is a UFunction.
+
+UObject
+└── UField
+    ├── UEnum              .enum_entries() -> [(name, value)]
+    │                      .name_by_value(int) -> str | None
+    │                      .value_by_name(str) -> int | None   ("V" or "E::V")
+    └── UStruct            reflection, below
+        ├── UScriptStruct  a struct type; adds nothing over UStruct
+        ├── UFunction      .signature (str), .function_flags (int)
+        │                  .flag_names() -> [str], .params() -> [Param]
+        │                  .script (bytes), .disassemble(), .decompile()
+        └── UClass         .interfaces(), .instances(), .decompile()
+
+UStruct
+-------
+Reflection over anything with reflected properties — a UClass, a UScriptStruct,
+and a UFunction are all UStructs, and all answer these:
+    s.props() -> [FProperty]            most-derived subclass; each has .name
+    s.prop_info(name) -> FProperty | None   the same one, looked up by name
+    s.functions() -> [UFunction]        empty for a script struct
+    s.function_info(name) -> UFunction | None
+    s.parents() -> [UStruct|UClass]     super chain, self excluded, root last
+
+props() and functions() are lists, not dicts, because names repeat: a subclass
+may shadow a super's property (MovieSceneSubSection and MovieSceneSection both
+declare PrerollTime, at different offsets), and a Blueprint override appears
+alongside the native function it overrides. Both are ordered most-derived first,
+which is what attribute access and prop_info/function_info resolve to — a dict
+built from them would be last-wins and disagree.
+So a struct type introspects like a class:
+    ue.find('/Script/Engine.RepMovement').props()
+    FStructProperty.struct_type().props()
+
+UClass
+------
+All of the above, plus the two that need an actual class:
+    cls.interfaces() -> [(UClass, vtable_offset, implemented_by_k2)]
+    cls.instances(include_subclasses=True, max=None) -> [UObject]
+
+
+PROPERTY TYPE MAPPING
+---------------------
+read                                     write accepts
+bool                     <- FBool        bool
+int                      <- FInt8/16/32/64, FUInt16/32/64, FByte
+                                         int (float truncates toward zero)
+float                    <- FFloat/FDouble
+                                         int or float
+str                      <- FStr, FName, FSoftObject (path), FLazyObject
+                                         str
+str "EEnum::Value"       <- FEnum, FByte-with-enum
+                                         entry-name str or int
+UObject | None           <- FObject, FWeakObject, FInterface (object half)
+                                         UObject/UClass or None
+ue.Text                  <- FText        ue.Text only (opaque handle)
+ue.Struct                <- FStruct      matching ue.Struct, or a dict of fields
+ue.Array                 <- FArray       any iterable (replaces contents)
+ue.Map                   <- FMap         dict (replaces contents)
+ue.Set                   <- FSet         any iterable (replaces contents)
+ue.Delegate              <- FDelegate
+ue.MulticastDelegate     <- FMulticastDelegate
+
+Container/struct reads return proxies that hold a path back to the owning
+UObject and re-resolve on each access; the owner going away yields an error,
+never a use-after-free. Values returned from a UFunction call are owned copies
+instead (they free themselves when collected).
+
+
+Struct
+------
+    s.Field / s.Field = v        nested access walks in place
+    s._type                      the UScriptStruct (introspect with .props())
+    s.to_dict()                  shallow {field: value}; nested structs stay
+                                 Struct proxies, which is what writes accept
+    dir(s)                       field names
+    repr(s)                      <Struct FVector> ("stale" if unresolvable)
+Writing a struct field accepts another Struct of the same type or a dict:
+    actor.K2_SetActorLocation({'X': 0, 'Y': 0, 'Z': 500}, False, ...)
+
+Array   (list semantics)
+-----
+    len(a), a[i], a[i] = v, del a[i], v in a, iter(a), a == [..]
+    a[i:j], a[i:j] = iterable, del a[i:j]        (steps too)
+    a.append(v), a.insert(i, v), a.pop([i]), a.clear(), a.extend(iterable)
+    a.index(v), a.count(v), a.remove(v), a.reverse(), a.sort(key=, reverse=)
+Negative indices count from the end. Iteration and slicing snapshot first: a
+slice read gives a plain list, not a view — there's no second TArray to hand
+back. A contiguous slice assignment may resize; an extended one (step != 1)
+must match lengths, as with `list`.
+
+Map   (dict semantics)
+---
+    len(m), m[k], m[k] = v, del m[k], k in m, iter(m) (keys), m == {..}
+    m.keys(), m.values(), m.items()              lists, not views
+    m.get(k, default=None), m.pop(k[, default]), m.setdefault(k, default=None)
+    m.update(mapping_or_pairs), m.clear()
+
+Set   (set semantics)
+---
+    len(s), v in s, iter(s), s == {..}
+    s.add(v) -> bool, s.remove(v), s.discard(v) -> bool, s.pop(), s.clear()
+    s.update(*iterables), s.difference_update(*it), s.intersection_update(*it)
+    s.issubset(it), s.issuperset(it), s.isdisjoint(it)
+The non-mutating operators (| & - ^) are absent: the result would need a new
+TSet, which can't be conjured. Use `set(s) | other` when the elements happen to
+be hashable, or the *_update methods to work in place.
+
+Equality on all three compares contents, against each other or against plain
+Python containers. That makes them unhashable, as their Python counterparts are.
+Membership is a linear scan by Python equality — UE elements (structs, object
+proxies) aren't necessarily hashable.
+
+Text
+----
+Opaque owning FText handle. No str conversion; pass it back into FText
+properties/params, or convert via KismetTextLibrary.Conv_TextToString.
+
+
+CALLING UFUNCTIONS
+------------------
+    obj.FuncName(arg, ...)         via ProcessEvent
+Arguments are positional and must match the count of non-out params exactly
+(no defaults, no kwargs). Return shape:
+    no return, no out params      -> None
+    exactly one of them           -> that value
+    more than one                 -> tuple (return value first, then out params
+                                     in declaration order)
+Static/library functions are called on the CDO:
+    KML = ue.find('/Script/Engine.Default__KismetMathLibrary')
+
+BoundMethod
+    m.function_info() -> UFunction | None
+
+
+REFLECTION OBJECTS
+------------------
+(UFunction carries the signature reflection — see the UOBJECT TREE. A UFunction
+is a UObject, so it's one class rather than a parallel proxy.)
+
+Param
+    .name, .role, .flags (int), .type_ -> FProperty (most-derived subclass)
+    role is one of: in, in_const, out, out_ref, ret
+
+FPROPERTY TREE
+--------------
+A 1:1 mirror of UE's C++ FProperty hierarchy. Anything handing you a property
+(props, prop_info, Param.type_, inner/key/value/underlying) gives the most
+derived class, so `isinstance` and `dir()` tell you what it really is, and an
+accessor that doesn't apply is an AttributeError rather than a None you can't
+tell from a genuine null.
+
+FProperty                       .name, .kind (FField class name, i.e. the class
+                                name without the F), .cast_flags,
+                                .property_flags, .flag_names(), .element_size,
+                                .offset
+├─ FNumericProperty
+│  ├─ FByteProperty             .enum_obj() -> UEnum | None   (TEnumAsByte<E>)
+│  ├─ FInt8/16/64Property, FIntProperty
+│  ├─ FUInt16/32/64Property
+│  └─ FFloatProperty, FDoubleProperty
+├─ FBoolProperty                .field_size, .byte_offset, .byte_mask,
+│                               .field_mask   (bitfield descriptor)
+├─ FObjectPropertyBase          .target_class() -> UClass | None
+│  ├─ FObjectProperty
+│  │  └─ FClassProperty         .meta_class() -> UClass | None
+│  ├─ FWeakObjectProperty
+│  ├─ FLazyObjectProperty
+│  └─ FSoftObjectProperty
+│     └─ FSoftClassProperty     .meta_class() -> UClass | None
+├─ FInterfaceProperty           .interface_class() -> UClass | None
+├─ FNameProperty, FStrProperty, FTextProperty
+├─ FArrayProperty               .inner() -> FProperty
+├─ FSetProperty                 .inner() -> FProperty     (C++ ElementProp)
+├─ FMapProperty                 .key() / .value() -> FProperty
+├─ FStructProperty              .struct_type() -> UStruct
+├─ FDelegateProperty            .signature_function() -> UStruct | None
+├─ FMulticastDelegateProperty   .signature_function() -> UStruct | None
+│  ├─ FMulticastInlineDelegateProperty
+│  └─ FMulticastSparseDelegateProperty
+├─ FEnumProperty                .enum_obj() -> UEnum | None
+│                               .underlying() -> FNumericProperty
+├─ FFieldPathProperty
+└─ FOptionalProperty
+
+repr is <name: type>, with only this property's own name — the nested
+element/key/value types render unnamed. Only the container property is
+addressable by name, so an inner one's name says nothing its type doesn't:
+    <Payload: StructProperty<InstancedStruct>>
+    <BaseNavmeshDataLayers: ArrayProperty<ObjectProperty<Actor>>>
+
+Properties are borrowed from the owning UStruct, which is what keeps them
+alive; reads raise "owning UStruct is stale" once it's gone.
+
+
+FUNCTION HOOKS
+--------------
+    ue.hook(cls, 'FuncName', cb)        cb(this, params)
+    ue.unhook(cls, 'FuncName')
+Hooks are global per UFunction, not per instance — pass a UClass (obj._class)
+or a class path, never an instance. Hooking an already-hooked function raises;
+unhook first. Both native and Blueprint-script functions are supported.
+
+Inside the callback, `params` is a HookParams:
+    params.<ParamName>              read a param
+    params.<ParamName> = v          write it (affects the real call)
+    params.this                     context object (also passed as `this`)
+    params.args                     list of non-out params
+    dir(params)                     param names
+    params.original() -> value      run the real function; returns its return
+                                    value. Callable at most once. Skip it to
+                                    fully replace the function.
+Returning a non-None value from the callback writes it as the function's return
+value. If the callback raises and it never called original(), the original runs
+anyway. `params` is invalid after the callback returns (RuntimeError).
+
+Blueprint classes that unload on level travel must be pinned:
+cls.add_to_root(), typically armed from ue.on_begin_play.
+
+Hooked functions called from worker threads fall through to the original
+without invoking Python.
+
+
+ACTOR / FRAME CALLBACKS
+-----------------------
+    h = ue.on_begin_play(cls_or_None, cb)      cb(actor); cls=None -> all actors
+    h = ue.on_tick(cb)                         cb(world, delta_seconds)
+Both handles support h.remove() and use as a context manager
+(`with ue.on_tick(cb): ...`). Tick fires once per frame per world, after the
+engine's own tick, with the dilated/clamped delta. Callback exceptions are
+logged to the game log, not to the REPL client.
+
+
+DELEGATES
+---------
+Single-cast (ue.Delegate, from an FDelegateProperty):
+    d.is_bound, d.target
+    d.bind(target_obj, 'FunctionName')
+    d.clear()
+    b = d.bind_callable(py_callable) -> DelegateBinding
+
+Multicast (ue.MulticastDelegate):
+    md.bindings, len(md), iter(md)
+    md.add(target_obj, 'FunctionName'), md.remove(...), md.clear()
+    b = md.add_callable(py_callable) -> DelegateBinding
+
+DelegateBinding
+    b.unbind()          detach and free the manufactured sink (idempotent)
+    context manager     unbinds on exit
+Broadcasting a multicast delegate from Python is not supported.
+
+
+BYTECODE TRACE
+--------------
+    t = ue.trace(func, class_, opcodes, max_events)   positional args
+        func       (cls, 'FuncName') tuple, or None for all
+        class_     UClass/path filter, or None
+        opcodes    list of EX_* names, or None for all
+        max_events default 200000
+    t.events            snapshot -> [{'op', 'raw', 'offset', 'func'}]
+    t.drain()           snapshot and clear
+    t.dropped           events lost to max_events
+    t.stop()            also: ue.trace_stop(); `with ue.trace(...) as t:`
+    len(t)
+One trace at a time. Records game-thread frames only (worker-thread ops are
+forwarded to the original handler, not recorded).
+
+
+KISMET BYTECODE
+---------------
+Read a UFunction's compiled Kismet bytecode: raw bytes, a structured
+instruction listing, or decompiled text. Read-only.
+
+    func.script -> bytes                        raw UStruct::Script (b"" if native)
+    func.disassemble() -> [Instruction]         decoded top-level instructions
+    func.decompile(structured=True, offsets=False) -> KismetSource
+    cls.decompile(structured=True, offsets=False) -> KismetSource
+
+`disassemble` decodes the bytecode into a flat list; operands (including nested
+calls and expressions) hang off each Instruction. It raises ValueError (with the
+byte offset) if the bytecode doesn't parse — e.g. a debugger breakpoint byte
+patched into a live function. A native (script-less) function returns [].
+
+`decompile` renders readable text. Decompile the whole UClass to name ubergraph
+entry points and share locals; decompiling a single ubergraph function can't see
+its sibling call sites. structured=True renders if/loops; False gives the flat
+statement listing. offsets=True annotates each statement with its bytecode offset.
+
+Instruction
+    .op         kismet expression name, e.g. "VirtualFunction", "Context",
+                "Let". This is the Expr-level name; the raw EX_* opcode names
+                used by ue.trace are a lower level (several map to one Expr).
+    .offset     bytecode offset of the instruction
+    .fields     dict of operands. Values are int/float/str/bool, nested
+                Instruction, list-of-Instruction, or KismetRef. Keys are named
+                per instruction (a call has 'func'/'params'; a Let has
+                'variable'/'value'; a jump has 'target'; …).
+
+KismetRef  (an object/property/function reference inside an instruction)
+    .address    raw pointer as int
+    .path       resolved UE path (str), or None if it couldn't be resolved.
+                Resolved eagerly at disassembly time, so it survives GC.
+    .object()   the live proxy (UObject/subclass or FProperty), or None if it
+                has been collected since. By-name references return None.
+
+KismetSource  (a decompiled class/function; a snapshot, safe to keep)
+    .text                       full decompiled text (structured if available)
+    .functions() -> [dict]      per function {'name','index','start','end',
+                                'status'}; start/end index into .text; status is
+                                one of structured / flat / identity_fallback: … /
+                                parse_error: … / no_script / unresolved
+    .offset_at(pos) -> (func, offset) | None    bytecode offset at text pos
+    .line_at(pos) -> (line, col)                0-based line/col at text pos
+    .positions_of(func, offset) -> [pos]        text positions for a bytecode
+                                                offset in function `func`
+    .line_of_offset(func, offset) -> (line,col) | None   the source line a
+                                                breakpoint at that offset lands on
+
+The `func` that positions_of/line_of_offset take is the 'index' from
+functions(), not the position in that list — an unresolved function takes a slot
+in the list but has no rendering, so 'index' is None for it and the two diverge
+from there on. It's also what offset_at returns. An out-of-range func raises
+IndexError.
+
+Everything here is a point-in-time SNAPSHOT. The bytes are copied out of the
+live Script array (a hot reload or bytecode rewrite reallocates it, so a held
+KismetSource won't reflect later edits), and references are resolved to paths up
+front. One function that fails to parse doesn't fail cls.decompile() — it's
+reported in that function's status. Game-thread only, like every other binding;
+a large ubergraph is a synchronous decode, so expect a brief hitch.
+
+
+ASYNC RUNS
+----------
+A submitted frame that defines `async def main()` is driven by a tick-based
+loop instead of running synchronously; stdout streams per step and the return
+value is sent when it finishes.
+
+    await ue.sleep(seconds)                  tick-dt based (respects pause)
+    await ue.next_tick()
+    await ue.hook_once(cls, 'FuncName', where=None, timeout=None)
+        -> event with .this and .args (detached snapshot; no original())
+    await ue.spawned(cls, where=None, timeout=None)  -> actor
+    ue.Timeout, ue.Cancelled                 exceptions
+`where` is a predicate: where(this, params) for hook_once, where(actor) for
+spawned. On timeout the registration is removed and ue.Timeout is raised.
+
+
+NOTES
+-----
+- All bindings assume the game thread. Do not touch UE state from Python
+  threads; route work through ue.on_tick.
+- Proxies hold weak references. Stale reads raise rather than crash; keep
+  objects alive with add_to_root() when needed.
+- None of the proxy types can be constructed from Python — they all wrap engine
+  memory. `ue.Struct()` and friends raise TypeError; values come from lookups,
+  property reads, and function returns.
+- Class default objects and archetypes show up in lookups; filter with
+  obj._flags & (ue.EObjectFlags.RF_ClassDefaultObject |
+  ue.EObjectFlags.RF_ArchetypeObject).
+- The interpreter is RustPython with a frozen stdlib; no C extensions, and it
+  is materially slower than CPython.
