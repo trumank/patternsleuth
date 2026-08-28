@@ -236,10 +236,8 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
             .chain(refs_indirect.iter().flatten())
             .flat_map(|s| {
                 [
-                    ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
-                    ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
-                    ctx.scan(Pattern::new(format!("48 8d ?? X0x{:X}", s + 2)).unwrap()),
-                    ctx.scan(Pattern::new(format!("4c 8d ?? X0x{:X}", s + 2)).unwrap()),
+                    ctx.scan(Pattern::new(format!("01001?00 8d ?? X0x{s:X}")).unwrap()),
+                    ctx.scan(Pattern::new(format!("01001?00 8d ?? X0x{:X}", s + 2)).unwrap()),
                 ]
             }),
     )

@@ -75,27 +75,13 @@ pub mod util {
                 .copied()
                 .chain(refs_indirect.into_iter().flatten())
                 .flat_map(|s| {
-                    /// Every encoding of `lea r64, [rip+disp32]`
-                    let mut scans = [
-                        "48 8d 05", "48 8d 0d", "48 8d 15", "48 8d 1d", "48 8d 25", "48 8d 2d",
-                        "48 8d 35", "48 8d 3d", "4c 8d 05", "4c 8d 0d", "4c 8d 15", "4c 8d 1d",
-                        "4c 8d 25", "4c 8d 2d", "4c 8d 35", "4c 8d 3d",
-                    ]
-                    .iter()
-                    .map(|lea| format!("{lea} X0x{s:X}"))
-                    .collect::<Vec<_>>();
+                    // every encoding of `lea r64, [rip+disp32]`: REX.W with or
+                    // without REX.R, then modrm selecting rip-relative for any
+                    // of the eight registers
+                    let mut scans = vec![format!("01001?00 8d 00???101 X0x{s:X}")];
                     if TryInto::<u32>::try_into(s).is_ok() {
                         // mov reg, imm32 if address is 32 bit
-                        scans.extend([
-                            format!("b8 0x{s:X}"),
-                            format!("b9 0x{s:X}"),
-                            format!("ba 0x{s:X}"),
-                            format!("bb 0x{s:X}"),
-                            format!("bc 0x{s:X}"),
-                            format!("bd 0x{s:X}"),
-                            format!("be 0x{s:X}"),
-                            format!("bf 0x{s:X}"),
-                        ]);
+                        scans.push(format!("10111??? 0x{s:X}"));
                     }
                     scans
                 })

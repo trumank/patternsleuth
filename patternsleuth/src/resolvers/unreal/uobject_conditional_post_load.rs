@@ -120,13 +120,7 @@ impl_resolver_singleton!(all, UObjectConditionalPostLoad, |ctx| async {
         .flat_map(|(tag, _, str_addresses)| {
             str_addresses
                 .into_iter()
-                .flat_map(|str_addr| {
-                    [
-                        format!("48 8d ?? X0x{str_addr:08x}"),
-                        format!("4c 8d ?? X0x{str_addr:08x}"),
-                    ]
-                    .into_iter()
-                })
+                .flat_map(|str_addr| [format!("01001?00 8d ?? X0x{str_addr:08x}")].into_iter())
                 .map(move |str| (tag, str))
         })
         .collect_vec();

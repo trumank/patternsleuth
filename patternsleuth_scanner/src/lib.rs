@@ -47,7 +47,7 @@ fn fmt_byte(f: &mut std::fmt::Formatter<'_>, sig: u8, mask: u8) -> std::fmt::Res
 
 impl Display for PatternSimple {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:02X}", self.sig[0])?;
+        fmt_byte(f, self.sig[0], self.mask[0])?;
         for (sig, mask) in self.iter().skip(1) {
             write!(f, " ")?;
             fmt_byte(f, *sig, *mask)?;
@@ -263,7 +263,7 @@ impl Pattern {
 
 impl Display for Pattern {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:02X}", self.simple.sig[0])?;
+        fmt_byte(f, self.simple.sig[0], self.simple.mask[0])?;
         let mut iter = self.simple.iter().enumerate().skip(1);
         while let Some((i, (sig, mask))) = iter.next() {
             if i == self.custom_offset {
@@ -411,6 +411,93 @@ fn surviving_candidates(hist: &Histogram, data_len: u64, p: &PatternSimple, pos:
     est
 }
 
+/// The patterns sharing one bin key, plus whatever filter they have in common.
+#[derive(Debug)]
+struct Bin<'p> {
+    patterns: Vec<(usize, &'p PatternPair<'p>)>,
+    xref: Option<SharedXref>,
+}
+
+/// A single xref that every pattern in a bin has, at the same place relative to
+/// the anchor byte.
+///
+/// Resolving it once per candidate and rejecting the whole bin on a miss is what
+/// keeps "some instruction referencing one of these addresses" cheap to scan --
+/// those turn into many patterns that differ only in encoding, and checking the
+/// reference per pattern repeats the same work for each.
+#[derive(Debug)]
+struct SharedXref {
+    /// where the rel32 sits relative to the anchor byte
+    offset: usize,
+    /// sorted and deduplicated, so a miss costs one binary search
+    targets: Vec<usize>,
+}
+
+impl<'p> Bin<'p> {
+    fn new(patterns: Vec<(usize, &'p PatternPair<'p>)>) -> Self {
+        Self {
+            xref: SharedXref::new(&patterns),
+            patterns,
+        }
+    }
+    #[inline(always)]
+    fn add_matches(
+        &self,
+        data: &[u8],
+        base_address: usize,
+        offset: usize,
+        matches: &mut Vec<(usize, usize)>,
+    ) {
+        if let Some(xref) = &self.xref
+            && !xref.is_match(data, base_address, offset)
+        {
+            return;
+        }
+        for (pattern_index, pair) in &self.patterns {
+            pair.add_match(data, base_address, offset, *pattern_index, matches)
+        }
+    }
+}
+
+impl SharedXref {
+    fn new(patterns: &[(usize, &PatternPair<'_>)]) -> Option<Self> {
+        let mut offset = None;
+        let mut targets = Vec::with_capacity(patterns.len());
+        for (_, pair) in patterns {
+            let [(xref_offset, xref)] = pair.pattern.xrefs[..] else {
+                return None;
+            };
+            // relative to the anchor byte rather than the start of the pattern,
+            // so that patterns anchored at different positions can still share
+            let relative = xref_offset.checked_sub(pair.offset)?;
+            if *offset.get_or_insert(relative) != relative {
+                return None;
+            }
+            targets.push(xref.0);
+        }
+        targets.sort_unstable();
+        targets.dedup();
+        Some(Self {
+            offset: offset?,
+            targets,
+        })
+    }
+
+    /// Whether the rel32 near the candidate anchor at `offset` points at any
+    /// target.
+    ///
+    /// Reads within the longest pattern of the scan, which the caller has
+    /// already trimmed the data to accommodate.
+    #[inline(always)]
+    fn is_match(&self, data: &[u8], base_address: usize, offset: usize) -> bool {
+        let at = offset + self.offset;
+        let relative = i32::from_le_bytes(data[at..at + 4].try_into().unwrap());
+        (base_address + at + 4)
+            .checked_add_signed(relative as isize)
+            .is_some_and(|target| self.targets.binary_search(&target).is_ok())
+    }
+}
+
 /// Assign every pattern an anchor byte to be located with `memchr`.
 ///
 /// Anchoring is what determines how much work the scan does, and it is not the
@@ -537,6 +624,15 @@ pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> 
     }
     let all_bins = Vec::from_iter(all_bins);
 
+    fn into_bins<'p, K: std::hash::Hash + Eq>(
+        bins: HashMap<K, Vec<(usize, &'p PatternPair<'p>)>>,
+    ) -> HashMap<K, Bin<'p>> {
+        bins.into_iter().map(|(k, v)| (k, Bin::new(v))).collect()
+    }
+    let short_bins = into_bins(short_bins);
+    let wide1_bins = into_bins(wide1_bins);
+    let wide2_bins = into_bins(wide2_bins);
+
     let max = patterns.iter().map(|p| p.simple.len()).max().unwrap();
 
     // cut middle short such that even the longest pattern doesn't have to bounds check
@@ -559,27 +655,21 @@ pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> 
                 for first in &all_bins {
                     for i in memchr::memchr_iter(*first, chunk) {
                         let j = offset + i;
-                        if let Some(patterns) = short_bins.get(first) {
-                            for (pi, p) in patterns.iter() {
-                                p.add_match(data, base_address, j, *pi, &mut matches)
-                            }
+                        if let Some(bin) = short_bins.get(first) {
+                            bin.add_matches(data, base_address, j, &mut matches)
                         }
                         if !wide2_bins.is_empty() {
                             let mut buf = [0; WIDE2];
                             buf.copy_from_slice(&data[j..j + WIDE2]);
-                            if let Some(patterns) = wide2_bins.get(&buf) {
-                                for (pi, p) in patterns.iter() {
-                                    p.add_match(data, base_address, j, *pi, &mut matches)
-                                }
+                            if let Some(bin) = wide2_bins.get(&buf) {
+                                bin.add_matches(data, base_address, j, &mut matches)
                             }
                         }
                         if !wide1_bins.is_empty() {
                             let mut buf = [0; WIDE1];
                             buf.copy_from_slice(&data[j..j + WIDE1]);
-                            if let Some(patterns) = wide1_bins.get(&buf) {
-                                for (pi, p) in patterns.iter() {
-                                    p.add_match(data, base_address, j, *pi, &mut matches)
-                                }
+                            if let Some(bin) = wide1_bins.get(&buf) {
+                                bin.add_matches(data, base_address, j, &mut matches)
                             }
                         }
                     }
@@ -798,6 +888,15 @@ mod test {
             Pattern::new("12 ??100??1 45").unwrap().simple.to_string(),
             "12 ??100??1 45"
         );
+
+        // a masked leading byte, as the collapsed instruction-encoding patterns use
+        assert_eq!(
+            Pattern::new("01001?00 8D 00???101 X0x1234")
+                .unwrap()
+                .to_string(),
+            "01001?00 8D 00???101 X0x1234"
+        );
+        assert_eq!(Pattern::new("?? 12").unwrap().to_string(), "?? 12");
     }
 
     #[test]
@@ -1010,6 +1109,39 @@ mod test {
         assert!(hist[1].abs_diff(total / 4 * 3) < total / 100, "{}", hist[1]);
         assert!(hist[2].abs_diff(total / 4) < total / 100, "{}", hist[2]);
         assert_eq!(hist[3], 0);
+    }
+
+    #[test]
+    fn test_scan_shared_xref() {
+        // three `lea r64, [rip+disp32]`, differing in register and REX, the
+        // first two pointing at the same address. Patterns like these share a
+        // bin and are filtered on the referenced address rather than one at a
+        // time, so make sure that filter agrees with matching them individually.
+        let base = 0x1000;
+        let mut data = vec![
+            0x48, 0x8d, 0x0d, 0x05, 0x00, 0x00, 0x00, // lea rcx, [rip+5]  -> 0x100c
+            0x4c, 0x8d, 0x05, 0xfe, 0xff, 0xff, 0xff, // lea r8,  [rip-2]  -> 0x100c
+            0x48, 0x8d, 0x15, 0x00, 0x00, 0x00, 0x00, // lea rdx, [rip+0]  -> 0x1015
+        ];
+        data.resize(data.len() + 7, 0); // so every instruction is off the suffix
+
+        let lea = |target| Pattern::new(format!("01001?00 8d 00???101 X0x{target:X}")).unwrap();
+        let (hit, other, miss) = (lea(0x100c), lea(0x1015), lea(0x100d));
+
+        assert_eq!(
+            scan_pattern(&[&hit, &other, &miss], base, &data),
+            vec![vec![0x1000, 0x1007], vec![0x100e], vec![]]
+        );
+
+        // and each on its own, where there is nothing to share the filter with
+        assert_eq!(
+            scan_pattern(&[&hit], base, &data),
+            vec![vec![0x1000, 0x1007]]
+        );
+        assert_eq!(
+            scan_pattern(&[&miss], base, &data),
+            vec![Vec::<usize>::new()]
+        );
     }
 
     type PatternScanFn =
