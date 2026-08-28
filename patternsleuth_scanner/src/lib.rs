@@ -588,6 +588,18 @@ fn group_patterns<'p>(
     pattern_pairs.into_iter().flatten().collect()
 }
 
+/// Split `len` bytes into chunks to scan in parallel.
+///
+/// Candidates are not spread evenly across a section, so handing each thread a
+/// single chunk leaves cores idle waiting on whichever chunk happened to be
+/// dense. Several chunks per thread lets rayon even that out, while staying
+/// large enough that each is still a long `memchr` run.
+fn chunk_size(len: usize) -> usize {
+    const CHUNKS_PER_THREAD: usize = 16;
+    const MIN: usize = 64 * 1024;
+    (len / (rayon::current_num_threads() * CHUNKS_PER_THREAD)).max(MIN)
+}
+
 pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> Vec<Vec<usize>> {
     use rayon::prelude::*;
 
@@ -641,13 +653,11 @@ pub fn scan_pattern(patterns: &[&Pattern], base_address: usize, data: &[u8]) -> 
     let mut matches = vec![];
 
     // middle
-    let chunk_size = (middle.len()
-        / std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
-    .max(1);
-    let chunks: Vec<_> = middle.chunks(chunk_size).enumerate().collect();
+    let chunk_size = chunk_size(middle.len());
     matches.append(
-        &mut chunks
-            .par_iter()
+        &mut middle
+            .par_chunks(chunk_size)
+            .enumerate()
             .map(|(index, chunk)| {
                 let mut matches = vec![];
                 let offset = index * chunk_size;
@@ -716,14 +726,12 @@ pub fn scan_xref(patterns: &[&Xref], base_address: usize, data: &[u8]) -> Vec<Ve
     let width = 4;
 
     let first_byte_data = &data[0..data.len().saturating_sub(width - 1)];
-    let chunk_size = (first_byte_data.len()
-        / std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::new(1).unwrap()))
-    .max(1);
+    let chunk_size = chunk_size(first_byte_data.len());
 
-    let chunks: Vec<_> = first_byte_data.chunks(chunk_size).enumerate().collect();
     matches.append(
-        &mut chunks
-            .par_iter()
+        &mut first_byte_data
+            .par_chunks(chunk_size)
+            .enumerate()
             .map(|(chunk_index, chunk)| {
                 let mut matches = vec![];
                 let offset = chunk_index * chunk_size;
@@ -1142,6 +1150,26 @@ mod test {
             scan_pattern(&[&miss], base, &data),
             vec![Vec::<usize>::new()]
         );
+    }
+
+    #[test]
+    fn test_scan_pattern_across_chunk_boundaries() {
+        // large enough to be split into several parallel chunks, so that matches
+        // straddling a boundary have to be found by exactly one of them. The
+        // period doesn't divide the chunk size, so boundaries land on every
+        // phase of the pattern.
+        let base = 0x1000;
+        let data: Vec<u8> = std::iter::repeat_n([1, 2, 3], 512 * 1024)
+            .flatten()
+            .collect();
+        assert!(
+            data.len() > chunk_size(data.len()),
+            "want more than one chunk"
+        );
+
+        let pattern = Pattern::new("01 02").unwrap();
+        let expected: Vec<usize> = (0..data.len() - 1).step_by(3).map(|i| base + i).collect();
+        assert_eq!(scan_pattern(&[&pattern], base, &data), vec![expected]);
     }
 
     type PatternScanFn =
