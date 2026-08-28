@@ -1,5 +1,6 @@
 pub mod aes;
 pub mod blueprint_library;
+pub mod dispatch_begin_play;
 pub mod engine_version;
 pub mod fname;
 pub mod ftext;
