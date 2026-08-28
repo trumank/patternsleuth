@@ -22,6 +22,8 @@ pub struct UObjectSkipFunction(pub u64);
 impl_resolver_singleton!(all, UObjectSkipFunction, |ctx| async {
     let patterns = [
         "40 55 41 54 41 55 41 56 41 57 48 83 EC 30 48 8D 6C 24 20 48 89 5D 40 48 89 75 48 48 89 7D 50 48 8B 05 ?? ?? ?? ?? 48 33 C5 48 89 45 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 4D 8B ?? ?? 8B ?? 85 ?? 75 05 41 8B FC EB ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 48 ?? E0",
+        "40 55 41 54 41 55 41 56 41 57 48 83 EC ?? 48 8D 6C 24 ?? 48 89 5D 40 48 89 75 48 48 89 7D 50 48 8B 05 ?? ?? ?? ?? 48 33 C5 48 89 45 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 75 05 41 8B FC EB",
+        "40 55 53 56 57 41 54 41 55 41 56 41 57 48 83 EC ?? 48 8D 6C 24 ?? 48 8B 05 ?? ?? ?? ?? 48 33 C5 48 89 45 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 75 05 41 8B FC EB",
         // linux
         "55 01001??? 89 e5 01000??? 57 01000??? 56 01000??? 55 01000??? 54 53 50 01001??? 89 cf 01001??? 89 d6 01001??? 89 f3 01001??? 63 51 58 01001??? 85 d2 74 ??  01001??? 63 67 5c 01001??? 83 fc 10 7f ?? 01001??? 89 e4 01001??? 8d 42 1e 01001??? 83 e0 f0 01001??? 29 c4 01001??? 89 e4 eb ??",
     ];
@@ -41,16 +43,20 @@ pub struct GNatives(pub u64);
 impl_resolver_singleton!(collect, GNatives);
 
 impl_resolver_singleton!(PEImage, GNatives, |ctx| async {
-    // On Windows, try both patterns and skip function
-    let (patterns, via_skip) = join!(
+    let (patterns, via_skip, via_step) = join!(
         ctx.resolve(GNativesPatterns::resolver()),
         ctx.resolve(GNativesViaSkipFunction::resolver()),
+        ctx.resolve(GNativesViaFFrameStep::resolver()),
     );
 
     Ok(Self(*ensure_one(
-        [patterns.map(|r| r.0), via_skip.map(|r| r.0)]
-            .iter()
-            .filter_map(|r| r.as_ref().ok()),
+        [
+            patterns.map(|r| r.0),
+            via_skip.map(|r| r.0),
+            via_step.map(|r| r.0),
+        ]
+        .iter()
+        .filter_map(|r| r.as_ref().ok()),
     )?))
 });
 
@@ -139,6 +145,43 @@ impl_resolver_singleton!(ElfImage, GNativesViaSkipFunction, |ctx| async {
     }
 
     bail_out!("failed to find call instruction");
+});
+
+// FFrame::Step-based resolver
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct GNativesViaFFrameStep(pub u64);
+impl_resolver_singleton!(collect, GNativesViaFFrameStep);
+
+impl_resolver_singleton!(PEImage, GNativesViaFFrameStep, |ctx| async {
+    use iced_x86::{Code, Register};
+
+    let step = ctx.resolve(FFrameStep::resolver()).await?;
+    let bytes = ctx.image().memory.range_from(step.0..)?;
+
+    let mut decoder = Decoder::with_ip(
+        64,
+        &bytes[0..bytes.len().min(0x40)],
+        step.0,
+        DecoderOptions::NONE,
+    );
+
+    let mut instruction = Instruction::default();
+    while decoder.can_decode() {
+        decoder.decode_out(&mut instruction);
+        if instruction.code() == Code::Lea_r64_m && instruction.memory_base() == Register::RIP {
+            return Ok(Self(instruction.memory_displacement64()));
+        }
+    }
+
+    bail_out!("failed to find LEA instruction");
+});
+
+impl_resolver_singleton!(ElfImage, GNativesViaFFrameStep, |_ctx| async {
+    bail_out!("GNativesViaFFrameStep not implemented for Linux");
 });
 
 /// public: void __cdecl FFrame::Step(class UObject *, void *const)
