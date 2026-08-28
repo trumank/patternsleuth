@@ -67,8 +67,15 @@ pub mod util {
                 .copied()
                 .chain(refs_indirect.into_iter().flatten())
                 .flat_map(|s| {
-                    let mut scans =
-                        vec![format!("48 8d ?? X0x{s:X}"), format!("4c 8d ?? X0x{s:X}")];
+                    /// Every encoding of `lea r64, [rip+disp32]`
+                    let mut scans = [
+                        "48 8d 05", "48 8d 0d", "48 8d 15", "48 8d 1d", "48 8d 25", "48 8d 2d",
+                        "48 8d 35", "48 8d 3d", "4c 8d 05", "4c 8d 0d", "4c 8d 15", "4c 8d 1d",
+                        "4c 8d 25", "4c 8d 2d", "4c 8d 35", "4c 8d 3d",
+                    ]
+                    .iter()
+                    .map(|lea| format!("{lea} X0x{s:X}"))
+                    .collect::<Vec<_>>();
                     if TryInto::<u32>::try_into(s).is_ok() {
                         // mov reg, imm32 if address is 32 bit
                         scans.extend([
