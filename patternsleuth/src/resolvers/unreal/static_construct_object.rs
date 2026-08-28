@@ -118,62 +118,37 @@ impl_resolver_singleton!(ElfImage, StaticConstructObjectInternalString, |ctx| as
 });
 
 impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| async {
+    use std::collections::HashMap;
+
     use iced_x86::{Code, FlowControl, OpKind, Register};
     use itertools::Itertools;
 
     use crate::{
         Image, MemoryTrait,
         disassemble::disassemble_single,
-        resolvers::{Context, Result, bail_out},
+        resolvers::{Result, bail_out},
     };
 
-    let strings = join_all(
-        [
-            "UBehaviorTreeManager\0",
-            "ULeaderboardFlushCallbackProxy\0",
-            "UPlayMontageCallbackProxy\0",
-        ]
-        .iter()
-        .map(|s| {
-            ctx.scan(
-                Pattern::from_bytes(s.encode_utf16().flat_map(u16::to_le_bytes).collect()).unwrap(),
-            )
-        }),
-    )
-    .await;
+    // StaticConstructObject_Internal contains magic RF-flags test
+    fn check_is_static_construct(img: &Image<'_>, f: u64) -> Result<bool> {
+        let mut is = false;
+        disassemble(img, f, |inst| {
+            let cur = inst.ip();
+            if Some(f) != img.get_root_function(cur)?.map(|f| f.range.start) {
+                return Ok(Control::Break);
+            }
 
-    let refs_indirect = join_all(
-        strings
-            .iter()
-            .flatten()
-            .map(|s| ctx.scan(Pattern::from_bytes(u64::to_le_bytes(*s).into()).unwrap())),
-    )
-    .await;
+            if inst.immediate32() == 0x10000080 {
+                is = true;
+                return Ok(Control::Exit);
+            }
 
-    let refs = join_all(
-        strings
-            .iter()
-            .flatten()
-            .chain(refs_indirect.iter().flatten())
-            .flat_map(|s| {
-                [
-                    ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
-                    ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
-                    ctx.scan(Pattern::new(format!("48 8d ?? X0x{:X}", s + 2)).unwrap()),
-                    ctx.scan(Pattern::new(format!("4c 8d ?? X0x{:X}", s + 2)).unwrap()),
-                ]
-            }),
-    )
-    .await;
+            Ok(Control::Continue)
+        })?;
+        Ok(is)
+    }
 
-    let fns = refs
-        .into_iter()
-        .flatten()
-        .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
-        .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
-        .into_iter()
-        .flatten();
-
+    // phase 1: class-name anchors
     fn check_is_new_object(img: &Image<'_>, f: u64) -> Result<bool> {
         let cmp = "NewObject with empty name can't"
             .encode_utf16()
@@ -231,23 +206,52 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
         Ok(false)
     }
 
-    fn check_is_static_construct(img: &Image<'_>, f: u64) -> Result<bool> {
-        let mut is = false;
-        disassemble(img, f, |inst| {
-            let cur = inst.ip();
-            if Some(f) != img.get_root_function(cur)?.map(|f| f.range.start) {
-                return Ok(Control::Break);
-            }
+    let strings = join_all(
+        [
+            "UBehaviorTreeManager\0",
+            "ULeaderboardFlushCallbackProxy\0",
+            "UPlayMontageCallbackProxy\0",
+        ]
+        .iter()
+        .map(|s| {
+            ctx.scan(
+                Pattern::from_bytes(s.encode_utf16().flat_map(u16::to_le_bytes).collect()).unwrap(),
+            )
+        }),
+    )
+    .await;
 
-            if inst.immediate32() == 0x10000080 {
-                is = true;
-                return Ok(Control::Exit);
-            }
+    let refs_indirect = join_all(
+        strings
+            .iter()
+            .flatten()
+            .map(|s| ctx.scan(Pattern::from_bytes(u64::to_le_bytes(*s).into()).unwrap())),
+    )
+    .await;
 
-            Ok(Control::Continue)
-        })?;
-        Ok(is)
-    }
+    let refs = join_all(
+        strings
+            .iter()
+            .flatten()
+            .chain(refs_indirect.iter().flatten())
+            .flat_map(|s| {
+                [
+                    ctx.scan(Pattern::new(format!("48 8d ?? X0x{s:X}")).unwrap()),
+                    ctx.scan(Pattern::new(format!("4c 8d ?? X0x{s:X}")).unwrap()),
+                    ctx.scan(Pattern::new(format!("48 8d ?? X0x{:X}", s + 2)).unwrap()),
+                    ctx.scan(Pattern::new(format!("4c 8d ?? X0x{:X}", s + 2)).unwrap()),
+                ]
+            }),
+    )
+    .await;
+
+    let fns = refs
+        .into_iter()
+        .flatten()
+        .map(|r| -> Result<_> { Ok(ctx.image().get_root_function(r)?.map(|f| f.range.start)) })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten();
 
     let new_object = {
         let mut fns = fns.collect_vec();
@@ -293,7 +297,7 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
                             CallType::Jump => Some(r),
                         })
                     })
-                    .collect::<Result<Vec<_>>>()? // TODO avoid this collect?
+                    .collect::<Result<Vec<_>>>()?
                     .into_iter()
                     .flatten()
                     .collect_vec();
@@ -307,37 +311,91 @@ impl_resolver_singleton!(PEImage, StaticConstructObjectInternalString, |ctx| asy
             }
         }
         new_object
-    }
-    .context("could not find NewObject<>")?;
+    };
 
-    let mut checked = HashSet::new();
-    for call in util::find_calls(ctx.image(), new_object)? {
-        if !checked.contains(&call.callee) {
-            checked.insert(call.callee);
+    if let Some(new_object) = new_object {
+        let mut checked = HashSet::new();
+        for call in util::find_calls(ctx.image(), new_object)? {
+            if checked.insert(call.callee) {
+                let mut f = call.callee;
+                if let Some(inst) = disassemble_single(ctx.image(), f)?
+                    && inst.flow_control() == FlowControl::UnconditionalBranch
+                {
+                    f = inst.near_branch_target();
+                }
 
-            let mut f = call.callee;
-            if let Some(inst) = disassemble_single(ctx.image(), f)?
-                && inst.flow_control() == FlowControl::UnconditionalBranch
-            {
-                f = inst.near_branch_target();
-            }
-
-            if check_is_static_construct(ctx.image(), f)? {
-                return Ok(Self(call.callee));
+                if check_is_static_construct(ctx.image(), f)? {
+                    return Ok(Self(call.callee));
+                }
             }
         }
-    }
-    // try one call deeper
-    for f in checked.clone().into_iter() {
-        for call in util::find_calls(ctx.image(), f)? {
-            if !checked.contains(&call.callee) {
-                checked.insert(call.callee);
-                if check_is_static_construct(ctx.image(), call.callee)? {
+        // try one call deeper
+        for f in checked.clone().into_iter() {
+            for call in util::find_calls(ctx.image(), f)? {
+                if checked.insert(call.callee)
+                    && check_is_static_construct(ctx.image(), call.callee)?
+                {
                     return Ok(Self(call.callee));
                 }
             }
         }
     }
 
-    bail_out!("could not find StaticConstructObject_Internal call");
+    // phase 2: empty-name consensus
+    let deref_thunk = |mut callee: u64| -> Result<u64> {
+        if let Some(inst) = disassemble_single(ctx.image(), callee)?
+            && inst.flow_control() == FlowControl::UnconditionalBranch
+        {
+            callee = inst.near_branch_target();
+        }
+        Ok(callee)
+    };
+
+    let strings = ctx
+        .scan(util::utf16_pattern(
+            "NewObject with empty name can't be used to create default",
+        ))
+        .await;
+    let refs = util::scan_xrefs(ctx, &strings).await;
+    let new_object_fns = refs
+        .iter()
+        .filter_map(|r| {
+            ctx.image()
+                .get_root_function(*r)
+                .ok()
+                .flatten()
+                .map(|f| f.range.start)
+        })
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let mut counts: HashMap<u64, usize> = HashMap::new();
+    for depth in 0..2 {
+        for &f in &new_object_fns {
+            for call in util::find_calls(ctx.image(), f)? {
+                let callee = deref_thunk(call.callee)?;
+                if depth == 0 {
+                    if check_is_static_construct(ctx.image(), callee)? {
+                        *counts.entry(callee).or_default() += 1;
+                    }
+                } else {
+                    for inner in util::find_calls(ctx.image(), callee)? {
+                        let inner = deref_thunk(inner.callee)?;
+                        if check_is_static_construct(ctx.image(), inner)? {
+                            *counts.entry(inner).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+        if !counts.is_empty() {
+            break;
+        }
+    }
+
+    let Some((addr, _)) = counts.into_iter().max_by_key(|(_, n)| *n) else {
+        bail_out!("could not find StaticConstructObject_Internal call");
+    };
+    Ok(Self(addr))
 });
