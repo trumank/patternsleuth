@@ -16,7 +16,7 @@ use crate::{
     resolvers::{ResolveError, bail_out, impl_resolver, impl_resolver_singleton, try_ensure_one},
 };
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(
     feature = "serde-resolvers",
     derive(serde::Serialize, serde::Deserialize)
@@ -641,5 +641,353 @@ impl FromStr for InternalProjectName {
     type Err = ResolveError;
     fn from_str(_s: &str) -> std::result::Result<Self, Self::Err> {
         Err(ResolveError::new_msg("unimplemented"))
+    }
+}
+
+const fn v(major: u16, minor: u16) -> EngineVersion {
+    EngineVersion { major, minor }
+}
+
+#[rustfmt::skip]
+const VERSIONS: &[EngineVersion] = &[
+    v(4, 7), v(4, 8), v(4, 9), v(4, 10), v(4, 11), v(4, 12),
+    v(4, 13), v(4, 14), v(4, 15), v(4, 16), v(4, 17), v(4, 18),
+    v(4, 19), v(4, 20), v(4, 21), v(4, 22), v(4, 23), v(4, 24),
+    v(4, 25), v(4, 26), v(4, 27), v(5, 0), v(5, 1), v(5, 2),
+    v(5, 3), v(5, 4), v(5, 5), v(5, 6), v(5, 7), v(5, 8),
+];
+
+struct Marker {
+    string: &'static str,
+    first: Option<EngineVersion>,
+    last: Option<EngineVersion>,
+}
+
+impl Marker {
+    fn covers(&self, candidate: Option<&EngineVersion>) -> bool {
+        let after_first = match (&self.first, candidate) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(first), Some(candidate)) => candidate >= first,
+        };
+        let before_last = match (&self.last, candidate) {
+            (None, _) | (_, None) => true,
+            (Some(last), Some(candidate)) => candidate <= last,
+        };
+        after_first && before_last
+    }
+}
+
+#[rustfmt::skip]
+const MARKERS: &[Marker] = &[
+    Marker { string: "FOpenGLRHILongGPUTaskPS",                            first: None,            last: Some(v(4, 7)) },
+    Marker { string: "FPostProcessTonemapPS15",                            first: None,            last: Some(v(4, 7)) },
+    Marker { string: "USE_VIGNETTE_COLOR",                                 first: None,            last: Some(v(4, 7)) },
+    Marker { string: "p.BounceThresholdVelocity",                          first: None,            last: Some(v(4, 7)) },
+    Marker { string: "r.AmbientOcclusionSampleSetQuality",                 first: None,            last: Some(v(4, 8)) },
+    Marker { string: "r.LegacySingleThreadedRelevance",                    first: None,            last: Some(v(4, 8)) },
+    Marker { string: "r.Shadow.DistanceFieldPenumbraSize",                 first: None,            last: Some(v(4, 8)) },
+    Marker { string: "r.HalfResReflections",                               first: None,            last: Some(v(4, 9)) },
+    Marker { string: "r.DepthOfFieldNearBlurSizeThreshold",                first: None,            last: Some(v(4, 10)) },
+    Marker { string: "r.Editor.MovingPattern",                             first: None,            last: Some(v(4, 10)) },
+    Marker { string: "r.OptimizeForUAVPerformance",                        first: None,            last: Some(v(4, 13)) },
+    Marker { string: "r.PS4DumpShaderSDB",                                 first: None,            last: Some(v(4, 20)) },
+    Marker { string: "r.PS4MixedModeShaderDebugInfo",                      first: None,            last: Some(v(4, 27)) },
+    Marker { string: "ReceiveUninitializeComponent",                       first: Some(v(4, 7)),   last: Some(v(4, 7)) },
+    Marker { string: "r.Upscale.Cylinder",                                 first: Some(v(4, 7)),   last: Some(v(4, 8)) },
+    Marker { string: "bAnimBranchingPointNeedsSort",                       first: Some(v(4, 7)),   last: Some(v(4, 10)) },
+    Marker { string: "AvoidanceConsiderationRadius",                       first: Some(v(4, 7)),   last: Some(v(4, 17)) },
+    Marker { string: "K2_SetActorRelativeTransform",                       first: Some(v(4, 7)),   last: Some(v(4, 17)) },
+    Marker { string: "PeripheralVisionAngleDegrees",                       first: Some(v(4, 7)),   last: Some(v(4, 17)) },
+    Marker { string: "RequestStimuliListenerUpdate",                       first: Some(v(4, 7)),   last: Some(v(4, 17)) },
+    Marker { string: "SubduedSelectionOutlineColor",                       first: Some(v(4, 7)),   last: Some(v(4, 17)) },
+    Marker { string: "r.RHIDeferredContextWidth",                          first: Some(v(4, 8)),   last: Some(v(4, 8)) },
+    Marker { string: "MatineeScreenshotOptions",                           first: Some(v(4, 8)),   last: Some(v(4, 9)) },
+    Marker { string: "r.MotionBlurDilate",                                 first: Some(v(4, 8)),   last: Some(v(4, 10)) },
+    Marker { string: "r.MotionBlurSmoothMax",                              first: Some(v(4, 8)),   last: Some(v(4, 10)) },
+    Marker { string: "r.MotionBlurNew",                                    first: Some(v(4, 8)),   last: Some(v(4, 13)) },
+    Marker { string: "r.AOFillGapsHighQuality",                            first: Some(v(4, 8)),   last: Some(v(4, 15)) },
+    Marker { string: "r.OcclusionQueryLocation",                           first: Some(v(4, 8)),   last: Some(v(4, 16)) },
+    Marker { string: "r.CheckSRVTransitions",                              first: Some(v(4, 8)),   last: None },
+    Marker { string: "MovieSceneBoundObjectInfo",                          first: Some(v(4, 9)),   last: Some(v(4, 9)) },
+    Marker { string: "UMovieSceneObjectManager",                           first: Some(v(4, 9)),   last: Some(v(4, 9)) },
+    Marker { string: "r.AOInnerGlobalDFClipmapDistance",                   first: Some(v(4, 9)),   last: Some(v(4, 11)) },
+    Marker { string: "r.MobileOnChipMSAA",                                 first: Some(v(4, 9)),   last: Some(v(4, 14)) },
+    Marker { string: "r.AOVisualizeGlobalDistanceField",                   first: Some(v(4, 9)),   last: Some(v(4, 15)) },
+    Marker { string: "s.PreloadPackageDependencies",                       first: Some(v(4, 9)),   last: Some(v(4, 15)) },
+    Marker { string: "s.AsyncIOBandwidthLimit",                            first: Some(v(4, 9)),   last: Some(v(4, 16)) },
+    Marker { string: "r.D3D12GraphicsAdapter",                             first: Some(v(4, 9)),   last: Some(v(4, 19)) },
+    Marker { string: "r.MobileHDR32bppMode",                               first: Some(v(4, 9)),   last: Some(v(4, 24)) },
+    Marker { string: "r.MobileDynamicPointLightsUseStaticBranch",          first: Some(v(4, 9)),   last: Some(v(4, 27)) },
+    Marker { string: "r.MobileNumDynamicPointLights",                      first: Some(v(4, 9)),   last: Some(v(5, 0)) },
+    Marker { string: "ULevelSequenceInstance",                             first: Some(v(4, 10)),  last: Some(v(4, 10)) },
+    Marker { string: "FORWARD_QL_FORCE_FULLY_ROUGH",                       first: Some(v(4, 10)),  last: Some(v(4, 12)) },
+    Marker { string: "UHapticFeedbackEffect",                              first: Some(v(4, 10)),  last: Some(v(4, 12)) },
+    Marker { string: "UAutomatedLevelSequenceCapture",                     first: Some(v(4, 10)),  last: Some(v(4, 19)) },
+    Marker { string: "D3D12.AllowDrawClears",                              first: Some(v(4, 11)),  last: Some(v(4, 11)) },
+    Marker { string: "a.UseBakedAdditiveAnimations",                       first: Some(v(4, 11)),  last: Some(v(4, 11)) },
+    Marker { string: "r.DetectAndWarnOfBadDrivers",                        first: Some(v(4, 11)),  last: Some(v(4, 11)) },
+    Marker { string: "r.Tonemapper.ScreenPercentage",                      first: Some(v(4, 11)),  last: Some(v(4, 12)) },
+    Marker { string: "r.CapsuleIndirectShadowMinVisibility",               first: Some(v(4, 11)),  last: Some(v(4, 13)) },
+    Marker { string: "r.TargetPrecompileFrameTime",                        first: Some(v(4, 11)),  last: Some(v(4, 21)) },
+    Marker { string: "r.UseAsyncShaderPrecompilation",                     first: Some(v(4, 11)),  last: Some(v(4, 21)) },
+    Marker { string: "r.EyeAdaptation.MethodOveride",                      first: Some(v(4, 11)),  last: Some(v(4, 23)) },
+    Marker { string: "r.Tonemapper.GrainQuantization",                     first: Some(v(4, 11)),  last: Some(v(5, 2)) },
+    Marker { string: "r.HighResScreenshotDelay",                           first: Some(v(4, 11)),  last: None },
+    Marker { string: "r.DistanceFieldSpecularOcclusion",                   first: Some(v(4, 12)),  last: Some(v(4, 12)) },
+    Marker { string: "r.Shaders.AvoidFlowControl",                         first: Some(v(4, 12)),  last: Some(v(4, 12)) },
+    Marker { string: "r.Streaming.ShowWantedMips",                         first: Some(v(4, 12)),  last: Some(v(4, 12)) },
+    Marker { string: "r.Streaming.AnalysisIndex",                          first: Some(v(4, 12)),  last: Some(v(4, 13)) },
+    Marker { string: "r.RHICmdStateCacheEnable",                           first: Some(v(4, 12)),  last: Some(v(4, 15)) },
+    Marker { string: "r.AllReceiveDynamicCSM",                             first: Some(v(4, 12)),  last: Some(v(4, 18)) },
+    Marker { string: "r.DriverDetectionMethod",                            first: Some(v(4, 12)),  last: None },
+    Marker { string: "r.Mobile.EnableStaticAndCSMShadowReceivers",         first: Some(v(4, 12)),  last: None },
+    Marker { string: "r.Tonemapper2084",                                   first: Some(v(4, 13)),  last: Some(v(4, 14)) },
+    Marker { string: "r.TonemapperACESInversion",                          first: Some(v(4, 13)),  last: Some(v(4, 14)) },
+    Marker { string: "r.TonemapperOutputGamut",                            first: Some(v(4, 13)),  last: Some(v(4, 14)) },
+    Marker { string: "r.Mobile.Shadow.CSMShaderCulling",                   first: Some(v(4, 13)),  last: Some(v(4, 18)) },
+    Marker { string: "r.UseProgramBinaryCache",                            first: Some(v(4, 13)),  last: Some(v(4, 20)) },
+    Marker { string: "r.Tonemapper.ConfigIndexOverride",                   first: Some(v(4, 13)),  last: Some(v(4, 23)) },
+    Marker { string: "r.Android.DisableVulkanSupport",                     first: Some(v(4, 13)),  last: None },
+    Marker { string: "r.CapsuleIndirectShadowSelfShadowIntensity",         first: Some(v(4, 14)),  last: Some(v(4, 14)) },
+    Marker { string: "r.Streaming.ScaleTexturesByGlobalMyBias",            first: Some(v(4, 14)),  last: Some(v(4, 15)) },
+    Marker { string: "enablehighdpi",                                      first: Some(v(4, 14)),  last: Some(v(4, 17)) },
+    Marker { string: "r.Photography.PersistEffects",                       first: Some(v(4, 14)),  last: Some(v(4, 18)) },
+    Marker { string: "r.HLOD.DistanceScale",                               first: Some(v(4, 14)),  last: Some(v(4, 19)) },
+    Marker { string: "FMonoscopicFarFieldMaskPS",                          first: Some(v(4, 15)),  last: Some(v(4, 15)) },
+    Marker { string: "r.SceneAlpha",                                       first: Some(v(4, 15)),  last: Some(v(4, 15)) },
+    Marker { string: "r.Mobile.AllowMovableDirectionalLights",             first: Some(v(4, 15)),  last: Some(v(5, 4)) },
+    Marker { string: "r.PostProcessingColorFormat",                        first: Some(v(4, 15)),  last: None },
+    Marker { string: "r.CopySceneColorOncePerViewOnly",                    first: Some(v(4, 16)),  last: Some(v(4, 16)) },
+    Marker { string: "r.FastVRamLightAttenuation",                         first: Some(v(4, 16)),  last: Some(v(4, 16)) },
+    Marker { string: "AACF_DriveAttribute_DEPRECATED",                     first: Some(v(4, 16)),  last: Some(v(4, 17)) },
+    Marker { string: "AACF_DriveMaterial_DEPRECATED",                      first: Some(v(4, 16)),  last: Some(v(4, 17)) },
+    Marker { string: "r.AOHistoryMinConfidenceScale",                      first: Some(v(4, 16)),  last: Some(v(4, 19)) },
+    Marker { string: "SMU_OnlyTickPoseWhenRendered",                       first: Some(v(4, 16)),  last: Some(v(4, 20)) },
+    Marker { string: "r.BinaryShaderCacheLogging",                         first: Some(v(4, 16)),  last: Some(v(4, 21)) },
+    Marker { string: "r.TransientResourceAliasing.RenderTargets",          first: Some(v(4, 17)),  last: Some(v(4, 17)) },
+    Marker { string: "r.UseUserShaderCache",                               first: Some(v(4, 17)),  last: Some(v(4, 21)) },
+    Marker { string: "r.VT.NumMipsToExpandRequests",                       first: Some(v(4, 17)),  last: Some(v(4, 22)) },
+    Marker { string: "r.Mobile.SceneColorFormat",                          first: Some(v(4, 17)),  last: None },
+    Marker { string: "r.ConsoleTextScale",                                 first: Some(v(4, 18)),  last: Some(v(4, 18)) },
+    Marker { string: "r.FastVRam.DistanceFieldAOConfidence",               first: Some(v(4, 18)),  last: Some(v(4, 19)) },
+    Marker { string: "r.SaveShaderCache",                                  first: Some(v(4, 18)),  last: Some(v(4, 21)) },
+    Marker { string: "r.AndroidDisableThreadedRenderingFirstLoad",         first: Some(v(4, 18)),  last: None },
+    Marker { string: "r.ViewDistanceScaleNoScalability",                   first: Some(v(4, 19)),  last: Some(v(4, 19)) },
+    Marker { string: "r.vulkan.CpuWaitForFence",                           first: Some(v(4, 19)),  last: Some(v(4, 19)) },
+    Marker { string: "r.DefaultFeature.SpotLightUnits",                    first: Some(v(4, 19)),  last: Some(v(4, 20)) },
+    Marker { string: "r.Mobile.EnableMovableLightCSMShaderCulling",        first: Some(v(4, 19)),  last: None },
+    Marker { string: "r.Mobile.SeparateMaskedPass",                        first: Some(v(4, 20)),  last: Some(v(4, 21)) },
+    Marker { string: "r.Mobile.Shadow.CSMDebugHint",                       first: Some(v(4, 20)),  last: Some(v(5, 0)) },
+    Marker { string: "r.Android.DisableASTCSupport",                       first: Some(v(4, 20)),  last: None },
+    Marker { string: "r.CookOutUnusedDetailModeComponents",                first: Some(v(4, 20)),  last: None },
+    Marker { string: "r.ViewDistanceScale.SecondaryScale",                 first: Some(v(4, 20)),  last: None },
+    Marker { string: "r.VT.TLSTranscodeCodecCacheSize",                    first: Some(v(4, 21)),  last: Some(v(4, 22)) },
+    Marker { string: "r.Mobile.ForceFullPrecisionInPS",                    first: Some(v(4, 21)),  last: Some(v(4, 27)) },
+    Marker { string: "r.Mobile.SkyLightPermutation",                       first: Some(v(4, 21)),  last: Some(v(5, 4)) },
+    Marker { string: "r.Mobile.AllowDitheredLODTransition",                first: Some(v(4, 21)),  last: None },
+    Marker { string: "au.BypassVirtualizeWhenSilent",                      first: Some(v(4, 22)),  last: Some(v(4, 22)) },
+    Marker { string: "r.Vulkan.EnableTessellation",                        first: Some(v(4, 22)),  last: Some(v(4, 22)) },
+    Marker { string: "p.CullPhiVisualizeDistance",                         first: Some(v(4, 22)),  last: Some(v(4, 23)) },
+    Marker { string: "TaskGraph.EnablePowerSavingThreadPriorityReduction", first: Some(v(4, 22)),  last: Some(v(4, 25)) },
+    Marker { string: "net.MaxNetStringSize",                               first: Some(v(4, 22)),  last: None },
+    Marker { string: "p.ComputeConstraintsUseAny",                         first: Some(v(4, 23)),  last: Some(v(4, 23)) },
+    Marker { string: "p.GatherVerbosePhysicsStats",                        first: Some(v(4, 23)),  last: Some(v(4, 23)) },
+    Marker { string: "bRestrictLocalization",                              first: Some(v(4, 23)),  last: Some(v(4, 25)) },
+    Marker { string: "r.Mobile.AllowPixelDepthOffset",                     first: Some(v(4, 23)),  last: None },
+    Marker { string: "r.Mobile.SupportGPUScene",                           first: Some(v(4, 23)),  last: None },
+    Marker { string: "r.VT.EvictFileCache",                                first: Some(v(4, 23)),  last: None },
+    Marker { string: "p.Chaos.ImmPhys.DeltaTime",                          first: Some(v(4, 24)),  last: Some(v(4, 24)) },
+    Marker { string: "p.ChaosParticleParallelFor",                         first: Some(v(4, 24)),  last: Some(v(4, 24)) },
+    Marker { string: "r.Water.ConstantWaterDepth",                         first: Some(v(4, 24)),  last: Some(v(4, 24)) },
+    Marker { string: "r.Mobile.UseGPUSceneTexture",                        first: Some(v(4, 24)),  last: Some(v(4, 27)) },
+    Marker { string: "log.flushInterval",                                  first: Some(v(4, 24)),  last: None },
+    Marker { string: "TestLockFreeWorker",                                 first: Some(v(4, 25)),  last: Some(v(4, 25)) },
+    Marker { string: "r.AnisotropicBRDF",                                  first: Some(v(4, 25)),  last: Some(v(4, 25)) },
+    Marker { string: "fc.NumFileCacheBlocks",                              first: Some(v(4, 25)),  last: Some(v(4, 27)) },
+    Marker { string: "Freezing_bWithRayTracing",                           first: Some(v(4, 25)),  last: Some(v(5, 0)) },
+    Marker { string: "r.Android.DisableVulkanSM5Support",                  first: Some(v(4, 25)),  last: None },
+    Marker { string: "fx.Niagara.BatchGPUTickSubmit",                      first: Some(v(4, 26)),  last: Some(v(4, 26)) },
+    Marker { string: "fx.Niagara.ConcurrentGPUTickInit",                   first: Some(v(4, 26)),  last: Some(v(4, 26)) },
+    Marker { string: "p.CollisionCullDistance",                            first: Some(v(4, 26)),  last: Some(v(4, 26)) },
+    Marker { string: "r.SupportAnisotropicMaterials",                      first: Some(v(4, 26)),  last: Some(v(4, 26)) },
+    Marker { string: "D3D12.GlobalViewHeapBlockSize",                      first: Some(v(4, 26)),  last: Some(v(5, 0)) },
+    Marker { string: "r.VolumetricCloud.HzbCulling",                       first: Some(v(4, 26)),  last: Some(v(5, 2)) },
+    Marker { string: "p.Chaos.Solver.SleepEnabled",                        first: Some(v(4, 26)),  last: Some(v(5, 3)) },
+    Marker { string: "r.ContactShadows.NonShadowCastingIntensity",         first: Some(v(4, 26)),  last: None },
+    Marker { string: "r.Mobile.ShadingPath",                               first: Some(v(4, 26)),  last: None },
+    Marker { string: "r.FASTBuild.Shader.BatchSize",                       first: Some(v(4, 27)),  last: Some(v(4, 27)) },
+    Marker { string: "r.WPOPrimitivesOutputVelocity",                      first: Some(v(4, 27)),  last: Some(v(4, 27)) },
+    Marker { string: "r.ShaderCompiler.JobCache",                          first: Some(v(4, 27)),  last: Some(v(5, 5)) },
+    Marker { string: "s.EnforcePackageCompatibleVersionCheck",             first: Some(v(4, 27)),  last: None },
+    Marker { string: "r.Lumen.ProbeHierarchy.Depth",                       first: Some(v(5, 0)),   last: Some(v(5, 0)) },
+    Marker { string: "r.Nanite.SphereCullingFrustum",                      first: Some(v(5, 0)),   last: Some(v(5, 1)) },
+    Marker { string: "r.MaterialEnableControlFlow",                        first: Some(v(5, 0)),   last: Some(v(5, 2)) },
+    Marker { string: "r.Nanite.OptimizedRelevance",                        first: Some(v(5, 0)),   last: Some(v(5, 3)) },
+    Marker { string: "r.Lumen.IrradianceFieldGather",                      first: Some(v(5, 0)),   last: Some(v(5, 7)) },
+    Marker { string: "r.DemotedLocalMemoryWarning",                        first: Some(v(5, 0)),   last: None },
+    Marker { string: "r.Nanite.AllowComputeMaterial",                      first: Some(v(5, 1)),   last: Some(v(5, 1)) },
+    Marker { string: "r.Strata.AsyncClassification",                       first: Some(v(5, 1)),   last: Some(v(5, 1)) },
+    Marker { string: "r.Strata.Debug.VisualizeMode",                       first: Some(v(5, 1)),   last: Some(v(5, 1)) },
+    Marker { string: "gc.LockBehavior",                                    first: Some(v(5, 1)),   last: Some(v(5, 2)) },
+    Marker { string: "p.Chaos.Solver.ValidateGraph",                       first: Some(v(5, 1)),   last: Some(v(5, 2)) },
+    Marker { string: "r.GlobalDistanceField.Debug",                        first: Some(v(5, 1)),   last: Some(v(5, 3)) },
+    Marker { string: "p.net.TargetNumBufferedCmds",                        first: Some(v(5, 1)),   last: Some(v(5, 5)) },
+    Marker { string: "r.Mobile.ShadingModelsMask",                         first: Some(v(5, 1)),   last: None },
+    Marker { string: "s.LargeMemoryDataMaxPoolLength",                     first: Some(v(5, 1)),   last: None },
+    Marker { string: "s.RemoveUnreachableObjectsOnGT",                     first: Some(v(5, 1)),   last: None },
+    Marker { string: "gc.DumpMemoryStats",                                 first: Some(v(5, 2)),   last: Some(v(5, 2)) },
+    Marker { string: "r.RectLightAtlas.Translucent",                       first: Some(v(5, 2)),   last: Some(v(5, 3)) },
+    Marker { string: "r.DynamicRes.DynamicFrameTime",                      first: Some(v(5, 2)),   last: Some(v(5, 5)) },
+    Marker { string: "r.SubstrateBackCompatibility",                       first: Some(v(5, 2)),   last: Some(v(5, 6)) },
+    Marker { string: "net.BitReader.EnsureOnOverflow",                     first: Some(v(5, 2)),   last: None },
+    Marker { string: "r.MaterialEditor.LWCTruncateMode",                   first: Some(v(5, 2)),   last: None },
+    Marker { string: "s.SkipChangelistCompatibilityVersionCheck",          first: Some(v(5, 2)),   last: None },
+    Marker { string: "s.IasMaxHttpConnectionCount",                        first: Some(v(5, 3)),   last: Some(v(5, 3)) },
+    Marker { string: "r.DX11NVAfterMathDumpWaitTime",                      first: Some(v(5, 3)),   last: Some(v(5, 4)) },
+    Marker { string: "r.DX12NVAfterMathDumpWaitTime",                      first: Some(v(5, 3)),   last: Some(v(5, 4)) },
+    Marker { string: "r.PathTracing.Override.Depth",                       first: Some(v(5, 3)),   last: Some(v(5, 4)) },
+    Marker { string: "r.ManyLights.HairVoxelTraces",                       first: Some(v(5, 4)),   last: Some(v(5, 4)) },
+    Marker { string: "r.ManyLights.LightFunctions",                        first: Some(v(5, 4)),   last: Some(v(5, 4)) },
+    Marker { string: "r.ManyLights.WorldSpaceTraces",                      first: Some(v(5, 4)),   last: Some(v(5, 4)) },
+    Marker { string: "D3D12.SamplerWarningThreshold",                      first: Some(v(5, 4)),   last: Some(v(5, 5)) },
+    Marker { string: "r.PathTracing.CloudMapEnable",                       first: Some(v(5, 5)),   last: Some(v(5, 5)) },
+    Marker { string: "r.Nanite.SkinningBuffers.Defrag",                    first: Some(v(5, 5)),   last: Some(v(5, 6)) },
+    Marker { string: "r.MegaLights.Volume.Debug",                          first: Some(v(5, 5)),   last: Some(v(5, 7)) },
+    Marker { string: "r.Vulkan.Bindless.BlockSize",                        first: Some(v(5, 5)),   last: Some(v(5, 7)) },
+    Marker { string: "net.QueuedBatchTimeoutSeconds",                      first: Some(v(5, 6)),   last: Some(v(5, 6)) },
+    Marker { string: "r.LensFlareBlurComputeShader",                       first: Some(v(5, 6)),   last: Some(v(5, 6)) },
+    Marker { string: "r.MegaLights.DownsampleFactor",                      first: Some(v(5, 6)),   last: Some(v(5, 6)) },
+    Marker { string: "r.Substrate.BlendableGBuffer",                       first: Some(v(5, 6)),   last: Some(v(5, 6)) },
+    Marker { string: "au.DirectProceduralRendering",                       first: Some(v(5, 7)),   last: Some(v(5, 7)) },
+    Marker { string: "p.Chaos.MinParallelTaskSize",                        first: Some(v(5, 7)),   last: Some(v(5, 7)) },
+    Marker { string: "p.Chaos.SingleThreadPushData",                       first: Some(v(5, 7)),   last: Some(v(5, 7)) },
+    Marker { string: "s.ImportTypeHierarchyEnabled",                       first: Some(v(5, 7)),   last: Some(v(5, 7)) },
+    Marker { string: "D3D12.ResidencyDebugBudgetMB",                       first: Some(v(5, 8)),   last: None },
+    Marker { string: "D3D12.ResourcesStartResident",                       first: Some(v(5, 8)),   last: None },
+    Marker { string: "au.metasound.dump_poly_types",                       first: Some(v(5, 8)),   last: None },
+    Marker { string: "gc.PauseGCFreeMemThresholdMB",                       first: Some(v(5, 8)),   last: None },
+];
+
+const MIN_MARKERS_PRESENT: usize = 10;
+const CONTRADICTION: usize = 5;
+const OMISSION: usize = 1;
+const MIN_MARGIN: usize = 4;
+
+#[derive(Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde-resolvers",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct EngineVersionFingerprint(pub EngineVersion);
+impl FromStr for EngineVersionFingerprint {
+    type Err = ResolveError;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(Self(s.parse()?))
+    }
+}
+
+impl_resolver!(all, EngineVersionFingerprint, |ctx| async {
+    let found = join_all(
+        MARKERS
+            .iter()
+            .map(|m| ctx.scan(util::utf16_pattern(m.string))),
+    )
+    .await;
+    let present = found.iter().map(|a| !a.is_empty()).collect_vec();
+    if present.iter().filter(|p| **p).count() < MIN_MARKERS_PRESENT {
+        bail_out!("too few marker strings to fingerprint");
+    }
+
+    let costs = std::iter::once(None)
+        .chain(VERSIONS.iter().map(Some))
+        .map(|candidate| {
+            MARKERS
+                .iter()
+                .zip(&present)
+                .map(
+                    |(marker, present)| match (marker.covers(candidate), present) {
+                        (false, true) => CONTRADICTION,
+                        (true, false) => OMISSION,
+                        _ => 0,
+                    },
+                )
+                .sum::<usize>()
+        })
+        .collect_vec();
+
+    let best = costs.iter().position_min().unwrap();
+    let runner_up = costs
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != best)
+        .map(|(_, cost)| *cost)
+        .min()
+        .unwrap();
+    if runner_up - costs[best] < MIN_MARGIN {
+        bail_out!("no version explains the markers better than its neighbour");
+    }
+    let Some(version) = best.checked_sub(1).map(|i| &VERSIONS[i]) else {
+        bail_out!("predates the oldest fingerprinted version");
+    };
+    Ok(Self(version.clone()))
+});
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn fingerprint_table_is_well_formed() {
+        let mut strings = MARKERS.iter().map(|m| m.string).collect_vec();
+        let count = strings.len();
+        strings.sort();
+        strings.dedup();
+        assert_eq!(strings.len(), count, "duplicate marker string");
+
+        for marker in MARKERS {
+            assert!(
+                marker.first.is_some() || marker.last.is_some(),
+                "{}: present in every version, so it says nothing",
+                marker.string
+            );
+        }
+
+        for candidate in std::iter::once(None).chain(VERSIONS.iter().map(Some)) {
+            let observed = MARKERS.iter().map(|m| m.covers(candidate)).collect_vec();
+            let costs = std::iter::once(None)
+                .chain(VERSIONS.iter().map(Some))
+                .map(|c| {
+                    MARKERS
+                        .iter()
+                        .zip(&observed)
+                        .map(|(m, present)| match (m.covers(c), present) {
+                            (false, true) => CONTRADICTION,
+                            (true, false) => OMISSION,
+                            _ => 0,
+                        })
+                        .sum::<usize>()
+                })
+                .collect_vec();
+            let best = costs.iter().position_min().unwrap();
+            let runner_up = costs
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != best)
+                .map(|(_, c)| *c)
+                .min()
+                .unwrap();
+            let expected =
+                candidate.map_or(0, |c| VERSIONS.iter().position(|v| v == c).unwrap() + 1);
+            assert_eq!(
+                best, expected,
+                "{candidate:?} does not score best for itself"
+            );
+            assert!(
+                runner_up - costs[best] >= MIN_MARGIN,
+                "{candidate:?} only beats its neighbour by {}",
+                runner_up - costs[best]
+            );
+        }
     }
 }
