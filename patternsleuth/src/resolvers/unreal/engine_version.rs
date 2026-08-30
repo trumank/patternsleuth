@@ -227,7 +227,9 @@ impl_resolver!(PEImage, EngineVersionStrings, |ctx| async {
     bail_out!("not found");
 });
 
-/// Detects the build configuration (DebugGame/Development vs Shipping)
+/// Build configuration, from two strings that track the preprocessor conditions changing object layout.
+/// A non-shipping string (!UE_BUILD_SHIPPING) and a stats string (STATS).
+/// Shipping: neither. Test: non-shipping only. Development: both (also Debug/DebugGame).
 #[derive(Debug, PartialEq)]
 #[cfg_attr(
     feature = "serde-resolvers",
@@ -235,7 +237,8 @@ impl_resolver!(PEImage, EngineVersionStrings, |ctx| async {
 )]
 pub enum BuildConfiguration {
     Shipping,
-    Development, // Includes DebugGame, Test, Dev, Development
+    Test,
+    Development,
 }
 impl FromStr for BuildConfiguration {
     type Err = ResolveError;
@@ -247,19 +250,23 @@ impl FromStr for BuildConfiguration {
 impl_resolver!(all, BuildConfiguration, |ctx| async {
     use crate::resolvers::unreal::util;
 
-    // This debug string only appears in non-shipping builds
-    let debug_string =
+    // Emitted by HandleListParticleSystemsCommand, which is compiled under #if !UE_BUILD_SHIPPING.
+    // Its presence mirrors TBucketMap's !UE_BUILD_SHIPPING ReadOnlyLock field.
+    let non_shipping_string =
         "Size,Name,PSysSize,ModuleSize,ComponentSize,ComponentCount,CompResSize,CompTrueResSize\0";
+    // Emitted by the stat command help, compiled under #if STATS. Its presence mirrors the
+    // STATS-gated StatId member in FUObjectItem and (pre 4.25) UObjectBase.
+    let stats_string = "Here is the brief list of stats console commands\0";
 
-    let pattern = util::utf16_pattern(debug_string);
-    let results = ctx.scan(pattern).await;
+    let non_shipping = ctx.scan(util::utf16_pattern(non_shipping_string)).await;
+    let stats = ctx.scan(util::utf16_pattern(stats_string)).await;
 
-    if !results.is_empty() {
-        // Found the debug string - this is a development build
-        Ok(BuildConfiguration::Development)
-    } else {
-        // No debug string found - assume shipping build
+    if non_shipping.is_empty() {
         Ok(BuildConfiguration::Shipping)
+    } else if stats.is_empty() {
+        Ok(BuildConfiguration::Test)
+    } else {
+        Ok(BuildConfiguration::Development)
     }
 });
 
