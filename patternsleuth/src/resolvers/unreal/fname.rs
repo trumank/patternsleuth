@@ -124,8 +124,12 @@ impl_resolver_singleton!(PEImage, FNameCtorWchar, |ctx| async {
     // FName(wchar_t const*, EFindName) prologue
     let ctor = async {
         join_all([
+            // Standard UE4/UE5 MSVC: mov [rsp+8], rbx; push rdi; sub rsp, 30h; mov rbx, rcx; mov edi, r8d ...
             "48 89 5C 24 08 57 48 83 EC 30 48 8B D9 41 8B F8 33 C9 4C 8B DA 44 8B D1 4C 8B CA 48 85 D2 74 ?? 0F B7 02 66 85 C0",
+            // UE5 MSVC variant 1: mov [rsp+8], rbx; push rdi; sub rsp, 30h; mov rbx, rcx; mov [rsp+20h], rdx ...
             "48 89 5C 24 08 57 48 83 EC 30 48 8B D9 48 89 54 24 20 33 C9 41 8B F8 4C 8B D2 44 8B C9 48 85 D2 74 ?? 0F B7 02 66 85 C0",
+            // UE 5.8+ MSVC variant 2: push rbx; sub rsp, 30h; mov rbx, rcx; mov [rsp+20h], rdx; xor ecx, ecx; mov r9, rdx; mov r8d, ecx ...
+            "40 53 48 83 EC 30 48 8B D9 48 89 54 24 20 33 C9 4C 8B CA 44 8B C1 48 85 D2 74 ?? 0F B7 02 66 85 C0",
         ].map(|p| ctx.scan(Pattern::new(p).unwrap())))
         .await
         .into_iter()
