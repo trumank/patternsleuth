@@ -492,13 +492,19 @@ impl_resolver_singleton!(all, FNamePool, |ctx| async {
 )]
 pub struct StaticFNameConst(pub u64);
 impl_resolver_singleton!(all, StaticFNameConst, |ctx| async {
-    let strings = ctx.scan(util::utf16_pattern("GLSL_ES3_1_ANDROID\0")).await;
+    let strings = util::string_pattern(ctx, "GLSL_ES3_1_ANDROID\0").await;
     let str_addr = ensure_one(strings)?;
-    let pattern = Pattern::new(format!(
-        "41 b8 01 00 00 00 48 8d 15 X0x{str_addr:08x} 48 8d 0d | ?? ?? ?? ?? e9"
-    ))
-    .unwrap();
-    let refs = ctx.scan(pattern).await;
+    let refs = join_all(
+        [
+            // pre-5.7 FName(.., FNAME_Add)
+            format!("41 b8 01 00 00 00 48 8d 15 X0x{str_addr:08x} 48 8d 0d | ?? ?? ?? ?? e9"),
+            // 5.7+ FName(..)
+            format!("48 8d 15 X0x{str_addr:08x} 48 8d 0d | ?? ?? ?? ?? e9"),
+        ]
+        .map(|p| ctx.scan(Pattern::new(p).unwrap())),
+    )
+    .await
+    .concat();
     match refs.len() {
         0 => Err(ResolveError::new_msg("expected at least one value")),
         _ => Ok(StaticFNameConst(ctx.image().memory.rip4(refs[0])?)),
