@@ -320,9 +320,6 @@ impl NamedMemorySection<'_> {
     pub fn data(&self) -> &[u8] {
         &self.data
     }
-    pub fn data_mut(&mut self) -> &mut [u8] {
-        self.data.to_mut()
-    }
     pub fn len(&self) -> usize {
         self.data.len()
     }
@@ -399,9 +396,6 @@ impl<'data> Memory<'data> {
     }
     pub fn sections(&self) -> &[NamedMemorySection<'_>] {
         &self.sections
-    }
-    pub fn sections_mut(&mut self) -> &mut Vec<NamedMemorySection<'data>> {
-        &mut self.sections
     }
     pub fn get_section_containing(
         &self,
