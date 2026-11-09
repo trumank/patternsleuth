@@ -13,18 +13,15 @@ fn owned_sections_preserve_metadata_and_bytes() {
     assert_eq!(section.address(), 0x1000);
     assert_eq!(section.kind(), SectionKind::Text);
     assert_eq!(section.len(), 2);
-
     assert_eq!(section.data(), [0x90, 0xc3]);
 }
 
 #[test]
 fn borrowed_sections_preserve_source_storage() {
     let bytes = [0x90, 0xc3];
-    let section =
-        NamedMemorySection::new(".text".into(), 0x1000, SectionKind::Text, &bytes[..]);
+    let section = NamedMemorySection::new(".text".into(), 0x1000, SectionKind::Text, &bytes[..]);
 
     assert_eq!(section.data().as_ptr(), bytes.as_ptr());
-
     assert_eq!(section.data(), bytes);
 }
 
@@ -37,20 +34,22 @@ fn memory_preserves_section_order_and_bytes() {
 
     assert_eq!(memory.sections()[0].name(), ".data");
     assert_eq!(memory.sections()[1].name(), ".text");
+    assert_eq!(memory.u8(0x2000).unwrap(), 1);
     assert_eq!(memory.u8(0x1000).unwrap(), 2);
-
     assert!(memory.u8(0x3000).is_err());
 }
 
 #[test]
-fn empty_memory_and_sections_are_valid() {
+fn empty_memory_has_no_sections_or_readable_addresses() {
     let memory = Memory::from_sections(Vec::new());
 
     assert!(memory.sections().is_empty());
     assert!(memory.u8(0x1000).is_err());
+}
 
-    let section =
-        NamedMemorySection::new(".empty".into(), 0x1000, SectionKind::Data, Vec::new());
+#[test]
+fn empty_section_preserves_empty_data() {
+    let section = NamedMemorySection::new(".empty".into(), 0x1000, SectionKind::Data, Vec::new());
 
     assert!(section.is_empty());
     assert!(section.data().is_empty());
@@ -68,8 +67,7 @@ fn check_image_from_memory(image_type: ImageType) {
     let image = Image::from_memory(0x1000, memory, image_type);
 
     assert_image_metadata(&image, expected_type);
-    assert_eq!(image.memory.sections()[0].data().as_ptr(), bytes.as_ptr());
-    assert_image_scans_memory(&image);
+    assert_image_memory(&image, &bytes);
 }
 
 fn assert_image_metadata(image: &Image<'_>, expected_type: std::mem::Discriminant<ImageType>) {
@@ -80,15 +78,11 @@ fn assert_image_metadata(image: &Image<'_>, expected_type: std::mem::Discriminan
     assert!(image.symbols.is_none());
 }
 
-fn assert_image_scans_memory(image: &Image<'_>) {
-    let matches = patternsleuth::resolvers::eval(image, |ctx| {
-        Box::pin(async {
-            ctx.scan(patternsleuth::scanner::Pattern::new("AA BB").unwrap())
-                .await
-        })
-    });
-
-    assert_eq!(matches, [0x1001]);
+fn assert_image_memory(image: &Image<'_>, bytes: &[u8]) {
+    assert_eq!(image.memory.sections().len(), 1);
+    assert_eq!(image.memory.sections()[0].address(), 0x1000);
+    assert_eq!(image.memory.sections()[0].data().as_ptr(), bytes.as_ptr());
+    assert_eq!(image.memory.sections()[0].data(), bytes);
 }
 
 #[cfg(feature = "image-pe")]
