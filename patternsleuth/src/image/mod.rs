@@ -48,6 +48,17 @@ pub struct Image<'data> {
 
 // Type-independent
 impl<'data> Image<'data> {
+    pub fn from_memory(base_address: u64, memory: Memory<'data>, image_type: ImageType) -> Self {
+        Self {
+            base_address,
+            memory,
+            #[cfg(feature = "symbols")]
+            symbols: None,
+            imports: Default::default(),
+            image_type,
+        }
+    }
+
     pub fn read<P: AsRef<Path>>(
         base_addr: Option<u64>,
         data: &'data [u8],

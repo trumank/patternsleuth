@@ -293,7 +293,7 @@ pub struct NamedMemorySection<'data> {
 }
 
 impl<'data> NamedMemorySection<'data> {
-    fn new<T: Into<Cow<'data, [u8]>>>(
+    pub fn new<T: Into<Cow<'data, [u8]>>>(
         name: String,
         address: u64,
         kind: object::SectionKind,
@@ -320,6 +320,9 @@ impl NamedMemorySection<'_> {
     pub fn data(&self) -> &[u8] {
         &self.data
     }
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        self.data.to_mut()
+    }
     pub fn len(&self) -> usize {
         self.data.len()
     }
@@ -333,6 +336,10 @@ pub struct Memory<'data> {
 }
 
 impl<'data> Memory<'data> {
+    pub fn from_sections(sections: Vec<NamedMemorySection<'data>>) -> Self {
+        Self { sections }
+    }
+
     fn is_section_scannable(section_flags: SectionFlags) -> bool {
         match section_flags {
             SectionFlags::Coff { characteristics } => (characteristics & IMAGE_SCN_MEM_READ) != 0,
@@ -392,6 +399,9 @@ impl<'data> Memory<'data> {
     }
     pub fn sections(&self) -> &[NamedMemorySection<'_>] {
         &self.sections
+    }
+    pub fn sections_mut(&mut self) -> &mut Vec<NamedMemorySection<'data>> {
+        &mut self.sections
     }
     pub fn get_section_containing(
         &self,
