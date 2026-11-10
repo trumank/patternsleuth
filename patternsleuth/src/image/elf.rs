@@ -13,6 +13,7 @@ use object::{
     read::elf::ElfFile64, read::elf::ProgramHeader,
 };
 
+#[derive(Clone)]
 pub struct ElfImage {
     pub functions: Option<Vec<Range<u64>>>,
 }

@@ -19,6 +19,7 @@ use minidump::{
 };
 use object::Object;
 
+#[derive(Clone)]
 pub struct PEImage {
     pub exception_directory_range: Range<u64>,
     pub exception_children_cache: HashMap<u64, Vec<RuntimeFunction>>,
