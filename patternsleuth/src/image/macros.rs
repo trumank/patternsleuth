@@ -19,6 +19,7 @@ macro_rules! image_type_dispatch {
         image_type_dispatch!(@generate_macro_for_enum $enum_name_it $enum_name_macro_it $enum_tt);
     };
     (@define_imagetype $enum_name_it:ident { $( $img_ident:ident( $img_ty:ty, $img_feature:literal )),* $(,)? }) => {
+        #[derive(Clone)]
         pub enum $enum_name_it {
             $(
                 #[cfg(feature = $img_feature)]

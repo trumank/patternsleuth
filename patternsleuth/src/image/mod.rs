@@ -37,6 +37,7 @@ image_type_dispatch! {
 use crate::image::pe::read_image_from_minidump;
 pub use _image_type_reflection as image_type_reflection;
 
+#[derive(Clone)]
 pub struct Image<'data> {
     pub base_address: u64,
     pub memory: Memory<'data>,
@@ -48,6 +49,57 @@ pub struct Image<'data> {
 
 // Type-independent
 impl<'data> Image<'data> {
+    pub fn with_section<'new>(&self, section: NamedMemorySection<'new>) -> Image<'new>
+    where
+        'data: 'new,
+    {
+        let mut image: Image<'new> = self.clone();
+        image.memory.sections.push(section);
+        image
+    }
+
+    pub fn without_section(&self, name: &str) -> Self {
+        let mut image = self.clone();
+        image
+            .memory
+            .sections
+            .retain(|section| section.name() != name);
+        image
+    }
+
+    pub fn with_text<'new, T: Into<Cow<'new, [u8]>>>(
+        &self,
+        data: T,
+    ) -> Result<Image<'new>, MemoryAccessError>
+    where
+        'data: 'new,
+    {
+        let mut image: Image<'new> = self.clone();
+        let section = image
+            .memory
+            .sections
+            .iter_mut()
+            .find(|section| section.name() == ".text")
+            .ok_or(MemoryAccessError::MemoryOutOfBoundsError)?;
+        section.data = data.into();
+        Ok(image)
+    }
+
+    pub fn copy_sections(&self) -> Vec<NamedMemorySection<'static>> {
+        self.memory
+            .sections()
+            .iter()
+            .map(|section| {
+                NamedMemorySection::new(
+                    section.name().into(),
+                    section.address(),
+                    section.kind(),
+                    section.data().to_vec(),
+                )
+            })
+            .collect()
+    }
+
     pub fn from_memory(base_address: u64, memory: Memory<'data>, image_type: ImageType) -> Self {
         Self {
             base_address,

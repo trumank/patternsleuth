@@ -285,6 +285,7 @@ impl<'data> MemoryTrait<'data> for Memory<'data> {
     }
 }
 
+#[derive(Clone)]
 pub struct NamedMemorySection<'data> {
     name: String,
     kind: object::SectionKind,
@@ -328,6 +329,7 @@ impl NamedMemorySection<'_> {
     }
 }
 
+#[derive(Clone)]
 pub struct Memory<'data> {
     sections: Vec<NamedMemorySection<'data>>,
 }
