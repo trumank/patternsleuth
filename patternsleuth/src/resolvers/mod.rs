@@ -663,9 +663,9 @@ impl<'data> AsyncContext<'data> {
 }
 
 #[tracing::instrument(level = "debug", skip_all, fields(stages))]
-pub fn eval<F, T: Send + Sync>(image: &Image<'_>, f: F) -> T
+pub fn eval<'env, F, T: Send + Sync>(image: &'env Image<'_>, f: F) -> T
 where
-    F: for<'ctx> FnOnce(&'ctx AsyncContext<'_>) -> BoxFuture<'ctx, T> + Send + Sync,
+    F: for<'ctx> FnOnce(&'ctx AsyncContext<'env>) -> BoxFuture<'ctx, T> + Send + Sync,
 {
     {
         tracing::debug!("starting eval");
